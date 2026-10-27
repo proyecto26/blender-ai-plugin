@@ -35,3 +35,13 @@ dist/
 # Temp
 tmp/
 temp/
+
+# Keep published docs media
+!docs/**/*.mp4
+!docs/**/*.jpg
+!docs/**/*.gif
+
+# Eval run outputs and local test renders
+evals/results/
+tests/blender/out/
+docs/video/build/

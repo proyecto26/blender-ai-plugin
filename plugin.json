@@ -1,0 +1,34 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "blender-ai-plugin",
+  "version": "2.0.0",
+  "description": "AI technical-art team for Blender: 95 skills, 29 tested bpy scripts and a design orchestrator agent that drive the official Blender MCP server to model, texture, light, render, validate and export game-ready assets (Unreal, Unity, Godot) in any art style. Use for any Blender modeling, look-dev, scene or export task.",
+  "author": {
+    "name": "Proyecto 26",
+    "url": "https://github.com/proyecto26"
+  },
+  "homepage": "https://github.com/proyecto26/blender-ai-plugin",
+  "repository": "https://github.com/proyecto26/blender-ai-plugin",
+  "license": "MIT",
+  "keywords": [
+    "blender",
+    "blender-mcp",
+    "3d",
+    "bpy",
+    "game-art",
+    "technical-art",
+    "modeling",
+    "materials",
+    "lighting",
+    "rendering",
+    "geometry-nodes",
+    "rigging",
+    "animation",
+    "export",
+    "unreal",
+    "unity",
+    "godot",
+    "agent-skills",
+    "art-direction"
+  ]
+}

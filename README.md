@@ -1,259 +1,292 @@
-![Blender Skills](assets/Blender.png)
+# Blender AI Plugin
 
-<div align="center">
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Claude Code](https://img.shields.io/badge/Claude_Code-Plugin-blueviolet)](https://code.claude.com/docs/en/plugins)
+[![Agent Plugins](https://img.shields.io/badge/Agent_Plugins-1.0-orange)](https://agent-plugins.org/)
+[![Skills](https://img.shields.io/badge/Skills-95-brightgreen)](#-skill-categories)
+[![Blender](https://img.shields.io/badge/Blender-5.1%2B-E87D0D?logo=blender&logoColor=white)](https://www.blender.org/lab/mcp-server/)
 
-# Blender Skills
+<img src="https://github.com/proyecto26/sherlock-ai-plugin/blob/main/images/claude-mascot-jumping-animated.svg" width="150">
 
-**94 Specialized Skills for Blender Artists.**
-**Transform Cursor, Claude Code, Kiro, and Codex into your Senior Technical Art team — not a tutorial bot.**
+**Your AI technical-art team inside Blender.** 95 skills, 29 tested `bpy` scripts and a design
+orchestrator agent that drive the [official Blender Lab MCP server](https://www.blender.org/lab/mcp-server/):
+it models, unwraps, textures, lights, grades, validates and exports game-ready assets for Unreal, Unity and
+Godot, in any of 40+ art styles. Works with Claude Code, Codex and any [Agent Plugins](https://agent-plugins.org/)
+client.
 
-[![Version](https://img.shields.io/badge/version-1.3.0-blue.svg)](version.json)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Skills](https://img.shields.io/badge/skills-94-orange.svg)](.claude/skills/)
-[![Blender MCP](https://img.shields.io/badge/Blender_MCP-integrated-blueviolet.svg)](docs/BLENDER_MCP_SETUP.md)
-[![Cursor](https://img.shields.io/badge/Cursor-skills-blue.svg)](https://cursor.com)
-[![Claude Code](https://img.shields.io/badge/Claude_Code-plugin-black.svg)](https://docs.anthropic.com/en/docs/claude-code)
-[![Kiro](https://img.shields.io/badge/Kiro-compatible-purple.svg)](https://kiro.dev)
-[![Codex](https://img.shields.io/badge/Codex-compatible-green.svg)](https://openai.com/codex)
-[![Website](https://img.shields.io/badge/website-blender--skills.vercel.app-orange.svg)](https://blender-skills.vercel.app/)
+[![Blender AI Plugin demo](docs/media/poster.jpg)](docs/blender-ai-plugin.mp4)
 
-</div>
+<sub>▶ [Watch the 30-second demo](docs/blender-ai-plugin.mp4). Every frame was rendered by Blender running this
+plugin's own scripts ([source](docs/video/)).</sub>
 
 ---
 
 ## Quick Start
 
-> **Marketplace listing is currently under review by Anthropic.**
-> Install directly from GitHub in the meantime.
+### Standards
 
-Works with **Cursor**, **Claude Code**, **Kiro**, and **Codex** — same skill pack, Blender MCP execution.
+This plugin follows the [Agent Plugins](https://agent-plugins.org/) v1.0.0 packaging standard (root
+[`plugin.json`](./plugin.json), validated against the official schema), and its skills follow the
+[Agent Skills](https://agentskills.io/) spec (`skills/<name>/SKILL.md`). It also ships native manifests:
 
-**Claude Code**
+| Manifest | Read by |
+|----------|---------|
+| [`plugin.json`](./plugin.json) | Any Agent Plugins client |
+| [`.claude-plugin/plugin.json`](.claude-plugin/plugin.json), [`marketplace.json`](.claude-plugin/marketplace.json) | Claude Code |
+| [`.codex-plugin/plugin.json`](.codex-plugin/plugin.json), [`.agents/plugins/marketplace.json`](.agents/plugins/marketplace.json) | Codex, Copilot CLI |
+
+### 1. Connect Blender (official MCP)
+
+1. Install **Blender 5.1+** and the [Blender Lab MCP server](https://www.blender.org/lab/mcp-server/) add-on.
+2. Register the server with your agent:
+   ```bash
+   claude mcp add --scope user blender -- uv run --directory ~/.blender-mcp/<version>/server blender-mcp
+   ```
+3. In Blender, start the MCP add-on, then ask your agent: *"Summarize the objects in my Blender scene"*.
+
+Full guide, including Codex, `.mcpb`, pip and troubleshooting: **[docs/BLENDER_MCP_SETUP.md](docs/BLENDER_MCP_SETUP.md)**
+
+### 2. Install the plugin
+
+#### Option 1: CLI Install (Recommended)
+
+Use [npx skills](https://github.com/vercel-labs/skills) to install the skills directly:
+
 ```bash
-git clone https://github.com/arjun988/blender-skills.git
-cp -r blender-skills/.claude/skills /path/to/your/project/.claude/skills/
+# Install the skills
+npx skills add proyecto26/blender-ai-plugin
+
+# List available skills
+npx skills add proyecto26/blender-ai-plugin --list
 ```
 
-**Cursor (Windows)**
-```powershell
-git clone https://github.com/arjun988/blender-skills.git
-Copy-Item -Recurse -Force "blender-skills\.claude\skills\*" ".cursor\skills\"
-```
+#### Option 2: Claude Code Plugin
 
-**Kiro**
 ```bash
-# Copy skill folders into your Kiro skills directory, then restart Kiro
-cp -r blender-skills/.claude/skills/* /path/to/kiro/skills/
+# Add the marketplace
+/plugin marketplace add proyecto26/blender-ai-plugin
+
+# Install the plugin (skills + blender-design-orchestrator agent)
+/plugin install blender-ai-plugin --marketplace proyecto26/blender-ai-plugin
 ```
 
-**Codex**
+#### Option 3: Codex
+
 ```bash
-# Mount or copy skills into your Codex skills path
-cp -r blender-skills/.claude/skills/* /path/to/codex/skills/
-# or: ln -s /path/to/blender-skills/.claude/skills /path/to/codex/skills/blender-skills
+codex plugin marketplace add proyecto26/blender-ai-plugin
+codex plugin add blender-ai-plugin@blender-ai-plugin-marketplace
 ```
 
-For all installation methods and first steps, see the **[Quick Start Guide](https://blender-skills.vercel.app/getting-started/)**.
+#### Option 4: Clone and Copy
 
-**Full documentation:** [blender-skills.vercel.app](https://blender-skills.vercel.app/)
+```bash
+git clone https://github.com/proyecto26/blender-ai-plugin.git
+cp -r blender-ai-plugin/skills/* .claude/skills/
+```
+
+#### Option 5: Git Submodule
+
+```bash
+git submodule add https://github.com/proyecto26/blender-ai-plugin.git .claude/blender-ai-plugin
+```
+
+Then reference the skills from `.claude/blender-ai-plugin/skills/`.
+
+#### Option 6: Fork and Customize
+
+1. Fork this repository
+2. Customize or add skills for your studio's pipeline ([CONTRIBUTING.md](CONTRIBUTING.md))
+3. Load your fork with `claude --plugin-dir ./blender-ai-plugin`
+
+### 3. Build your first asset
+
+```
+"Build a game-ready sci-fi supply crate for Unreal, 2k tris, worn PBR, and show me a turntable"
+```
+
+The **blender-director** skill plans the pipeline. For big jobs the **blender-design-orchestrator** agent
+runs it end to end: brief → route → setup → build → look → validate → optimize → deliver. It takes a
+screenshot after every step.
 
 ---
 
-## Skills (94)
+## Features
 
-94 specialized skills across modeling, production, technical, pipeline, art styles, horror packs, worlds, moods, and gameplay genre direction.
+### Executes in Blender, verified
 
-See **[Skills Guide](SKILLS_GUIDE.md)** for the full list, subtype coverage map, decision trees, and workflow combinations.
+Every skill acts through the official MCP (`execute_blender_code`, `get_objects_summary`,
+`get_screenshot_of_area_as_image`, ...) instead of describing UI clicks. After each step the agent captures the
+viewport and checks the result against the brief.
 
-### Usage Patterns
+### 29 tested `bpy` scripts
 
-#### Orchestrated Execution
+Skills are **self-contained**: each one carries its own `references/` and, where it helps, `scripts/`.
+Every script takes JSON args, returns a JSON-safe dict, never deletes user data, and passes
+[`tests/blender/test_skill_scripts.py`](tests/blender/test_skill_scripts.py) on Blender 5.2 LTS.
 
-The **blender-director** skill analyzes your request and routes automatically:
+| Area | Scripts |
+|------|---------|
+| Scene & QA | `scene_audit`, `setup_collections`, `validate_asset`, `capture_views`, `topology_report`, `rig_check` |
+| Modeling | `bevel_stack`, `scatter_points` (Geometry Nodes), `voxelize`, `optimize_mesh` |
+| Surfacing | `pbr_material`, `toon_material`, `uv_unwrap_check`, `bake_maps`, `ps1_look` |
+| Look | `light_rig` (6 presets), `camera_rig`, `iso_camera`, `render_preset`, `comp_grade` (5 grades), `turntable` |
+| Simulation | `rigid_body_setup`, `cloth_setup` |
+| Game pipeline | `generate_lods`, `make_collision`, `export_asset`, `export_unreal`, `export_unity`, `export_godot` |
+
+### Blender 5.x-correct
+
+The guidance tracks the current API: Smooth by Angle instead of Auto Smooth, compositor Glare instead of
+EEVEE bloom, `scene.compositing_node_group`, the new Principled BSDF socket names, AgX looks and
+`modifier.properties.inputs` for Geometry Nodes. See
+[`blender-5-api-notes.md`](skills/blender-mcp-workflow/references/blender-5-api-notes.md).
+
+### Safe by default
+
+Agents inspect the scene before changing it, work in named collections, never delete user data without
+asking, and test destructive operations in background Blender (`execute_blender_code_for_cli`). This is a
+real concern because MCP code runs with your user permissions.
+
+---
+
+## Usage Examples
 
 ```
-# Hard Surface Asset
+# Hard-surface hero prop
 "Build a game-ready sci-fi rifle for Unreal Engine, 3k tris, realistic PBR"
-→ blender-director → hard-surface → uv-workflow → materials → asset-optimization → export-pipeline
+→ blender-director → hard-surface → uv-workflow → materials → asset-optimization → unreal-export
 
-# Environment
-"Create a modular horror corridor kit — narrow, flickering fluorescent, Silent Hill feel"
+# Environment kit
+"Create a modular horror corridor kit: narrow, flickering fluorescent, Silent Hill feel"
 → blender-director → horror-style → environment-artist → lighting → export-pipeline
 
 # Character
 "Retopologize this creature sculpt for game animation, 15k triangle budget"
 → blender-director → retopology → uv-workflow → texture-workflow → rigging
+
+# Reference match
+"Match this concept art: industrial spaceship. Analyze first, then build it"
+→ blender-director → reference-image-match → camera match → geometry tiers → screenshot compare loop
+
+# Style pass
+"Make this scene look like a PS1 survival-horror game"
+→ psx-horror-style → lowpoly-style (ps1_look.py) → lighting (horror_practical) → compositing (horror_vhs)
 ```
 
-#### Reference Image Matching
-
-Attach a photo or concept art and the agent matches it:
-
-```
-"Match this reference — industrial spaceship, analyze first then build in Blender"
-→ blender-director → reference-image-match
-  → Camera match → Geometry tiers → Materials → Lighting → Screenshot comparison loop
-```
-
-### Skill Categories
+### 🎨 Skill Categories
 
 | Category | Skills |
 |----------|--------|
-| **Orchestration** | [blender-director](.claude/skills/blender-director/) |
+| **Orchestration** | [blender-director](skills/blender-director/), [blender-mcp-workflow](skills/blender-mcp-workflow/), agent [blender-design-orchestrator](agents/blender-design-orchestrator.md) |
 | **Modeling** | blender-modeler, hard-surface, prop-artist, vehicle-artist, environment-artist, vegetation-artist, character-artist, creature-artist, character-archetypes |
 | **Production** | sculpting, retopology, uv-workflow, materials, texture-workflow, hair-groom, cloth-sim, lookdev |
 | **Technical** | geometry-nodes, lighting, camera-cinematography, rendering, compositing, animation, rigging, vfx-fx, physics-sim |
 | **Pipeline** | procedural-modeling, scene-assembly, set-dressing, asset-optimization, lod-pipeline, collision-proxy, export-pipeline, unity-export, unreal-export, godot-export, qa-review, archviz |
-| **Core styles** | horror-style, psx-horror-style, lowpoly-style, anime-style, voxel-style, isometric-style, stylized-style, realistic-style |
+| **Core styles** | horror, psx-horror, lowpoly, anime, voxel, isometric, stylized, realistic |
 | **Extended styles** | cartoon, comic-book, manga, pixel-art, hand-painted, painterly, stop-motion-craft, chibi, noir, minimalist, vector, retro-8bit, retro-16bit, hd-2d, frutiger-aero |
 | **Horror packs** | cosmic-eldritch, body-horror, analog-found-footage, liminal-space, folk-horror, mascot-puppet, dream-weirdcore, indie-horror-aesthetics |
-| **Worlds / moods** | fantasy-worlds, sci-fi-punk-worlds, historical-worlds, apocalypse-worlds, biome-worlds, cozy-wholesome, dark-gritty, dream-surreal, neon-retrofuturism, brutalist |
+| **Worlds / moods** | fantasy, sci-fi-punk, historical, apocalypse, biome, cozy-wholesome, dark-gritty, dream-surreal, neon-retrofuturism, brutalist |
 | **Genre direction** | action-combat, shooter, rpg, survival, stealth, puzzle-platformer, metroidvania-roguelike, soulslike, strategy-sim, racing-sports, narrative-vn, card-party-idle, open-world-sandbox |
 | **Eras** | visual-console-eras |
 
-Full paths and workflows: **[SKILLS_GUIDE.md](SKILLS_GUIDE.md)**.
-
----
-
-## Blender MCP
-
-Every skill executes **directly in Blender** via MCP — no UI walkthroughs, no manual steps.
-
-```
-Blender (running) ← BlenderMCP addon ← Cursor / Claude Code / Kiro / Codex
-```
-
-**Setup in 4 steps:**
-
-1. Install [uv](https://docs.astral.sh/uv/getting-started/installation/)
-2. Install the [BlenderMCP addon](https://github.com/ahujasid/blender-mcp) in Blender
-3. Blender sidebar `N` → **BlenderMCP** → **Connect to Claude**
-4. Restart your agent — Cursor ships `.cursor/mcp.json`; Claude Code uses `.mcp.json`
-
-Full guide: **[docs/BLENDER_MCP_SETUP.md](docs/BLENDER_MCP_SETUP.md)**
-
-| Config / Path | Client |
-|---------------|--------|
-| `.cursor/mcp.json` + `.cursor/skills/` | Cursor |
-| `.mcp.json` + `.claude/skills/` | Claude Code |
-| Kiro skills dir + Blender MCP | Kiro |
-| Codex skills path + Blender MCP | Codex |
-
----
-
-## Workflow Pipelines
-
-### Hero Hard Surface Prop
-```
-blender-director → hard-surface → uv-workflow → materials → asset-optimization → export-pipeline
-```
-
-### Game Character
-```
-blender-director → character-artist → sculpting → retopology
-→ uv-workflow → texture-workflow → rigging → animation → export-pipeline
-```
-
-### Horror Environment
-```
-blender-director → horror-style → environment-artist → lighting
-→ lowpoly-style → asset-optimization → export-pipeline
-```
-
-### Modular Kit
-```
-blender-director → environment-artist → geometry-nodes
-→ uv-workflow → texture-workflow → asset-optimization → export-pipeline
-```
-
-### Reference Image Match
-```
-blender-director → reference-image-match.md
-  → Reference Analysis → Camera match → Geometry tiers
-  → Materials → Lighting → Screenshot compare loop
-  → visual-match-checklist → validation-checklist
-```
-
----
-
-## Philosophy
-
-Every skill in this pack:
-
-- **Thinks before acting** — Plans the full pipeline before touching Blender
-- **Executes via MCP** — Uses Blender MCP tools when connected, never narrates UI steps
-- **Matches references** — Analyzes photo first, camera-matches, screenshot-compares in a loop
-- **Follows production standards** — Naming conventions, polycount budgets, game-ready output
-- **Validates before export** — Asset optimization and checklist gate on every delivery
+Decision trees and workflow combinations: **[docs/SKILLS_GUIDE.md](docs/SKILLS_GUIDE.md)**.
 
 ---
 
 ## Project Structure
 
 ```
-.claude-plugin/           # Claude Code plugin manifest
-.claude/skills/           # 94 skills + 175+ reference files
-  ├── blender-director/
-  ├── hard-surface/
-  ├── prop-artist/
-  ├── genre-shooter/
-  ├── sci-fi-punk-worlds/
-  ├── ... (89 more skills)
-  └── references/         # Asset pipeline, naming, MCP tools, checklists
-.cursor/skills/           # Synced mirror for Cursor
-.cursor/mcp.json          # Blender MCP config (Cursor)
-.mcp.json                 # Blender MCP config (Claude Code)
-site/                     # Website (blender-skills.vercel.app)
-docs/
-  └── BLENDER_MCP_SETUP.md
+blender-ai-plugin/
+├── plugin.json                    # Agent Plugins 1.0 manifest
+├── .claude-plugin/                # Claude Code manifest + marketplace
+├── .codex-plugin/                 # Codex manifest
+├── .agents/plugins/               # Codex / Copilot marketplace catalog
+├── agents/
+│   └── blender-design-orchestrator.md
+├── skills/                        # 95 self-contained skills
+│   ├── blender-director/          # routing brain
+│   ├── blender-mcp-workflow/      # MCP safety, tool catalog, shared refs, core scripts
+│   │   ├── references/
+│   │   └── scripts/
+│   └── <skill>/{SKILL.md, references/, scripts/}
+├── evals/                         # claude plugin eval suite
+├── tests/blender/                 # headless Blender tests for every script
+├── scripts/                       # validate_skills.py, check-manifests.sh
+└── docs/                          # setup, skills guide, roadmap, demo video (+ its Blender source)
+```
+
+## Architecture
+
+```mermaid
+flowchart LR
+    U[You: brief / reference image] --> A[Claude Code · Codex · Agent Plugins client]
+    A --> D[blender-director<br/>routing]
+    A --> O[blender-design-orchestrator<br/>agent]
+    O --> D
+    D --> S[Specialist skills<br/>modeling · surfacing · look · styles · export]
+    S --> W[blender-mcp-workflow<br/>safety + scripts]
+    W -- execute_blender_code / runpy --> M[Official Blender Lab MCP]
+    M --> B[(Blender 5.1+)]
+    B -- screenshots · summaries --> O
+    S --> E[FBX / glTF + LODs + collision<br/>Unreal · Unity · Godot]
 ```
 
 ---
 
-## Documentation
+## Testing
 
-| Doc | Purpose |
-|-----|---------|
-| [QUICKSTART.md](QUICKSTART.md) | Installation and first steps |
-| [SKILLS_GUIDE.md](SKILLS_GUIDE.md) | Skill index, decision trees, workflows |
-| [docs/BLENDER_MCP_SETUP.md](docs/BLENDER_MCP_SETUP.md) | Blender MCP connection guide |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | How to add skills and contribute |
-| [CHANGELOG.md](CHANGELOG.md) | Version history |
-| [.claude/skills/references/](.claude/skills/references/) | Shared pipeline standards |
+```bash
+python3 scripts/validate_skills.py          # frontmatter, links, self-containment, 5.x APIs, script safety
+bash scripts/check-manifests.sh             # manifests agree + claude plugin validate + schema
+blender -b --factory-startup --python tests/blender/test_skill_scripts.py   # every script, headless
+claude plugin eval --runs 1                 # behavioral evals (uses tokens, results vary)
+```
 
----
+## Known Limitations
 
-## Contributing
-
-See **[CONTRIBUTING.md](CONTRIBUTING.md)** for guidelines on adding skills, writing references, and submitting pull requests.
-
----
-
-## Changelog
-
-See **[CHANGELOG.md](CHANGELOG.md)** for full version history and release notes.
+- **Blender 5.1+ only.** The official MCP server and the script APIs target Blender 5.x. Older versions
+  need the third-party add-on and older API patterns.
+- **MCP code runs as you.** `execute_blender_code` can touch your files and network like any Python script.
+  Only install plugins and MCP servers you trust, and save your work first.
+- **Vision-dependent steps** such as reference matching and look development depend on your model's
+  image understanding. The scripts make the results repeatable, but taste is still your call.
+- **Engine import settings** (Unreal/Unity/Godot) are documented, not automated inside the engines.
 
 ---
 
-## License
+## 🌟 Star History
 
-MIT License — See [LICENSE](LICENSE) for details.
+[![Star History Chart](https://api.star-history.com/svg?repos=proyecto26/blender-ai-plugin&type=Date)](https://star-history.com/#proyecto26/blender-ai-plugin&Date)
 
----
+## 💜 Sponsors
 
-## Support
+This project is free and open source. Sponsors help keep it maintained and growing.
 
-- **Website:** [blender-skills.vercel.app](https://blender-skills.vercel.app/)
-- **Issues:** [GitHub Issues](https://github.com/arjun988/blender-skills/issues)
-- **Discussions:** [GitHub Discussions](https://github.com/arjun988/blender-skills/discussions)
-- **Repository:** [github.com/arjun988/blender-skills](https://github.com/arjun988/blender-skills)
+[**Become a Sponsor**](https://github.com/sponsors/proyecto26) | [Sponsorship Program](https://proyecto26.com/sponsors/)
 
----
+## 🤝 Contribution
 
-<div align="center">
+When contributing to this repository, please first discuss the change you wish to make via issue,
+email, or any other method with the owners of this repository before making a change.
 
-**Built for Cursor, Claude Code, Kiro & Codex** | **Blender MCP** | **94 Skills** | **175+ Reference Files**
+Contributions are what make the open-source community such an amazing place to learn, inspire, and create. Any contributions you make are **greatly appreciated** ❤️.
 
-Inspired by [jeffallan/claude-skills](https://github.com/Jeffallan/claude-skills)
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the skill and script contract, and the
+[Proyecto 26 contribution guide](https://github.com/proyecto26/.github/blob/master/CONTRIBUTING.md).
+Release notes: [CHANGELOG.md](CHANGELOG.md).
 
-</div>
+## ⚖️ License
+This repository is available under the [MIT License](./LICENSE).
+
+## 👍 Credits
+
+- [blender-skills](https://github.com/arjun988/blender-skills) by arjun988: the original skill pack this plugin is forked from
+- [Blender Lab MCP server](https://www.blender.org/lab/mcp-server/): the official Blender MCP integration
+- [Agent Plugins](https://agent-plugins.org/) and [Agent Skills](https://agentskills.io/): the packaging standards
+- [notebooklm-ai-plugin](https://github.com/proyecto26/notebooklm-ai-plugin) and [sherlock-ai-plugin](https://github.com/proyecto26/sherlock-ai-plugin): sibling Proyecto 26 plugins and repo layout
+
+## Happy vibe coding 💯
+Made with ❤️ by [Proyecto 26](https://proyecto26.com) - Changing the world with small contributions.
+
+One hand can accomplish great things, but many can take you into space and beyond! 🌌
+
+Together we do more, together we are more ❤️ <img width="150px" src="https://avatars0.githubusercontent.com/u/28855608?s=200&v=4" align="right">
