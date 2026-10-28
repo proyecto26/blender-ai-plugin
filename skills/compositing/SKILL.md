@@ -111,7 +111,7 @@ path of this installed script and their ARGS. Don't inline or rewrite the script
 
 | Script | What it does |
 |--------|--------------|
-| `scripts/comp_grade.py` | Build a compositor grade with the Blender 5.x API (scene.compositing_node_group, Group Output, socket-based Glare): bloom, lift/gamma/gain, saturation, lens, pixelate and a soft vignette. Replaces only nodes this script created (names starting "SK_"), so a user's own compositor nodes are kept. |
+| `scripts/comp_grade.py` | Build a compositor grade with the Blender 5.x API (scene.compositing_node_group, Group Output, socket-based Glare): bloom, lift/gamma/gain, saturation, lens, pixelate, posterize (`posterize` steps per channel, for 8-bit palettes) and a soft vignette. Replaces only nodes this script created (names starting "SK_"), so a user's own compositor nodes are kept. |
 
 ```python
 import runpy

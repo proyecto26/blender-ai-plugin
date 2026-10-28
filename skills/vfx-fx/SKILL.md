@@ -78,6 +78,22 @@ Brief (silhouette + timing) → Proxy emitter → Sim/GN prototype
 - Unbounded particle counts
 - Skip timing brief (start/peak/end frames)
 
+## Scripts
+
+Tested on Blender 5.2 LTS via the official Blender MCP. Run with `execute_blender_code` (or headless,
+see the `blender-mcp-workflow` skill); read the script header for every argument.
+When the user will paste code into Blender themselves, give them the short `runpy` call with the absolute
+path of this installed script and their ARGS. Don't inline or rewrite the script: the tested file is the point.
+
+| Script | What it does |
+|--------|--------------|
+| `scripts/smoke_domain.py` | Mantaflow gas domain fitted around an emitter + flow (`SMOKE`/`FIRE`/`BOTH`, `INFLOW`), Principled Volume material, open top, low preview resolution; never bakes. |
+
+```python
+import runpy
+result = runpy.run_path("<skill_dir>/scripts/smoke_domain.py", init_globals={"ARGS": {"emitter": "SM_Crate", "flow_type": "BOTH"}})["result"]
+```
+
 ## Reference Guide
 
 | Topic | Reference | Load When |

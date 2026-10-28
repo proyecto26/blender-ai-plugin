@@ -21,3 +21,19 @@ Pixel actors. 3D stage. Tilted theatrical camera. Creamy DoF.
 3. Strong DoF / god rays
 4. Ortho-leaning perspective
 5. Warm theatrical keys
+
+## Scripts
+
+Tested on Blender 5.2 LTS via the official Blender MCP. Run with `execute_blender_code` (or headless,
+see the `blender-mcp-workflow` skill); read the script header for every argument.
+When the user will paste code into Blender themselves, give them the short `runpy` call with the absolute
+path of this installed script and their ARGS. Don't inline or rewrite the script: the tested file is the point.
+
+| Script | What it does |
+|--------|--------------|
+| `scripts/sprite_billboard.py` | Pixel sprite plane: packed image with Closest interpolation and alpha, feet on the ground, turned to face the camera. Then add DoF with camera-cinematography `camera_rig.py`. |
+
+```python
+import runpy
+result = runpy.run_path("<skill_dir>/scripts/sprite_billboard.py", init_globals={"ARGS": {"name": "SPR_Hero", "location": [0, 0], "height": 1.6}})["result"]
+```
