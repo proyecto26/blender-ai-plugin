@@ -286,6 +286,7 @@ blender-director → asset-optimization → lod-pipeline → collision-proxy →
 - Coordinate skills; don't try to do everything in one pass
 
 ### MUST NOT DO
+- Write code or snippets for Blender versions before 5.2, or add version fallbacks: this plugin targets 5.2+, and legacy branches teach users APIs that no longer exist
 - Skip planning phase
 - Skip reference analysis when user attached an image
 - Keyframe emission on shared hull/structural materials

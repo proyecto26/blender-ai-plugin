@@ -97,6 +97,7 @@ Combined
 - Document exposure/look settings
 
 ### MUST NOT DO
+- Write code or snippets for Blender versions before 5.2, or add version fallbacks: this plugin targets 5.2+, and legacy branches teach users APIs that no longer exist
 - Crush blacks to hide lighting problems
 - Over-glare every bright pixel
 - Flatten multilayer to JPEG as only archive
@@ -105,17 +106,24 @@ Combined
 
 Tested on Blender 5.2 LTS via the official Blender MCP. Run with `execute_blender_code` (or headless,
 see the `blender-mcp-workflow` skill); read the script header for every argument.
+When the user will paste code into Blender themselves, give them the short `runpy` call with the absolute
+path of this installed script and their ARGS. Don't inline or rewrite the script: the tested file is the point.
 
 | Script | What it does |
 |--------|--------------|
-| `scripts/comp_grade.py` | Build a compositor grade with the Blender 5.x API (scene.compositing_node_group, Group Output, socket-based Glare). Replaces only nodes this script created (names starting "SK_"), so a user's own compositor nodes are kept. |
+| `scripts/comp_grade.py` | Build a compositor grade with the Blender 5.x API (scene.compositing_node_group, Group Output, socket-based Glare): bloom, lift/gamma/gain, saturation, lens, pixelate and a soft vignette. Replaces only nodes this script created (names starting "SK_"), so a user's own compositor nodes are kept. |
 
 ```python
 import runpy
 result = runpy.run_path("<skill_dir>/scripts/comp_grade.py", init_globals={"ARGS": {...}})["result"]
 ```
 
-ARGS: `preset`
+ARGS: `preset`, `vignette` (0-1), `warmth` (-1..1, warm/cool highlights). A "subtle vignette with warm
+highlights" is `{"preset": "clean", "vignette": 0.35, "warmth": 0.4}`.
+
+Blender 5.2 compositor facts this script relies on (hand-written graphs usually miss them): node settings
+are input sockets (Color Balance `Type`, Blur `Size` as a 2D vector, Ellipse Mask `Size`); there is no
+MixRGB node, use `ShaderNodeMix` with `data_type = "RGBA"` (its Factor socket is a `NodeSocketFloatFactor`).
 
 ## Reference Guide
 

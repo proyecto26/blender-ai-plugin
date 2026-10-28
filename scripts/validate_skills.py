@@ -8,7 +8,8 @@ Checks per skill:
   - metadata.related-skills all resolve to existing skills
   - every `references/...` / `scripts/...` path mentioned in SKILL.md exists in the skill
   - self-contained: no `../` paths escaping the skill folder
-  - no deprecated Blender (< 4.2) API names (see blender-mcp-workflow/references/blender-5-api-notes.md)
+  - no removed Blender API names (see blender-mcp-workflow/references/blender-5-api-notes.md): an error inside
+    fenced code blocks or scripts, a warning in prose; no bpy.app.version fallbacks (Blender 5.2+ only)
   - scripts: parse as Python, expose main(), read ARGS, have a module docstring with ARGS:
     and never shell out or touch the network
 
@@ -34,7 +35,9 @@ DEPRECATED = {
     r"ShaderNodeSeparateRGB|ShaderNodeCombineRGB|CompositorNodeCombRGBA|CompositorNodeSepRGBA": "use Separate/Combine Color",
     r"Subsurface Color\"?\s*[:=]": "removed in 4.0; tint via Base Color",
     r"get_viewport_screenshot|get_scene_info": "third-party MCP tool; use the official Blender MCP tools",
+    r"\w\[[\"']Socket_\d+[\"']\]\s*=": "use mod.properties.inputs.<identifier>.value (Blender 5.2)",
 }
+FENCE_RE = re.compile(r"```[^\n]*\n(.*?)```", re.S)
 # Detected with the AST (not substrings), so names like `socket_type` never false-positive.
 FORBIDDEN_MODULES = {"subprocess": "spawns processes", "socket": "network access", "urllib": "network access",
                      "requests": "network access", "http": "network access", "ftplib": "network access",
@@ -82,6 +85,12 @@ def check_script(path):
         errors.append(f"{path.name}: no main() function")
     if 'globals().get("ARGS")' not in src:
         errors.append(f"{path.name}: does not read ARGS from globals()")
+    code = src.replace(doc, "") if doc else src
+    if re.search(r"bpy\.app\.version\b", code):
+        errors.append(f"{path.name}: version branch (bpy.app.version); target Blender 5.2+ only")
+    for pattern, fix in DEPRECATED.items():
+        if re.search(pattern, code):
+            errors.append(f"{path.name}: removed API ({fix})")
     for node in ast.walk(tree):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             mods = [a.name for a in node.names] if isinstance(node, ast.Import) else [node.module or ""]
@@ -135,10 +144,15 @@ def main():
                 owner = re.search(r"`([a-z0-9-]+)` skill → `" + re.escape(ref) + "`", text)
                 if not (owner and (SKILLS / owner.group(1) / ref).exists()):
                     errors.append(f"referenced file missing: {ref}")
-        # blender-mcp-workflow documents the deprecated names on purpose (migration table / anti-patterns).
-        for pattern, fix in DEPRECATED.items() if skill.name != "blender-mcp-workflow" else ():
-            for f in [md, *skill.rglob("references/*.md")]:
-                if re.search(pattern, f.read_text(encoding="utf-8")):
+        # Runnable code must never use removed APIs. Prose may name them (blender-mcp-workflow documents
+        # them on purpose as a "do not use" list), but other skills get a warning for it.
+        for f in [md, *skill.rglob("references/*.md")]:
+            body = f.read_text(encoding="utf-8")
+            code = "\n".join(FENCE_RE.findall(body))
+            for pattern, fix in DEPRECATED.items():
+                if re.search(pattern, code):
+                    errors.append(f"{f.relative_to(skill)}: removed API in a code block ({fix})")
+                elif skill.name != "blender-mcp-workflow" and re.search(pattern, body):
                     warnings.append(f"{f.relative_to(skill)}: deprecated API ({fix})")
         for script in sorted(skill.glob("scripts/*.py")):
             e, w = check_script(script)

@@ -72,6 +72,7 @@ Tune mass and air viscosity for scale. Always run a settle pre-roll.
 - Art-direct after sim (sculpt/corrective keys)
 
 ### MUST NOT DO
+- Write code or snippets for Blender versions before 5.2, or add version fallbacks: this plugin targets 5.2+, and legacy branches teach users APIs that no longer exist
 - Sim hero cloth on ultra-dense sculpt meshes
 - Skip pre-roll (starts mid-air / exploding)
 - Export raw unstable caches
@@ -80,6 +81,8 @@ Tune mass and air viscosity for scale. Always run a settle pre-roll.
 
 Tested on Blender 5.2 LTS via the official Blender MCP. Run with `execute_blender_code` (or headless,
 see the `blender-mcp-workflow` skill); read the script header for every argument.
+When the user will paste code into Blender themselves, give them the short `runpy` call with the absolute
+path of this installed script and their ARGS. Don't inline or rewrite the script: the tested file is the point.
 
 | Script | What it does |
 |--------|--------------|

@@ -122,18 +122,10 @@ def _populate(ng, align_to_normal, realize):
 
 
 def _set_input(mod, name, value):
-    """Set a geometry-nodes modifier input by its interface name.
-
-    Blender 5.2+: mod.properties.inputs.<identifier>.value
-    Blender 4.x / 5.0-5.1: ID property mod[identifier]
-    """
+    """Set a geometry-nodes modifier input by its interface name (mod.properties.inputs, Blender 5.2+)."""
     for item in mod.node_group.interface.items_tree:
-        if getattr(item, "in_out", None) == "INPUT" and item.name == name:
-            props = getattr(mod, "properties", None)
-            if props is not None and hasattr(props, "inputs"):
-                getattr(props.inputs, item.identifier).value = value
-            else:
-                mod[item.identifier] = value
+        if item.item_type == "SOCKET" and item.in_out == "INPUT" and item.name == name:
+            getattr(mod.properties.inputs, item.identifier).value = value
             return
     raise KeyError(f"modifier input not found: {name}")
 

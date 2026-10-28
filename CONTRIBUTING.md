@@ -83,7 +83,7 @@ result = main(**ARGS)
 ```
 
 Rules (enforced by `scripts/validate_skills.py`): no `subprocess`, sockets/HTTP, `eval`/`exec`, or file
-deletion; non-destructive by default (create/update named objects, never delete user data); Blender 5.1+
+deletion; non-destructive by default (create/update named objects, never delete user data); Blender 5.2+
 APIs only (see `skills/blender-mcp-workflow/references/blender-5-api-notes.md`). Add a case to
 `tests/blender/test_skill_scripts.py` for every new script.
 

@@ -30,19 +30,13 @@ def _cli_args():
 
 
 def _linear(action_owner):
-    """Force linear interpolation on every key (Blender 4.4+ layered actions and legacy)."""
+    """Force linear interpolation on every key (layered/slotted actions: layer -> strip -> channelbag)."""
     anim = action_owner.animation_data
     action = anim.action if anim else None
     if action is None:
         return
-    curves = []
-    if hasattr(action, "layers") and action.layers:
-        for layer in action.layers:
-            for strip in layer.strips:
-                for bag in getattr(strip, "channelbags", []):
-                    curves.extend(bag.fcurves)
-    elif hasattr(action, "fcurves"):
-        curves.extend(action.fcurves)
+    curves = [fc for layer in action.layers for strip in layer.strips
+              for bag in strip.channelbags for fc in bag.fcurves]
     for fc in curves:
         for kp in fc.keyframe_points:
             kp.interpolation = "LINEAR"

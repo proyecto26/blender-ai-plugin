@@ -1,4 +1,4 @@
-"""Smoke-test every skill script inside a real Blender (5.1+), in isolation.
+"""Smoke-test every skill script inside a real Blender (5.2+), in isolation.
 
 Builds a throwaway test scene in a NEW scene datablock, runs each script with
 representative ARGS, asserts on the returned result dict, then deletes the test
@@ -116,6 +116,9 @@ def build_cases(out_dir):
          lambda r: len(r["nodes"]) >= 4),
         ("compositing.comp_grade_rerun", lambda: run("compositing", "comp_grade.py", {"preset": "cinematic"}),
          lambda r: "SK_Pixelate" not in r["nodes"]),
+        ("compositing.comp_grade_vignette", lambda: run("compositing", "comp_grade.py", {
+            "preset": "clean", "vignette": 0.35, "warmth": 0.4}),
+         lambda r: {"SK_Vignette", "SK_ColorBalance"} <= set(r["nodes"])),
         ("lod-pipeline.generate_lods", lambda: run("lod-pipeline", "generate_lods.py", {
             "object": "SM_Sphere_01", "ratios": [0.5, 0.25]}),
          lambda r: r["lods"][1]["tris"] < r["lods"][0]["tris"] and r["lods"][2]["tris"] < r["lods"][1]["tris"]),

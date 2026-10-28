@@ -1,6 +1,6 @@
 ---
 name: geometry-nodes
-description: Blender Geometry Nodes for procedural modeling, scatter systems, vegetation, buildings, pipes, cables, and reusable node groups. Use for procedural asset generation and instancing pipelines via MCP, and whenever Python code builds node groups or reads/sets Geometry Nodes modifier inputs (Blender 5.2 changed that API).
+description: Blender Geometry Nodes for procedural modeling, scatter systems, vegetation, buildings, pipes, cables and reusable node groups. Use whenever the user wants to scatter, distribute or instance objects (rocks, trees, grass, debris) across a surface: run the tested scripts/scatter_points.py with its ARGS instead of hand-building a node tree or particle system. Also use whenever Python code builds node groups or reads/sets Geometry Nodes modifier inputs (Blender 5.2 changed that API).
 license: MIT
 metadata:
   author: https://github.com/arjun988
@@ -92,19 +92,17 @@ Always expose seed as group input for art direction iteration.
 | GN_Wall_Variant | Parametric wall sections |
 | GN_Vegetation_Cluster | Tree/bush clustering |
 
-## Python: set modifier inputs (Blender 5.x)
+## Python: set modifier inputs (Blender 5.2)
 
-Modifier inputs are keyed by the socket **identifier** (`Socket_2`), not its name. Blender 5.2 removed
-ID-property access (`mod["Socket_2"] = v` raises `TypeError: id properties not supported`):
+Modifier inputs are keyed by the socket **identifier** (`Socket_2`), not its name, and live on
+`mod.properties.inputs`. Assigning by item on the modifier itself raises
+`TypeError: id properties not supported`.
 
 ```python
 mod = obj.modifiers["GeometryNodes"]
 ident = next(i.identifier for i in mod.node_group.interface.items_tree
              if i.item_type == "SOCKET" and i.in_out == "INPUT" and i.name == "Density")
-if hasattr(mod, "properties"):                 # Blender 5.2+
-    getattr(mod.properties.inputs, ident).value = 2.5
-else:                                          # 4.x - 5.1
-    mod[ident] = 2.5
+getattr(mod.properties.inputs, ident).value = 2.5
 ```
 
 Node sockets keep hidden same-name variants per data type, so pick inputs with
@@ -137,6 +135,7 @@ Document which approach per target engine.
 - Name groups with `GN_` prefix
 
 ### MUST NOT DO
+- Write code or snippets for Blender versions before 5.2, or add version fallbacks: this plugin targets 5.2+, and legacy branches teach users APIs that no longer exist
 - Million-instance scatter without LOD/culling plan
 - Nested realize operations (performance killer)
 - Hardcode values that should be inputs
@@ -147,6 +146,8 @@ Document which approach per target engine.
 
 Tested on Blender 5.2 LTS via the official Blender MCP. Run with `execute_blender_code` (or headless,
 see the `blender-mcp-workflow` skill); read the script header for every argument.
+When the user will paste code into Blender themselves, give them the short `runpy` call with the absolute
+path of this installed script and their ARGS. Don't inline or rewrite the script: the tested file is the point.
 
 | Script | What it does |
 |--------|--------------|

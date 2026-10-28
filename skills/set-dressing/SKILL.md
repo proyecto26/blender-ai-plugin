@@ -1,6 +1,6 @@
 ---
 name: set-dressing
-description: Set dressing and environmental storytelling placement for interiors and exteriors using prop density, narrative clusters, and readability rules via MCP.
+description: Set dressing and environmental storytelling placement for interiors and exteriors using prop density, narrative clusters and readability rules via MCP. For scattering many small props (rocks, debris, foliage) over terrain, use the geometry-nodes skill's scatter_points.py script.
 license: MIT
 metadata:
   author: https://github.com/arjun988

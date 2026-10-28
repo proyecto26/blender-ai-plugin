@@ -48,5 +48,5 @@ the routing table in `skills/blender-director/SKILL.md` and to [SKILLS_GUIDE.md]
 
 - [ ] `python3 scripts/validate_skills.py` → 0 errors
 - [ ] `bash scripts/check-manifests.sh` → all OK
-- [ ] Blender smoke tests pass on 5.1+
+- [ ] Blender smoke tests pass on 5.2+
 - [ ] Skill triggers on the prompts you expect (`claude plugin eval --runs 1`)

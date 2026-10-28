@@ -78,6 +78,7 @@ Simplify collision meshes → Assign rigid/soft bodies
 - Trigger destruction intentionally (frame)
 
 ### MUST NOT DO
+- Write code or snippets for Blender versions before 5.2, or add version fallbacks: this plugin targets 5.2+, and legacy branches teach users APIs that no longer exist
 - High-res sculpt meshes as active colliders
 - Unbounded shard counts
 - Leave sims unbaked for final renders
@@ -86,6 +87,8 @@ Simplify collision meshes → Assign rigid/soft bodies
 
 Tested on Blender 5.2 LTS via the official Blender MCP. Run with `execute_blender_code` (or headless,
 see the `blender-mcp-workflow` skill); read the script header for every argument.
+When the user will paste code into Blender themselves, give them the short `runpy` call with the absolute
+path of this installed script and their ARGS. Don't inline or rewrite the script: the tested file is the point.
 
 | Script | What it does |
 |--------|--------------|

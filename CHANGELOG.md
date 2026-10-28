@@ -23,10 +23,14 @@ Fork maintained by [Proyecto 26](https://github.com/proyecto26) as **Blender AI 
   mesh cleanup) — all passing `tests/blender/test_skill_scripts.py` on Blender 5.2 LTS
 - `scripts/validate_skills.py` (frontmatter, links, self-containment, deprecated APIs, script safety) and
   `scripts/check-manifests.sh` (manifest consistency + `claude plugin validate` + Agent Plugins schema)
-- `claude plugin eval` suite under `evals/`
+- `claude plugin eval` suite under `evals/` (Blender 5.x bpy code: 6 should-fire + 2 should-NOT-fire cases)
 - Demo video `docs/blender-ai-plugin.mp4`, rendered with Blender using the plugin's own scripts
 
 ### Changed
+- Skill triggers: `blender-mcp-workflow` now fires before any bpy code; `geometry-nodes`/`set-dressing` route scattering to `scatter_points.py`; 27 skills forbid pre-5.2 code and version fallbacks; 26 skills hand users the `runpy` call instead of inlining scripts.
+- `compositing/comp_grade.py`: `vignette` and `warmth` ARGS (Blender 5.2 `ShaderNodeMix` + socket-based Ellipse Mask/Blur).
+- `lighting/light_rig.py`: `golden_hour` preset now renders warm (warm horizon world, dimmer cool fill).
+- Evals: graders accept a call to the plugin's tested script as well as the literal 5.2 API; case 04 hardened (coat, sheen, no fallbacks).
 - Skills moved from `.claude/skills/` to `skills/` (Agent Skills layout); shared `references/` moved into
   `blender-mcp-workflow`; every skill is self-contained (no `../` paths)
 - MCP integration targets the **official Blender Lab MCP server** (Blender 5.1+) instead of the third-party
@@ -36,6 +40,11 @@ Fork maintained by [Proyecto 26](https://github.com/proyecto26) as **Blender AI 
   `Specular IOR Level`, `Subsurface Color` removed, Combine RGB → Combine Color, Filmic → AgX looks
 - `dream-weirdcore-style` linked a non-existent `surreal-mood` skill → `dream-surreal-mood`
 - `blender-director` frontmatter had a duplicate `role` key
+
+- **Blender 5.2+ only**: version fallbacks removed from scripts and skill code (`mod.properties.inputs`,
+  layered actions); `validate_skills.py` rejects `bpy.app.version` branches and removed APIs in code
+- `blender-mcp-workflow` gained a "Verify, Don't Guess" loop (script first → API docs → isolated probe →
+  confirm) and allows removing clearly unused data (orphans, empty collections, plugin-created objects)
 
 ### Removed
 - `site/` (Next.js website), `.cursor/` duplicate skill copy, Windows-only `.mcp.json` pointing to the

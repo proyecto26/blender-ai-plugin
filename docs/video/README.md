@@ -13,7 +13,7 @@ footage and no screen recording. Captions are 3D text rendered in Blender; the m
 | `icon.py` | Renders `.claude-plugin/icon.png` from the neon hero shot |
 
 ```bash
-B=/Applications/Blender.app/Contents/MacOS/Blender          # Blender 5.1+
+B=/Applications/Blender.app/Contents/MacOS/Blender          # Blender 5.2+
 $B -b --factory-startup --python docs/video/build_video.py -- '{"stills": true}'   # 1 frame/shot, review first
 $B -b --factory-startup --python docs/video/build_video.py -- '{}'                 # full render (~minutes)
 python3 docs/video/assemble.py                                                       # needs ffmpeg + libx264

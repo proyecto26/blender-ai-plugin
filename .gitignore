@@ -45,3 +45,6 @@ temp/
 evals/results/
 tests/blender/out/
 docs/video/build/
+
+# skill-creator evals (local benchmark runs)
+evals/skill-creator-workspace/

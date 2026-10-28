@@ -25,7 +25,7 @@ docs/                            # setup guide, skills guide, demo video
 2. **Scripts follow one contract:** module docstring with `ARGS:`, a `main(**kwargs)` that returns a
    JSON-safe dict, `ARGS = globals().get("ARGS") or _cli_args()`, `result = main(**ARGS)`.
    No `subprocess`, sockets, `eval`/`exec`, or file deletion. Non-destructive by default.
-3. **Target Blender 5.1+.** Check `skills/blender-mcp-workflow/references/blender-5-api-notes.md` and the
+3. **Target Blender 5.2+ only (no fallbacks for older versions).** Check `skills/blender-mcp-workflow/references/blender-5-api-notes.md` and the
    MCP `get_python_api_docs` tool; never use pre-4.2 APIs.
 4. **Keep manifests in sync** (name, version, description) across `plugin.json`, `.claude-plugin/*`,
    `.codex-plugin/plugin.json`.

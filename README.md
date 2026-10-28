@@ -4,7 +4,7 @@
 [![Claude Code](https://img.shields.io/badge/Claude_Code-Plugin-blueviolet)](https://code.claude.com/docs/en/plugins)
 [![Agent Plugins](https://img.shields.io/badge/Agent_Plugins-1.0-orange)](https://agent-plugins.org/)
 [![Skills](https://img.shields.io/badge/Skills-95-brightgreen)](#-skill-categories)
-[![Blender](https://img.shields.io/badge/Blender-5.1%2B-E87D0D?logo=blender&logoColor=white)](https://www.blender.org/lab/mcp-server/)
+[![Blender](https://img.shields.io/badge/Blender-5.2%2B-E87D0D?logo=blender&logoColor=white)](https://www.blender.org/lab/mcp-server/)
 
 <img src="https://github.com/proyecto26/sherlock-ai-plugin/blob/main/images/claude-mascot-jumping-animated.svg" width="150">
 
@@ -37,7 +37,7 @@ This plugin follows the [Agent Plugins](https://agent-plugins.org/) v1.0.0 packa
 
 ### 1. Connect Blender (official MCP)
 
-1. Install **Blender 5.1+** and the [Blender Lab MCP server](https://www.blender.org/lab/mcp-server/) add-on.
+1. Install **Blender 5.2+** and the [Blender Lab MCP server](https://www.blender.org/lab/mcp-server/) add-on.
 2. Register the server with your agent:
    ```bash
    claude mcp add --scope user blender -- uv run --directory ~/.blender-mcp/<version>/server blender-mcp
@@ -225,7 +225,7 @@ flowchart LR
     D --> S[Specialist skills<br/>modeling · surfacing · look · styles · export]
     S --> W[blender-mcp-workflow<br/>safety + scripts]
     W -- execute_blender_code / runpy --> M[Official Blender Lab MCP]
-    M --> B[(Blender 5.1+)]
+    M --> B[(Blender 5.2+)]
     B -- screenshots · summaries --> O
     S --> E[FBX / glTF + LODs + collision<br/>Unreal · Unity · Godot]
 ```
@@ -243,8 +243,8 @@ claude plugin eval --runs 1                 # behavioral evals (uses tokens, res
 
 ## Known Limitations
 
-- **Blender 5.1+ only.** The official MCP server and the script APIs target Blender 5.x. Older versions
-  need the third-party add-on and older API patterns.
+- **Blender 5.2+ only.** Skills and scripts target the current LTS with no fallbacks for older versions
+  (the MCP server itself runs on 5.1, but e.g. `modifier.properties` is 5.2+).
 - **MCP code runs as you.** `execute_blender_code` can touch your files and network like any Python script.
   Only install plugins and MCP servers you trust, and save your work first.
 - **Vision-dependent steps** such as reference matching and look development depend on your model's

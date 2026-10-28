@@ -1,6 +1,6 @@
 ---
 name: blender-mcp-workflow
-description: Use whenever you write or review Blender Python (bpy) code for Blender 4.2+/5.x, or drive Blender through the official Blender Lab MCP server (execute_blender_code, get_objects_summary, screenshots, render_viewport_to_path, API/manual doc search) or needs the shared production rules - naming conventions, polycount budgets, the universal asset pipeline, validation gates, reference-image matching, and Blender 5.x API changes. Ships tested bpy scripts for scene audit, COL_ hierarchy setup, game-ready validation, and multi-angle review captures.
+description: Use before writing ANY Blender Python (bpy) code, even a short snippet and even when no Blender version is mentioned: Blender 5.2 removed APIs that most examples online still use (mesh auto smooth, EEVEE bloom, scene.node_tree, Geometry Nodes modifier item assignment, old Principled socket names), so unchecked code usually breaks. Also use whenever driving Blender through the official Blender Lab MCP server (execute_blender_code, get_objects_summary, screenshots, API/manual doc search) and for the shared production rules: naming, polycount budgets, the asset pipeline, validation gates, reference matching. Ships tested bpy scripts for scene audit, collection setup, game-ready validation and review captures, and points to every other skill's scripts.
 license: MIT
 metadata:
   author: https://github.com/proyecto26
@@ -14,7 +14,7 @@ metadata:
 # Blender MCP Workflow
 
 The foundation every other skill in this plugin builds on: how to work safely through the
-**official Blender MCP server** (Blender Lab, Blender 5.1+), the shared production standards,
+**official Blender MCP server** (Blender Lab; this plugin targets Blender 5.2+), the shared production standards,
 and a set of tested scripts.
 
 ## Safety First
@@ -24,7 +24,10 @@ Blender Lab's own guidance: review generated code, and prefer a VM or a machine 
 
 - **Inspect before editing** - `get_objects_summary` / `scene_audit.py` first; never assume an empty scene.
 - **Never destroy user work silently** - the open file may be unsaved (`bpy.data.is_dirty`). Do not
-  `wm.read_homefile`, delete scenes/objects you did not create, or overwrite the `.blend` without asking.
+  `wm.read_homefile`, delete the user's authored objects/scenes, or overwrite the `.blend` without asking.
+  Removing clearly **unused** data is fine: orphan datablocks (`users == 0`, e.g.
+  `bpy.data.orphans_purge(do_recursive=True)`), empty collections, and objects this plugin created
+  (report what was removed).
 - **Experiment in isolation** - test risky code with `execute_blender_code_for_cli` (background Blender on
   a copy/scratch `.blend`) or inside a temporary scene you remove afterwards.
 - **No network / no shell from bpy** - never call `subprocess`, `os.system`, sockets or downloads from
@@ -67,6 +70,10 @@ blender -b asset.blend --python <skill_dir>/scripts/validate_asset.py -- '{"tri_
 
 Read a script before running it the first time in a session; pass only the documented ARGS.
 
+When Blender is not connected and the user will paste code into Blender's Scripting workspace, give them
+the same short `runpy` call with the absolute path of the installed script and their ARGS. Don't inline or
+rewrite the script: the tested file is what makes the result reliable.
+
 ## Scripts
 
 | Script | Purpose | Mutates scene? |
@@ -88,6 +95,22 @@ Read a script before running it the first time in a session; pass only the docum
 7. REPORT    object names, tri counts, verdicts, file paths
 ```
 
+## Verify, Don't Guess
+
+Model training data is full of Blender 2.8-4.0 code. Treat every API you did not just verify as suspect:
+
+1. **Script first.** If a plugin script covers the task (see Scripts), run it with JSON ARGS instead of
+   hand-writing bpy. Scripts are tested on Blender 5.2 and return a result dict you can check.
+2. **Look it up.** For any hand-written API, call `search_api_docs` / `get_python_api_docs` (bundled with
+   the server for the running version) or read `references/blender-5-api-notes.md`. Never invent
+   operators or properties.
+3. **Probe in isolation.** Run a minimal snippet with `execute_blender_code_for_cli` on a scratch `.blend`
+   (or check `bl_rna.properties`) before touching the user's scene.
+4. **Apply, then confirm.** Make the real change, then confirm with `get_objects_summary`,
+   `get_object_detail_summary`, or a screenshot. Report the evidence, not just "done".
+5. **Current version only.** Write code for the running Blender (5.2+). No `bpy.app.version` branches or
+   `hasattr` fallbacks for removed APIs.
+
 ## Shared References
 
 | Topic | File |
@@ -105,6 +128,6 @@ Read a script before running it the first time in a session; pass only the docum
 
 - Narrating UI clicks ("press Tab...") when MCP is connected
 - Calling `bpy.ops` without the right mode, selection and active object
-- Using pre-4.x APIs: `use_auto_smooth`, `eevee.use_bloom`, `scene.node_tree`, `ShaderNodeTexMusgrave`, Principled `"Specular"`
+- Using APIs removed in 4.1-5.2 (`use_auto_smooth`, `eevee.use_bloom`, `scene.node_tree`, `ShaderNodeTexMusgrave`, Principled `"Specular"`, `mod["Socket_N"] = v`) or writing version fallbacks: this plugin targets Blender 5.2+ only
 - Huge single scripts - split into verifiable steps
 - Reporting success without a validation result or a screenshot

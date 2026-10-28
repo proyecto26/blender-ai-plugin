@@ -7,7 +7,9 @@ Group Output, socket-based Glare). Replaces only nodes this script created
                             init_globals={"ARGS": {"preset": "cinematic"}})["result"]
 
 ARGS:
-    preset (str) clean | cinematic | horror_vhs | stylized_bloom | noir
+    preset   (str)   clean | cinematic | horror_vhs | stylized_bloom | noir
+    vignette (float) 0..1 edge darkening; overrides the preset (cinematic 0.35, horror_vhs 0.5)
+    warmth   (float) -1..1 tint of the highlights (gain); >0 warm, <0 cool; overrides the preset gain
 """
 import json
 import sys
@@ -17,9 +19,9 @@ import bpy
 PRESETS = {
     "clean": {"bloom": None, "lift_gamma_gain": None, "saturation": 1.0, "lens": 0.0, "pixel": None},
     "cinematic": {"bloom": (0.9, 0.35), "lift_gamma_gain": ((0.98, 1.0, 1.04), (1.0, 1.0, 0.98), (1.04, 1.0, 0.95)),
-                  "saturation": 0.95, "lens": 0.01, "pixel": None},
+                  "saturation": 0.95, "lens": 0.01, "pixel": None, "vignette": 0.35},
     "horror_vhs": {"bloom": (0.6, 0.5), "lift_gamma_gain": ((1.0, 1.03, 1.0), (0.95, 1.0, 0.95), (0.9, 1.0, 0.92)),
-                   "saturation": 0.6, "lens": 0.04, "pixel": 2},
+                   "saturation": 0.6, "lens": 0.04, "pixel": 2, "vignette": 0.5},
     "stylized_bloom": {"bloom": (0.7, 0.8), "lift_gamma_gain": None, "saturation": 1.15, "lens": 0.0, "pixel": None},
     "noir": {"bloom": (1.0, 0.2), "lift_gamma_gain": None, "saturation": 0.0, "lens": 0.02, "pixel": None},
 }
@@ -40,10 +42,16 @@ def _sock(sockets, name):
     raise KeyError(f"no enabled socket {name!r}: {[s.name for s in sockets if s.enabled]}")
 
 
-def main(preset="cinematic"):
+def main(preset="cinematic", vignette=None, warmth=None):
     if preset not in PRESETS:
         raise ValueError(f"unknown preset {preset!r}; choose from {sorted(PRESETS)}")
-    cfg = PRESETS[preset]
+    cfg = dict(PRESETS[preset])
+    if vignette is not None:
+        cfg["vignette"] = max(0.0, min(1.0, float(vignette)))
+    if warmth is not None:
+        w = max(-1.0, min(1.0, float(warmth))) * 0.1
+        lift, gamma, _ = cfg["lift_gamma_gain"] or ((1.0, 1.0, 1.0), (1.0, 1.0, 1.0), None)
+        cfg["lift_gamma_gain"] = (lift, gamma, (1.0 + w, 1.0, 1.0 - w))
     scene = bpy.context.scene
     tree = scene.compositing_node_group
     if tree is None:
@@ -100,8 +108,24 @@ def main(preset="cinematic"):
         links.new(chain[-1], _sock(px.inputs, "Color") if any(s.name == "Color" and s.enabled for s in px.inputs)
                   else _sock(px.inputs, "Image"))
         chain.append(px.outputs[0]); built.append(px.name)
+    if cfg.get("vignette"):
+        # Ellipse Mask (white centre) -> Blur (soft edge) -> Mix MULTIPLY over the image.
+        # 5.2: mask/blur settings are input sockets; Mix is ShaderNodeMix with data_type RGBA.
+        mask = add("CompositorNodeEllipseMask", "SK_VignetteMask", x - 220); mask.location.y = -320
+        _sock(mask.inputs, "Size").default_value = (0.95, 0.95)
+        blur = add("CompositorNodeBlur", "SK_VignetteBlur", x); blur.location.y = -320
+        _sock(blur.inputs, "Size").default_value = (180, 180)
+        links.new(_sock(mask.outputs, "Mask"), _sock(blur.inputs, "Image"))
+        mix = add("ShaderNodeMix", "SK_Vignette", x + 220); x += 440
+        mix.data_type, mix.blend_type, mix.clamp_result = "RGBA", "MULTIPLY", True
+        colour = [s for s in mix.inputs if s.enabled and s.bl_idname == "NodeSocketColor"]
+        _sock(mix.inputs, "Factor").default_value = cfg["vignette"]
+        links.new(chain[-1], colour[0]); links.new(_sock(blur.outputs, "Image"), colour[1])
+        chain.append(next(s for s in mix.outputs if s.enabled))
+        built += [mask.name, blur.name, mix.name]
     links.new(chain[-1], out.inputs[0])
-    return {"preset": preset, "tree": tree.name, "nodes": built, "link_count": len(tree.links)}
+    return {"preset": preset, "tree": tree.name, "nodes": built, "link_count": len(tree.links),
+            "vignette": cfg.get("vignette") or 0.0}
 
 
 ARGS = globals().get("ARGS") or _cli_args()

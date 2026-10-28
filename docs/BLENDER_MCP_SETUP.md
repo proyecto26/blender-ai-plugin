@@ -12,7 +12,7 @@ you install it once and every agent (Claude Code, Codex, Cursor, Copilot CLI...)
 
 | Requirement | Version |
 |-------------|---------|
-| Blender | **5.1 or newer** (scripts tested on 5.2 LTS) |
+| Blender | **5.2 or newer** (the MCP server runs on 5.1+, this plugin's skills and scripts need 5.2) |
 | Python | 3.10+ (for the MCP server process) |
 | [uv](https://docs.astral.sh/uv/) | recommended, to run the server from source |
 

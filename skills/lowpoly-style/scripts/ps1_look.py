@@ -69,13 +69,12 @@ def _snap_group():
 
 
 def _set_input(mod, name, value):
+    """Set a geometry-nodes modifier input by its interface name (mod.properties.inputs, Blender 5.2+)."""
     for item in mod.node_group.interface.items_tree:
-        if getattr(item, "in_out", None) == "INPUT" and item.name == name:
-            props = getattr(mod, "properties", None)
-            if props is not None and hasattr(props, "inputs"):
-                getattr(props.inputs, item.identifier).value = value
-            else:
-                mod[item.identifier] = value
+        if item.item_type == "SOCKET" and item.in_out == "INPUT" and item.name == name:
+            getattr(mod.properties.inputs, item.identifier).value = value
+            return
+    raise KeyError(f"modifier input not found: {name}")
 
 
 def main(objects=None, snap=0.02, resolution=(320, 240), flat=False, fog=True):

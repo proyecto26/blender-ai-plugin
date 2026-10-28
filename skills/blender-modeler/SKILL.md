@@ -1,6 +1,6 @@
 ---
 name: blender-modeler
-description: Core Blender modeling specialist for Edit Mode, modifiers, collections, precision modeling, and scene organization. Use for general 3D modeling, blockouts, cleanup, non-destructive workflows, and scene structure in Blender via MCP.
+description: Core Blender modeling specialist for Edit Mode, modifiers, collections, precision modeling, shading (smooth/flat, auto smooth via Smooth by Angle, weighted normals) and scene organization. Use for general 3D modeling, blockouts, cleanup, non-destructive workflows and scene structure in Blender via MCP, including any bpy code that shades meshes smooth.
 license: MIT
 metadata:
   author: https://github.com/arjun988
@@ -141,6 +141,7 @@ See `blender-mcp-workflow` skill → `references/mcp-integration.md`
 - Validate topology before handoff
 
 ### MUST NOT DO
+- Write code or snippets for Blender versions before 5.2, or add version fallbacks: this plugin targets 5.2+, and legacy branches teach users APIs that no longer exist
 - Delete blockout before silhouette approved
 - Apply all modifiers prematurely
 - Leave default names (Cube.001)
