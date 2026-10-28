@@ -1,52 +1,18 @@
 {
-  "name": "blender-skills",
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "blender-ai-plugin",
+  "description": "Blender AI Plugin - skills, scripts and a design orchestrator for the official Blender MCP",
   "owner": {
-    "name": "arjun988",
-    "url": "https://github.com/arjun988"
-  },
-  "metadata": {
-    "description": "Blender Skills production skills for Cursor and Claude Code with Blender MCP integration",
-    "version": "1.3.0"
+    "name": "Proyecto 26",
+    "email": "jdnichollsc@gmail.com"
   },
   "plugins": [
     {
-      "name": "blender-skills",
+      "name": "blender-ai-plugin",
+      "description": "AI technical-art team for Blender: 95 skills, 29 tested bpy scripts and a design orchestrator agent that drive the official Blender MCP server to model, texture, light, render, validate and export game-ready assets (Unreal, Unity, Godot) in any art style. Use for any Blender modeling, look-dev, scene or export task.",
+      "version": "2.0.0",
       "source": "./",
-      "description": "94 specialized Blender skills: director orchestration, modeling/production/pipeline, extended art styles, horror packs, world/mood packs, gameplay genre direction, character archetypes, and visual eras. Subtype details in skill references. Built for Blender MCP.",
-      "version": "1.3.0",
-      "author": {
-        "name": "blender-skills"
-      },
-      "homepage": "https://github.com/arjun988/blender-skills",
-      "repository": "https://github.com/arjun988/blender-skills",
-      "license": "MIT",
-      "keywords": [
-        "blender",
-        "3d",
-        "game-art",
-        "technical-artist",
-        "blender-mcp",
-        "hard-surface",
-        "prop-artist",
-        "vehicle-artist",
-        "environment-art",
-        "character-art",
-        "rigging",
-        "pbr",
-        "geometry-nodes",
-        "export-pipeline",
-        "unity-export",
-        "unreal-export"
-      ],
-      "category": "creative",
-      "tags": [
-        "blender",
-        "3d",
-        "game-development",
-        "technical-art",
-        "mcp"
-      ],
-      "skills": "./.claude/skills/"
+      "category": "creative"
     }
   ]
 }

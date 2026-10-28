@@ -1,8 +1,55 @@
 # Changelog
 
-All notable changes to the Blender Skills Pack.
+All notable changes to the Blender AI Plugin (formerly Blender Skills Pack).
 
 Format: [Semantic Versioning](https://semver.org/) — `Major.Minor.Patch`
+
+---
+
+## [2.0.0] — 2026-10-27
+
+Fork maintained by [Proyecto 26](https://github.com/proyecto26) as **Blender AI Plugin**.
+
+### Added
+- **Agent Plugins 1.0** manifest (`plugin.json`), **Codex** manifest (`.codex-plugin/plugin.json`) and
+  Codex/Copilot catalog (`.agents/plugins/marketplace.json`) next to the Claude Code manifests
+- **`blender-design-orchestrator` agent** for end-to-end, verified multi-skill execution
+- **`blender-mcp-workflow` foundation skill**: official Blender Lab MCP tool catalog, safety rules, shared
+  references, Blender 5.x API notes, and core scripts (`scene_audit`, `setup_collections`,
+  `validate_asset`, `capture_views`)
+- **29 bpy scripts** across 26 skills (bevel stack, PBR/toon materials, UV density, GN scatter, light rigs,
+  camera rigs, render presets, 5.x compositor grades, LODs, collision proxies, Unreal/Unity/Godot export,
+  rig check, turntable, PS1 look, voxelize, isometric camera, rigid body, cloth, topology report, baking,
+  mesh cleanup) — all passing `tests/blender/test_skill_scripts.py` on Blender 5.2 LTS
+- `scripts/validate_skills.py` (frontmatter, links, self-containment, deprecated APIs, script safety) and
+  `scripts/check-manifests.sh` (manifest consistency + `claude plugin validate` + Agent Plugins schema)
+- `claude plugin eval` suite under `evals/` (Blender 5.x bpy code: 6 should-fire + 2 should-NOT-fire cases)
+- Demo video `docs/blender-ai-plugin.mp4`, rendered with Blender using the plugin's own scripts
+
+### Changed
+- Skill triggers: `blender-mcp-workflow` now fires before any bpy code; `geometry-nodes`/`set-dressing` route scattering to `scatter_points.py`; 27 skills forbid pre-5.2 code and version fallbacks; 26 skills hand users the `runpy` call instead of inlining scripts.
+- `compositing/comp_grade.py`: `vignette` and `warmth` ARGS (Blender 5.2 `ShaderNodeMix` + socket-based Ellipse Mask/Blur).
+- `lowpoly-style/ps1_look.py`: real compositor fog from the mist pass (`fog` takes an RGB colour) and 32px posterized, nearest-filtered textures for untextured meshes (`texture`).
+- `lighting/light_rig.py`: `golden_hour` preset now renders warm (warm horizon world, dimmer cool fill).
+- Evals: graders accept a call to the plugin's tested script as well as the literal 5.2 API; case 04 hardened (coat, sheen, no fallbacks).
+- Skills moved from `.claude/skills/` to `skills/` (Agent Skills layout); shared `references/` moved into
+  `blender-mcp-workflow`; every skill is self-contained (no `../` paths)
+- MCP integration targets the **official Blender Lab MCP server** (Blender 5.1+) instead of the third-party
+  `blender-mcp` add-on; tool names updated (`get_screenshot_of_area_as_image`, `get_objects_summary`, ...)
+- Outdated Blender API guidance fixed: Auto Smooth → Smooth by Angle, EEVEE bloom/SSR/AO → compositor
+  Glare + ray tracing, `scene.node_tree` → `scene.compositing_node_group`, Principled `Specular` →
+  `Specular IOR Level`, `Subsurface Color` removed, Combine RGB → Combine Color, Filmic → AgX looks
+- `dream-weirdcore-style` linked a non-existent `surreal-mood` skill → `dream-surreal-mood`
+- `blender-director` frontmatter had a duplicate `role` key
+
+- **Blender 5.2+ only**: version fallbacks removed from scripts and skill code (`mod.properties.inputs`,
+  layered actions); `validate_skills.py` rejects `bpy.app.version` branches and removed APIs in code
+- `blender-mcp-workflow` gained a "Verify, Don't Guess" loop (script first → API docs → isolated probe →
+  confirm) and allows removing clearly unused data (orphans, empty collections, plugin-created objects)
+
+### Removed
+- `site/` (Next.js website), `.cursor/` duplicate skill copy, Windows-only `.mcp.json` pointing to the
+  third-party server, `version.json`, `QUICKSTART.md` (merged into README), root `CLAUDE.md` (→ `AGENTS.md`)
 
 ---
 

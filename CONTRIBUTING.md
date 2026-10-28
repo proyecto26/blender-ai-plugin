@@ -1,196 +1,93 @@
-# Contributing to Blender Skills Pack
+# Contributing to the Blender AI Plugin
 
-Guidelines for contributing skills, references, and fixes.
+Thanks for helping! Please open an [issue](https://github.com/proyecto26/blender-ai-plugin/issues) to
+discuss larger changes first. General guidelines: [Proyecto 26 contribution guide](https://github.com/proyecto26/.github/blob/master/CONTRIBUTING.md).
 
-## How to Contribute
+## Workflow
 
-### Reporting Issues
-- Use [GitHub Issues](https://github.com/arjun988/blender-skills/issues)
-- Include: steps to reproduce, expected vs actual behavior, Blender version, MCP status
-
-### Suggesting New Skills
-When proposing a new skill:
-1. Explain the use case and target Blender discipline
-2. List what MCP operations it would drive
-3. Describe triggering keywords
-4. Provide example prompts
-
-### Submitting Changes
-
-#### 1. Fork and Clone
 ```bash
-git clone https://github.com/arjun988/blender-skills.git
-cd blender-skills
+git clone https://github.com/proyecto26/blender-ai-plugin.git
+cd blender-ai-plugin
+git checkout -b feat/my-skill
+# edit skills/...
+python3 scripts/validate_skills.py
+bash scripts/check-manifests.sh
+blender -b --factory-startup --python tests/blender/test_skill_scripts.py -- '{"out_dir": "/tmp/bst"}'
 ```
 
-#### 2. Create a Branch
-```bash
-git checkout -b feature/my-new-skill
-# or
-git checkout -b fix/my-bug-fix
+Commit prefixes: `feat:`, `fix:`, `docs:`, `test:`, `chore:`.
+
+## Skill layout (Agent Skills spec)
+
+```
+skills/my-skill/
+├── SKILL.md          # frontmatter + lean instructions (aim for < 300 lines)
+├── references/       # optional deep-dive docs loaded on demand
+└── scripts/          # optional bpy scripts (tested in tests/blender)
 ```
 
-#### 3. Make Changes
+Skills are **self-contained**: no `../` paths. Point to another skill by name, e.g.
+``the `blender-mcp-workflow` skill → `references/validation-checklist.md` ``.
 
-**Adding a new skill:**
-```bash
-mkdir -p .claude/skills/my-skill
-# Create SKILL.md following the schema below
-# Add references/ subfolder for supporting docs
-```
-
-**Syncing to Cursor:**
-```powershell
-Copy-Item -Recurse -Force ".claude\skills\*" ".cursor\skills\"
-```
-
-#### 4. Commit
-```bash
-git add .
-git commit -m "Add: My New Blender Skill for XYZ discipline"
-```
-
-Commit prefix convention:
-- `Add:` — new skill or reference file
-- `Fix:` — bug fix in existing skill
-- `Update:` — improvements to existing content
-- `Docs:` — documentation only
-
-#### 5. Push and Open a Pull Request
-```bash
-git push origin feature/my-new-skill
-```
-
----
-
-## SKILL.md Schema
-
-Every skill must follow this frontmatter exactly:
+### Frontmatter
 
 ```yaml
 ---
-name: skill-name
-description: Use when [triggering conditions]. Invoke for [specific keywords].
+name: my-skill                      # = folder name, lowercase a-z0-9-
+description: Use when [conditions]. Invoke for [keywords].   # <= 1024 chars
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/<you>
   version: "1.0.0"
   domain: blender
   role: specialist
-  triggers: keyword1, keyword2, phrase1
-  related-skills: blender-director, hard-surface, materials
+  triggers: keyword1, keyword2
+  related-skills: blender-director, materials      # must exist in skills/
 ---
 ```
 
-**Description formula (required):**
-```
-Use when [condition]. Invoke for [keywords].
-```
+### Recommended sections
 
-### Required Sections (in order)
+`Role Definition` → `When to Use` → `Core Workflow` → `Technical Guidelines` → `Scripts` (if any) →
+`Constraints (MUST DO / MUST NOT DO)` → `Reference Guide` → `Knowledge Reference`.
 
-```markdown
-# Skill Name
+## Script contract
 
-One-sentence expert role definition.
+Scripts run inside Blender through the official MCP (`execute_blender_code` + `runpy`) or headless:
 
-## Role Definition
+```python
+"""One-line summary.
 
-2–3 sentences. Define the expert persona. Mention specializations.
+    import runpy
+    result = runpy.run_path("<skill_dir>/scripts/my_script.py", init_globals={"ARGS": {...}})["result"]
 
-## When to Use
+ARGS:
+    objects (list[str], required) ...
+"""
+import json, sys
+import bpy
 
-- Bullet: specific scenario
-- Bullet: triggering keywords or task types
+def _cli_args():
+    if "--" in sys.argv:
+        raw = sys.argv[sys.argv.index("--") + 1:]
+        if raw:
+            return json.loads(raw[0])
+    return {}
 
-## Core Workflow
+def main(objects):
+    ...
+    return {"ok": True}          # JSON-safe dict
 
-1. **Step** — description
-2. **Step** — description
-
-## Technical Guidelines
-
-Tables, code examples, patterns. Domain-specific content.
-
-## Constraints
-
-### MUST DO
-- [Required practice]
-
-### MUST NOT DO
-- [Anti-pattern]
-
-## Reference Guide
-
-| Topic | Reference | Load When |
-|-------|-----------|-----------|
-| ... | `references/....md` | ... |
-
-## Knowledge Reference
-
-keyword1, keyword2, keyword3, phrase, term, concept
+ARGS = globals().get("ARGS") or _cli_args()
+result = main(**ARGS)
 ```
 
-### Progressive Disclosure Pattern
+Rules (enforced by `scripts/validate_skills.py`): no `subprocess`, sockets/HTTP, `eval`/`exec`, or file
+deletion; non-destructive by default (create/update named objects, never delete user data); Blender 5.2+
+APIs only (see `skills/blender-mcp-workflow/references/blender-5-api-notes.md`). Add a case to
+`tests/blender/test_skill_scripts.py` for every new script.
 
-Lean `SKILL.md` (~80–120 lines) + `references/` subfolder.
+## Evals
 
-```
-.claude/skills/my-skill/
-├── SKILL.md
-└── references/
-    ├── topic-a.md
-    └── topic-b.md
-```
-
-Reference files use this header:
-```markdown
-# Topic Title
-
-> Reference for: skill-name
-> Load when: [condition]
-```
-
----
-
-## Blender MCP Rules
-
-All skills that interact with Blender must:
-- Execute via `execute_blender_code` — never describe manual UI steps
-- Read tool schemas before calling (see `references/mcp-tools.md`)
-- Use non-destructive patterns (duplicate before destructive ops)
-- Validate via scene query after each phase
-
----
-
-## Reference Image Tasks
-
-Skills that handle photo/concept matching must reference `references/reference-image-match.md` and enforce:
-1. Reference Analysis before MCP execution
-2. Camera match before geometry detail
-3. Screenshot comparison loop
-4. `visual-match-checklist.md` before delivery
-
----
-
-## Testing Your Skill
-
-Before submitting:
-1. **Trigger test** — does it activate with expected prompts?
-2. **MCP test** — does the Python code run in Blender without error?
-3. **Completeness** — does it cover the main use cases?
-4. **Schema** — does frontmatter match the required format?
-5. **Sync** — run `Copy-Item -Recurse -Force ".claude\skills\*" ".cursor\skills\"` and verify
-
----
-
-## Code of Conduct
-
-Be respectful. This is a creative/technical community. Harassment, gatekeeping, or dismissive behavior toward contributors is not tolerated.
-
----
-
-## Questions
-
-- Open a [GitHub Discussion](https://github.com/arjun988/blender-skills/discussions)
-- File an [Issue](https://github.com/arjun988/blender-skills/issues)
+Behavioral changes to skills should keep `claude plugin eval` green. Pilot with `--runs 1` first; evals
+call the model and use tokens.

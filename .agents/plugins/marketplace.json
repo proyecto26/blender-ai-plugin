@@ -1,0 +1,20 @@
+{
+  "name": "blender-ai-plugin-marketplace",
+  "interface": {
+    "displayName": "Blender AI Plugin"
+  },
+  "plugins": [
+    {
+      "name": "blender-ai-plugin",
+      "source": {
+        "source": "local",
+        "path": "./"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Creative"
+    }
+  ]
+}

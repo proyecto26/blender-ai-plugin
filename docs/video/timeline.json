@@ -1,0 +1,121 @@
+{
+  "title": "Blender AI Plugin",
+  "fps": 24,
+  "resolution": [
+    1920,
+    1080
+  ],
+  "accent": [
+    0.96,
+    0.47,
+    0.16
+  ],
+  "transition_frames": 8,
+  "fonts": {
+    "display": "/System/Library/Fonts/Supplemental/DIN Alternate Bold.ttf",
+    "mono": "/System/Library/Fonts/SFNSMono.ttf"
+  },
+  "shots": [
+    {
+      "id": "title",
+      "look": "title",
+      "frames": 96,
+      "title": "Blender AI Plugin",
+      "tag": "your AI technical-art team · official Blender MCP",
+      "big": true
+    },
+    {
+      "id": "blockout",
+      "look": "clay",
+      "frames": 48,
+      "title": "Blockout",
+      "tag": "blender-director → blender-modeler"
+    },
+    {
+      "id": "bevel",
+      "look": "bevel",
+      "frames": 48,
+      "title": "Hard-surface finish",
+      "tag": "hard-surface/scripts/bevel_stack.py"
+    },
+    {
+      "id": "pbr",
+      "look": "pbr",
+      "frames": 60,
+      "title": "Materials / light / camera",
+      "tag": "pbr_material.py · light_rig.py · camera_rig.py"
+    },
+    {
+      "id": "realistic",
+      "look": "realistic",
+      "frames": 48,
+      "title": "Realistic",
+      "tag": "realistic-style · golden_hour · cinematic grade"
+    },
+    {
+      "id": "toon",
+      "look": "toon",
+      "frames": 48,
+      "title": "Stylized / anime",
+      "tag": "stylized-style/scripts/toon_material.py"
+    },
+    {
+      "id": "ps1",
+      "look": "ps1",
+      "frames": 48,
+      "title": "PS1 horror",
+      "tag": "lowpoly-style/scripts/ps1_look.py · horror_vhs"
+    },
+    {
+      "id": "voxel",
+      "look": "voxel",
+      "frames": 48,
+      "title": "Voxel",
+      "tag": "voxel-style/scripts/voxelize.py"
+    },
+    {
+      "id": "iso",
+      "look": "iso",
+      "frames": 48,
+      "title": "Isometric diorama",
+      "tag": "isometric-style/scripts/iso_camera.py"
+    },
+    {
+      "id": "noir",
+      "look": "noir",
+      "frames": 48,
+      "title": "Noir",
+      "tag": "noir-style · moonlight · noir grade"
+    },
+    {
+      "id": "neon",
+      "look": "neon",
+      "frames": 48,
+      "title": "Neon retrofuturism",
+      "tag": "neon-retrofuturism · neon_night · bloom"
+    },
+    {
+      "id": "ship",
+      "look": "ship",
+      "frames": 72,
+      "title": "Validate / LODs / collision / export",
+      "tag": "validate_asset.py → generate_lods.py → export_unreal.py"
+    },
+    {
+      "id": "stats",
+      "look": "stats",
+      "frames": 72,
+      "title": "95 skills / 29 tested scripts / 1 orchestrator",
+      "tag": "Claude Code · Codex · Agent Plugins 1.0",
+      "big": true
+    },
+    {
+      "id": "cta",
+      "look": "cta",
+      "frames": 96,
+      "title": "Happy vibe coding",
+      "tag": "/plugin marketplace add proyecto26/blender-ai-plugin",
+      "big": true
+    }
+  ]
+}

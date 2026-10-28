@@ -1,0 +1,92 @@
+---
+name: voxel-style
+description: Voxel and Minecraft-adjacent art direction for Blender with block grid modeling, limited palettes, and chunk-friendly assets.
+license: MIT
+metadata:
+  author: https://github.com/arjun988
+  version: "1.0.0"
+  domain: blender
+  role: specialist
+  triggers: voxel, Minecraft, blocky, cube world, pixel voxel, grid block, chunk
+  related-skills: lowpoly-style, environment-artist, materials, geometry-nodes
+---
+
+# Voxel Style
+
+Block grid language. Limited palette. Chunk-friendly forms.
+
+## When to Use
+
+- Minecraft-adjacent / voxel game assets
+- Blockout aesthetic as final style
+- Grid-snapped props and characters
+
+## Core Tenets
+
+1. **Grid snap** — Occupancy on explicit voxel size (e.g. 0.1 / 1.0m)
+2. **No diagonal organic bevels** — Cubes and stepped forms
+3. **Palette atlas** — Few colors; readable blocks
+4. **Silhouette via steps** — Not smooth curves
+5. **Chunk modularity** — Pieces fit tile sizes
+
+## Workflow
+
+```
+Choose voxel size → Block occupancy → Merge cubes
+  → Palette materials → Optional GN instance → Export
+```
+
+## Modeling Tips
+
+- Start from cubes; boolean union / merge by distance
+- Characters: stepped limbs, clear head block
+- Avoid subdivision surface (breaks voxel language)
+- Remesh to blocks only if converting from smooth
+
+## Materials
+
+- Flat colors or nearest-neighbor textures
+- Atlas preferred
+- Emission for glow blocks sparingly
+
+## Vs lowpoly-style
+
+- `lowpoly-style` allows irregular low tris / PS1 vibes
+- `voxel-style` enforces grid occupancy aesthetic
+
+## Constraints
+
+### MUST DO
+- Declare voxel size in brief
+- Snap consistently
+- Keep palette small
+
+### MUST NOT DO
+- Write code or snippets for Blender versions before 5.2, or add version fallbacks: this plugin targets 5.2+, and legacy branches teach users APIs that no longer exist
+- Smooth shading that hides block edges (unless intentional glass)
+- Organic sculpt detail
+
+## Scripts
+
+Tested on Blender 5.2 LTS via the official Blender MCP. Run with `execute_blender_code` (or headless,
+see the `blender-mcp-workflow` skill); read the script header for every argument.
+When the user will paste code into Blender themselves, give them the short `runpy` call with the absolute
+path of this installed script and their ARGS. Don't inline or rewrite the script: the tested file is the point.
+
+| Script | What it does |
+|--------|--------------|
+| `scripts/voxelize.py` | Voxelize meshes with the Remesh modifier in Blocks mode (non-destructive), flat shading, and an optional apply. Reports the resulting voxel count estimate. |
+
+```python
+import runpy
+result = runpy.run_path("<skill_dir>/scripts/voxelize.py", init_globals={"ARGS": {...}})["result"]
+```
+
+ARGS: `objects`, `voxel_size`, `apply`
+
+## Reference Guide
+
+| Topic | Reference | Load When |
+|-------|-----------|----------|
+| Voxel Grid | `references/voxel-grid.md` | When needed |
+| Voxel Characters | `references/voxel-characters.md` | When needed |

@@ -1,166 +1,52 @@
 # Local Skill Development
 
-Guide for creating and testing new skills locally before submitting a pull request.
-
-## Setup
-
-Clone the repo and work from it directly:
+## Load the plugin from your clone
 
 ```bash
-git clone https://github.com/arjun988/blender-skills.git
-cd blender-skills
+git clone https://github.com/proyecto26/blender-ai-plugin.git
+cd blender-ai-plugin
+
+# Claude Code: run with the plugin loaded from this folder (no install needed)
+claude --plugin-dir .
+
+# or add the local folder as a marketplace and install it
+claude plugin marketplace add ./
+claude plugin install blender-ai-plugin@blender-ai-plugin
 ```
 
-## Creating a New Skill
+Codex / Copilot CLI read `.agents/plugins/marketplace.json` + `.codex-plugin/plugin.json`; other Agent
+Plugins clients read the root `plugin.json`.
 
-### 1. Create the folder structure
+## Create a skill
 
 ```bash
-mkdir -p .claude/skills/my-skill
-mkdir -p .claude/skills/my-skill/references
+mkdir -p skills/my-skill/references skills/my-skill/scripts
+$EDITOR skills/my-skill/SKILL.md
 ```
 
-### 2. Create `SKILL.md`
+Follow the frontmatter and script contract in [CONTRIBUTING.md](../CONTRIBUTING.md), then add the skill to
+the routing table in `skills/blender-director/SKILL.md` and to [SKILLS_GUIDE.md](SKILLS_GUIDE.md).
 
-Follow the schema exactly (see `CONTRIBUTING.md`). Minimum required:
+## Test against real Blender
 
-```yaml
----
-name: my-skill
-description: Use when [triggering conditions]. Invoke for [keywords].
-license: MIT
-metadata:
-  author: https://github.com/arjun988
-  version: "1.0.0"
-  domain: blender
-  role: specialist
-  triggers: keyword1, keyword2
-  related-skills: blender-director, blender-modeler
----
+1. Install the official Blender MCP ([BLENDER_MCP_SETUP.md](BLENDER_MCP_SETUP.md)).
+2. Write a scratch file once (never test against work you care about):
+   ```python
+   # via execute_blender_code
+   import bpy
+   bpy.data.libraries.write("/tmp/empty.blend", set())
+   result = {"ok": True}
+   ```
+3. Run the smoke tests headless through MCP:
+   `execute_blender_code_for_cli(blend_file="/tmp/empty.blend", code='import runpy; result = runpy.run_path("<repo>/tests/blender/test_skill_scripts.py", init_globals={"ARGS": {"only": ["my-skill"]}})["result"]')`
+   or from a terminal:
+   `blender -b --factory-startup --python tests/blender/test_skill_scripts.py -- '{"only": ["my-skill"]}'`
+4. Look at the result: `capture_views.py` renders PNGs you can open, and in the live session
+   `get_screenshot_of_area_as_image("VIEW_3D")` shows the viewport.
 
-# My Skill
+## Checklist
 
-One-sentence expert role.
-
-## Role Definition
-
-2–3 sentences. Expert persona, specializations.
-
-## When to Use
-
-- Specific scenario
-
-## Core Workflow
-
-1. **Step** — description
-
-## Constraints
-
-### MUST DO
-- [Required]
-
-### MUST NOT DO
-- [Anti-pattern]
-
-## Reference Guide
-
-| Topic | Reference | Load When |
-|-------|-----------|-----------|
-| ... | `references/....md` | ... |
-
-## Knowledge Reference
-
-keyword1, keyword2, keyword3
-```
-
-### 3. Add reference files (optional)
-
-For large topics, use progressive disclosure:
-
-```bash
-# .claude/skills/my-skill/references/topic.md
-```
-
-Reference file header:
-```markdown
-# Topic Title
-
-> Reference for: my-skill
-> Load when: [condition]
-```
-
-### 4. Test locally
-
-**Cursor:**
-```powershell
-Copy-Item -Recurse -Force ".claude\skills\*" ".cursor\skills\"
-```
-Restart Cursor. Prompt: `"Use my-skill to [task]"` — verify it activates and routes correctly.
-
-**Claude Code:**
-Skills in `.claude/skills/` are picked up automatically in the project.
-
-### 5. Test MCP operations
-
-With Blender running and BlenderMCP connected, test any `execute_blender_code` calls in your skill. Verify:
-- Code runs without Python exceptions
-- Objects are named and parented correctly
-- Collections use `COL_` prefix
-- No destructive joins or deletes on source meshes
-
-### 6. Verify frontmatter
-
-Check your `SKILL.md` has all required fields:
-
-```bash
-# Quick check - look for required fields
-Select-String -Path ".claude/skills/my-skill/SKILL.md" -Pattern "name:|description:|author:|triggers:|role:|related-skills:"
-```
-
-## Syncing `.claude` to `.cursor`
-
-Always sync after changes:
-
-```powershell
-Copy-Item -Recurse -Force ".claude\skills\*" ".cursor\skills\"
-```
-
-Or add this as a git hook (`scripts/sync-skills.ps1`):
-
-```powershell
-# .git/hooks/pre-commit (PowerShell wrapper)
-Copy-Item -Recurse -Force ".claude\skills\*" ".cursor\skills\"
-git add ".cursor\skills\"
-```
-
-## Validating Before Commit
-
-Manually check:
-
-- [ ] Frontmatter has all required fields (`name`, `description`, `author`, `triggers`, `role`, `related-skills`)
-- [ ] Description follows formula: `Use when [...]. Invoke for [...].`
-- [ ] Sections present: Role Definition, When to Use, Core Workflow, Constraints, Knowledge Reference
-- [ ] MCP code tested in Blender (no exceptions)
-- [ ] `.cursor/skills/` synced
-
-## Submitting
-
-1. Create a branch: `git checkout -b feature/my-skill`
-2. Add and commit: `git add . && git commit -m "Add: My Skill for XYZ"`
-3. Push and open a Pull Request
-4. See `CONTRIBUTING.md` for PR guidelines
-
-## Blender API Notes (Blender 4.x)
-
-Common gotchas when writing MCP Python:
-
-| Old API | Blender 4.x replacement |
-|---------|------------------------|
-| `use_auto_smooth` | Removed — use `ShadeSmooth` with `use_auto_smooth=False` |
-| `inset_faces` | Use `inset_region` |
-| `BLENDER_EEVEE_NEXT` | `BLENDER_EEVEE` in most setups |
-| `context.screen.areas` | Can be `None` — use `bpy.context.screen.areas` carefully |
-| `bpy.ops.view3d.view_camera()` | Requires `temp_override(area=area, region=region)` |
-| Emission `Strength` keyframe on shared mat | Causes white blowout — use per-object `MAT_LightInst_*` |
-
-See `.claude/skills/references/mcp-tools.md` for the full tool catalog.
+- [ ] `python3 scripts/validate_skills.py` → 0 errors
+- [ ] `bash scripts/check-manifests.sh` → all OK
+- [ ] Blender smoke tests pass on 5.2+
+- [ ] Skill triggers on the prompts you expect (`claude plugin eval --runs 1`)
