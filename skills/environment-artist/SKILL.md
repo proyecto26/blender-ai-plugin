@@ -142,6 +142,23 @@ Use geometry nodes for scatter; see geometry-nodes skill.
 - Mix grid sizes within same kit
 - Skip LOD planning
 
+## Scripts
+
+Run these through the Blender MCP (`execute_blender_code`) with `runpy`; each takes an `ARGS` dict and returns a `result` dict, uses the Blender 5.x API only, and is safe to re-run.
+
+| Script | Purpose |
+|--------|---------|
+| `scripts/blockout.py` | Greybox / blockout: floor-pivoted, ground-snapped primitives (box, cylinder, cone, rock, ramp, stairs, flickering light) in ring/line/grid layouts, and room/corridor shells with inward normals and emissive ceiling fixtures. Shared meshes, box UVs, grey materials; re-running a `group` replaces only that group. |
+
+```python
+import runpy
+result = runpy.run_path("<skill_dir>/scripts/blockout.py", init_globals={"ARGS": {
+    "group": "Cover", "pieces": [{"kind": "box", "size": [1.8, 0.6, 1.1], "name": "COVER"}],
+    "layout": {"pattern": "ring", "count": 6, "radius": 4.0, "center": "SM_Crate", "face_center": True}}})["result"]
+```
+
+Scale guide for blockout: door 1.0 x 2.1 m, corridor 2.4-3 m wide, ceiling 2.7-3 m, waist cover 1.0-1.2 m, chest cover 1.4 m, stair rise 0.18 m, jump gap 2-3 m.
+
 ## Reference Guide
 
 | Topic | Reference | Load When |
