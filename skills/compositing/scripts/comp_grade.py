@@ -1,6 +1,7 @@
 """Build a compositor grade with the Blender 5.x API (scene.compositing_node_group,
 Group Output, socket-based Glare). Replaces only nodes this script created
-(names starting "SK_"), so a user's own compositor nodes are kept.
+(its own SK_ nodes), so a user's nodes and other scripts' SK_ stages (PS1 fog) are kept;
+the grade is chained after whatever already feeds the output.
 
     import runpy
     result = runpy.run_path("<skill_dir>/scripts/comp_grade.py",
@@ -10,6 +11,7 @@ ARGS:
     preset   (str)   clean | cinematic | horror_vhs | stylized_bloom | noir
     vignette (float) 0..1 edge darkening; overrides the preset (cinematic 0.35, horror_vhs 0.5)
     warmth   (float) -1..1 tint of the highlights (gain); >0 warm, <0 cool; overrides the preset gain
+    posterize (int)  colour steps per channel (Posterize node), e.g. 4 for an 8-bit/NES palette; off by default
 """
 import json
 import sys
@@ -27,6 +29,9 @@ PRESETS = {
 }
 
 
+OWN_NODES = {"SK_Bloom", "SK_ColorBalance", "SK_Saturation", "SK_Lens", "SK_Pixelate",
+             "SK_VignetteMask", "SK_VignetteBlur", "SK_Vignette", "SK_Posterize"}
+
 def _cli_args():
     if "--" in sys.argv:
         raw = sys.argv[sys.argv.index("--") + 1:]
@@ -42,7 +47,7 @@ def _sock(sockets, name):
     raise KeyError(f"no enabled socket {name!r}: {[s.name for s in sockets if s.enabled]}")
 
 
-def main(preset="cinematic", vignette=None, warmth=None):
+def main(preset="cinematic", vignette=None, warmth=None, posterize=None):
     if preset not in PRESETS:
         raise ValueError(f"unknown preset {preset!r}; choose from {sorted(PRESETS)}")
     cfg = dict(PRESETS[preset])
@@ -59,9 +64,19 @@ def main(preset="cinematic", vignette=None, warmth=None):
         scene.compositing_node_group = tree
     if not any(getattr(i, "in_out", None) == "OUTPUT" for i in tree.interface.items_tree):
         tree.interface.new_socket("Image", in_out="OUTPUT", socket_type="NodeSocketColor")
-    for node in [n for n in tree.nodes if n.name.startswith("SK_")]:
-        tree.nodes.remove(node)
     nodes, links = tree.nodes, tree.links
+    # Remove only this script's nodes; other SK_ stages (e.g. lowpoly-style SK_PS1_Fog) stay in the
+    # chain. Inputs they lose are reconnected to whatever fed the old grade.
+    own = [n for n in nodes if n.name in OWN_NODES]
+    own_names = {n.name for n in own}
+    feed = next((l.from_socket for n in own for l in links
+                 if l.to_node == n and l.from_node.name not in own_names
+                 and l.to_socket.bl_idname == "NodeSocketColor"), None)
+    orphaned = [l.to_socket for l in links
+                if l.from_node.name in own_names and l.to_node.name not in own_names
+                and l.to_node.bl_idname != "NodeGroupOutput"]
+    for node in own:
+        nodes.remove(node)
 
     def add(kind, name, x):
         node = nodes.new(kind)
@@ -71,7 +86,10 @@ def main(preset="cinematic", vignette=None, warmth=None):
 
     rl = next((n for n in nodes if n.bl_idname == "CompositorNodeRLayers"), None) or add("CompositorNodeRLayers", "SK_RenderLayers", -800)
     out = next((n for n in nodes if n.bl_idname == "NodeGroupOutput"), None) or add("NodeGroupOutput", "SK_Output", 900)
-    chain = [_sock(rl.outputs, "Image")]
+    for sock in orphaned:
+        links.new(feed or _sock(rl.outputs, "Image"), sock)
+    # Grade on top of the existing chain (fog, user nodes) instead of straight from Render Layers
+    chain = [out.inputs[0].links[0].from_socket if out.inputs[0].is_linked else _sock(rl.outputs, "Image")]
     built, x = [], -500
 
     if cfg["bloom"]:
@@ -108,6 +126,10 @@ def main(preset="cinematic", vignette=None, warmth=None):
         links.new(chain[-1], _sock(px.inputs, "Color") if any(s.name == "Color" and s.enabled for s in px.inputs)
                   else _sock(px.inputs, "Image"))
         chain.append(px.outputs[0]); built.append(px.name)
+    if posterize:
+        post = add("CompositorNodePosterize", "SK_Posterize", x); x += 220
+        _sock(post.inputs, "Steps").default_value = max(2, int(posterize))
+        links.new(chain[-1], _sock(post.inputs, "Image")); chain.append(_sock(post.outputs, "Image")); built.append(post.name)
     if cfg.get("vignette"):
         # Ellipse Mask (white centre) -> Blur (soft edge) -> Mix MULTIPLY over the image.
         # 5.2: mask/blur settings are input sockets; Mix is ShaderNodeMix with data_type RGBA.
@@ -125,7 +147,7 @@ def main(preset="cinematic", vignette=None, warmth=None):
         built += [mask.name, blur.name, mix.name]
     links.new(chain[-1], out.inputs[0])
     return {"preset": preset, "tree": tree.name, "nodes": built, "link_count": len(tree.links),
-            "vignette": cfg.get("vignette") or 0.0}
+            "vignette": cfg.get("vignette") or 0.0, "posterize": int(posterize) if posterize else None}
 
 
 ARGS = globals().get("ARGS") or _cli_args()

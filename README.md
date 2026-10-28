@@ -282,7 +282,6 @@ This repository is available under the [MIT License](./LICENSE).
 - [blender-skills](https://github.com/arjun988/blender-skills) by arjun988: the original skill pack this plugin is forked from
 - [Blender Lab MCP server](https://www.blender.org/lab/mcp-server/): the official Blender MCP integration
 - [Agent Plugins](https://agent-plugins.org/) and [Agent Skills](https://agentskills.io/): the packaging standards
-- [notebooklm-ai-plugin](https://github.com/proyecto26/notebooklm-ai-plugin) and [sherlock-ai-plugin](https://github.com/proyecto26/sherlock-ai-plugin): sibling Proyecto 26 plugins and repo layout
 
 ## Happy vibe coding 💯
 Made with ❤️ by [Proyecto 26](https://proyecto26.com) - Changing the world with small contributions.

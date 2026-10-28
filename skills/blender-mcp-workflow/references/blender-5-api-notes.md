@@ -20,6 +20,9 @@ Verified live against **Blender 5.2.3 LTS** through the official MCP server. Whe
 | Compositor Glare `glare_type` property | Glare inputs are sockets: `Type`, `Quality`, `Threshold`, `Strength`, `Size`, ... |
 | `scene.eevee.use_motion_blur` | `scene.render.use_motion_blur` |
 | Geometry-nodes modifier inputs `mod["Socket_1"] = v` (ID properties) | **5.2+:** `mod.properties.inputs.Socket_1.value = v` (identifier from `node_group.interface.items_tree`); attribute-name toggles via `.attribute_name` |
+| Curve to Mesh output `"Geometry"` | `GeometryNodeCurveToMesh` inputs `Curve`, `Profile Curve`, `Scale`, `Fill Caps`; output **`Mesh`**. Look up socket names with `[s.name for s in node.outputs if s.enabled]` instead of guessing |
+| Fluid flow `flow_behavior = "CONTINUOUS"` | `flow_behavior` is `INFLOW` (continuous emission), `OUTFLOW` or `GEOMETRY`; `flow_type` is `SMOKE`, `FIRE`, `BOTH`, `LIQUID` |
+| `Action.fcurves` | Layered actions: `action.layers[].strips[].channelbags[].fcurves` (or `anim_utils.action_get_channelbag_for_slot`) |
 
 ## Principled BSDF Input Names
 
@@ -70,4 +73,17 @@ tree.links.new(glare.outputs["Image"], out.inputs[0])
 with bpy.context.temp_override(object=obj, active_object=obj,
                                selected_objects=[obj], selected_editable_objects=[obj]):
     bpy.ops.object.shade_auto_smooth(angle=math.radians(30))  # adds "Smooth by Angle" modifier
+```
+
+```python
+# bmesh: build, index, write back, free. Index access needs a lookup table after any topology change.
+import bmesh
+bm = bmesh.new()
+bmesh.ops.create_cube(bm, size=1.0)
+bm.verts.ensure_lookup_table()   # without it bm.verts[i] raises "outdated internal index table"
+bm.faces.ensure_lookup_table()
+bm.verts[0].co.z += 0.1
+bm.to_mesh(mesh)                 # object mode; in edit mode use bmesh.from_edit_mesh / update_edit_mesh
+bm.free()
+mesh.update()
 ```

@@ -123,6 +123,22 @@ Test at parameter extremes:
 - Skip UV planning on procedural output
 - Hardcode random without seed control
 
+## Scripts
+
+Tested on Blender 5.2 LTS via the official Blender MCP. Run with `execute_blender_code` (or headless,
+see the `blender-mcp-workflow` skill); read the script header for every argument.
+When the user will paste code into Blender themselves, give them the short `runpy` call with the absolute
+path of this installed script and their ARGS. Don't inline or rewrite the script: the tested file is the point.
+
+| Script | What it does |
+|--------|--------------|
+| `scripts/gn_curve_profile.py` | Curve-swept pipe/cable/rail: poly curve + Geometry Nodes (Curve to Mesh, Curve Circle profile) with Radius / Resolution / Fill Caps exposed on the modifier. |
+
+```python
+import runpy
+result = runpy.run_path("<skill_dir>/scripts/gn_curve_profile.py", init_globals={"ARGS": {"name": "GEO_Pipe", "points": [[0, -5, 0.5], [0, 5, 0.5]], "radius": 0.15}})["result"]
+```
+
 ## Reference Guide
 
 | Topic | Reference | Load When |

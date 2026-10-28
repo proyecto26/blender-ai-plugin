@@ -68,6 +68,22 @@ Layout locked → Hero narrative props → Secondary clusters
 - Uniform clutter wallpaper
 - Block doors/windows without story reason
 
+## Scripts
+
+Tested on Blender 5.2 LTS via the official Blender MCP. Run with `execute_blender_code` (or headless,
+see the `blender-mcp-workflow` skill); read the script header for every argument.
+When the user will paste code into Blender themselves, give them the short `runpy` call with the absolute
+path of this installed script and their ARGS. Don't inline or rewrite the script: the tested file is the point.
+
+| Script | What it does |
+|--------|--------------|
+| `scripts/scatter_props.py` | Exact-count story clusters of boxes/barrels/pallets around a target: ground raycast, keep-out of the target bbox, no overlaps, shared meshes, `PROP_` names. For many small instances on terrain use geometry-nodes `scatter_points.py`. |
+
+```python
+import runpy
+result = runpy.run_path("<skill_dir>/scripts/scatter_props.py", init_globals={"ARGS": {"target": "SM_Crate", "count": 8, "kinds": ["box", "barrel", "pallet"]}})["result"]
+```
+
 ## Reference Guide
 
 | Topic | Reference | Load When |
