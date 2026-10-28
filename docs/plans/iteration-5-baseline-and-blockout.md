@@ -87,3 +87,51 @@ Verdict **approve**, confidence 0.95, no blocking findings. Non-blocking (low): 
 for unchanged skills assumes no drift. Mitigation adopted: those runs were regraded on the current fixture/grader
 (81/85, unchanged), and a random 5 of the 34 reused evals get a fresh with-skill run as a drift check; any
 drift (different verdict) triggers fresh runs for that whole category.
+
+## Results (Blender 5.2.3, background MCP on the fixture)
+
+### First pass (85 evals x 2 arms, 117 fresh runs + 53 reused, all regraded)
+| Category | with_skill | without_skill | API errors (with / without) | Script reuse (with) |
+|----------|-----------|---------------|-----------------------------|---------------------|
+| core-scripted (22) | 22/22 | 18/22 | 0 / 4 | 18 |
+| genre (13) | 13/13 | 11/13 | 0 / 0 | 5 |
+| recipe (50) | 47/50 | 48/50 | 2 / 2 | 30 |
+| **total (85)** | **82/85** | **77/85** | **2 / 6** | **53** |
+
+Drift check: the 5 evals chosen for it (22, 71, 78, 88, 98) ran fresh with-skill; no verdict changed from iteration 3.
+
+### Skill fixes from the with-skill failures (each verified via MCP)
+- 043 dream-weirdcore and 090 sci-fi-punk: hand-written bmesh box UVs (`l.uv = ...`, `l[uv] = tuple`). The same
+  "apply scale + add UVs" step was hand-written in 65 of 170 solutions, so it graduated to
+  `blender-mcp-workflow/scripts/fix_asset.py` (bakes scale or rotation+scale via the data API, adds box or Smart UVs
+  only when missing, single-users shared meshes, idempotent). Both recipes call it; the API notes gained the BMesh UV
+  rule. `blockout.py` now names its UV layer `UVMap` too.
+- 034 chibi: agent typo (`o` undefined), not a skill defect; passes on the tie-breaker.
+- 059 genre-strategy-sim (tie-breaker): pitch read as `rotation_euler.x`. The recipe now says perspective RTS
+  cameras use `camera_rig.py` `elevation_deg` = pitch below the horizon (verified: 50/57/65 in, 50/57/65 out).
+- 098 uv-workflow (tie-breaker): read UVs with `.uv` on a `Float2AttributeValue`. `uv_unwrap_check.py` gained
+  `lightmap: True` (non-overlapping `UVMap_Lightmap` via Lightmap Pack, render UV kept active, rerunnable) and its
+  header documents `mesh.uv_layers[i].uv[k].vector`.
+- `run_recipes.py`: 47/47 OK after every change.
+
+### Tie-breaker (both arms re-run on the 11 evals whose arms disagreed) and post-fix runs
+| Category | with_skill | without_skill | API errors (with / without) | Script reuse (with) |
+|----------|-----------|---------------|-----------------------------|---------------------|
+| core-scripted (22) | 22/22 | 20/22 | 0 / 2 | 19 |
+| genre (13) | 13/13 | 13/13 | 0 / 0 | 6 |
+| recipe (50) | 50/50 | 50/50 | 0 / 0 | 31 |
+| **total (85)** | **85/85** | **83/85** | **0 / 2** | **56** |
+
+Exit criteria met: with_skill >= without_skill in every category, 0 with-skill API errors, every with-skill failure
+fixed and re-run.
+
+### Reading the numbers honestly
+- 83 of 85 evals pass in both arms after the tie-breaker: the objective checks mostly test "did the scene end up
+  in the right state", which a strong model reaches without the plugin. The pass rate alone is a weak signal.
+- Most of the without-skill failures in the first pass flipped to passes on the re-run (6 of 8), so a single run
+  overstates the gap; the with-skill arm also had 3 single-run failures. Variance is real in both arms.
+- Where the plugin clearly helps: API correctness (0 vs 6 first-pass runtime API errors, concentrated in
+  export, Geometry Nodes, UVs and shader-node socket names) and reuse of tested scripts
+  (56/85 with-skill solutions call plugin scripts instead of re-deriving bpy code).
+- Next step for discrimination: harder checks (e.g. exported file contents, node-graph structure, UV overlap) on
+  the 83 non-discriminating evals, rather than more runs of the same checks.

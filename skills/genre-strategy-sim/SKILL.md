@@ -19,7 +19,7 @@ Iconic buildings. Tile clarity. Unit read at camera distance. Sim props tell sys
 
 Tile-clear iconic view: 2:1 dimetric orthographic camera, 1 m or 2 m tiles, bright even light, strong silhouettes readable at 64 px.
 
-1. Camera with `iso_camera.py`: `projection` dimetric_2_1, `pixel_tile` 64.
+1. Camera with `iso_camera.py`: `projection` dimetric_2_1, `pixel_tile` 64. For a perspective RTS camera with a given pitch, use `camera-cinematography/scripts/camera_rig.py` with `elevation_deg` = the pitch below the horizon (55 is typical, 50-65 range) and `lens_mm` 35; Blender's `rotation_euler.x` is 90 minus that pitch, so don't set it to the pitch itself.
 2. Even light with `light_rig.py` preset `overcast`.
 3. Stylised color-block materials with `toon_material.py` (`bands` 3, `outline` 0.02) for buildings/units.
 4. Populate props with `scatter_props.py` (`count` 12, `clusters` 4).

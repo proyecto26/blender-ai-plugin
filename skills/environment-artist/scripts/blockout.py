@@ -56,7 +56,7 @@ def _material(name, color, emission=0.0):
 
 def _box_uvs(bm):
     """Box projection: each face takes the two axes perpendicular to its dominant normal axis."""
-    uv = bm.loops.layers.uv.verify()
+    uv = bm.loops.layers.uv.get("UVMap") or bm.loops.layers.uv.new("UVMap")
     for f in bm.faces:
         ax = max(range(3), key=lambda i: abs(f.normal[i]))
         u, v = [i for i in range(3) if i != ax]

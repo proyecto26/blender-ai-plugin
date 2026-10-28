@@ -81,6 +81,7 @@ rewrite the script: the tested file is what makes the result reliable.
 | `scripts/scene_audit.py` | Collections, evaluated tris, materials, unapplied transforms, naming violations | No |
 | `scripts/setup_collections.py` | Idempotent `COL_` hierarchy (Reference/Blockout/HighPoly/LowPoly/Collision/Lights/Cameras/Export) | Adds collections only |
 | `scripts/validate_asset.py` | PASS/WARN/FAIL gate: transforms, tri budget, n-gons, manifold, loose geo, UVs, materials, naming, scale, origin | No |
+| `scripts/fix_asset.py` | Fixes the usual FAILs: bakes unapplied scale (or rotation+scale) into the mesh and adds a box-projected or Smart UV layer only where none exists; idempotent | Edits the named meshes |
 | `scripts/capture_views.py` | Front / 3-4 / side / back / top / camera PNGs with a temporary camera; restores settings | No (temp camera removed) |
 
 ## Execution Protocol
@@ -91,7 +92,7 @@ rewrite the script: the tested file is what makes the result reliable.
 3. ORGANIZE  setup_collections.py (asset name) - never dump objects in the scene root
 4. EXECUTE   small execute_blender_code steps; each returns a result dict you check
 5. LOOK      get_screenshot_of_area_as_image("VIEW_3D") or capture_views.py after each visual phase
-6. VALIDATE  validate_asset.py before export; fix every FAIL
+6. VALIDATE  validate_asset.py before export; fix every FAIL (fix_asset.py covers scale and missing UVs)
 7. REPORT    object names, tri counts, verdicts, file paths
 ```
 

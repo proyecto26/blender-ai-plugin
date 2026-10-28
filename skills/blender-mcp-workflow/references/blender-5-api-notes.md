@@ -84,6 +84,8 @@ bm.verts.ensure_lookup_table()   # without it bm.verts[i] raises "outdated inter
 bm.faces.ensure_lookup_table()
 bm.verts[0].co.z += 0.1
 bm.to_mesh(mesh)                 # object mode; in edit mode use bmesh.from_edit_mesh / update_edit_mesh
+# UVs in bmesh: loop[uv_layer] is a BMLoopUV, so assign its .uv (`loop[uv].uv = (u, v)`), never the loop itself.
+# For "apply scale + add UVs" call scripts/fix_asset.py instead of hand-writing it.
 bm.free()
 mesh.update()
 ```

@@ -12,6 +12,12 @@ ARGS:
     angle_deg        (float) smart project angle limit (default 66)
     texture_px       (int)   texture resolution used for density (default 2048)
     target_px_per_m  (float) target texel density; flags objects outside +/-25 %
+    lightmap         (bool)  also build a second, non-overlapping "UVMap_Lightmap" channel with Lightmap
+                             Pack (for baked lighting / Unreal & Unity lightmaps); the first channel stays
+                             the active render UV. Rerunning repacks the same channel (default False)
+
+Reading UVs yourself in Blender 5.x: `mesh.uv_layers[i].uv[k].vector` (the per-loop value is a
+Float2AttributeValue with `.vector`, not `.uv`), or `loop[bm.loops.layers.uv.active].uv` in bmesh.
 """
 import json
 import math
@@ -45,6 +51,29 @@ def _unwrap(obj, angle_deg, texture_px):
     return margin
 
 
+def _lightmap(obj):
+    me = obj.data
+    if "UVMap_Lightmap" not in me.uv_layers:
+        me.uv_layers.new(name="UVMap_Lightmap")
+    # Names, not layer references: references go stale after an edit-mode round trip.
+    render = next((l.name for l in me.uv_layers if l.active_render and l.name != "UVMap_Lightmap"),
+                  me.uv_layers[0].name)
+    me.uv_layers.active = me.uv_layers["UVMap_Lightmap"]
+    prev_active = bpy.context.view_layer.objects.active
+    bpy.context.view_layer.objects.active = obj
+    with bpy.context.temp_override(active_object=obj, object=obj, selected_objects=[obj],
+                                   selected_editable_objects=[obj]):
+        bpy.ops.object.mode_set(mode="EDIT")
+        bpy.ops.mesh.select_all(action="SELECT")
+        bpy.ops.uv.lightmap_pack(PREF_CONTEXT="ALL_FACES", PREF_PACK_IN_ONE=True,
+                                 PREF_MARGIN_DIV=0.2)
+        bpy.ops.object.mode_set(mode="OBJECT")
+    bpy.context.view_layer.objects.active = prev_active
+    me.uv_layers.active = me.uv_layers[render]
+    me.uv_layers[render].active_render = True
+    return "UVMap_Lightmap"
+
+
 def _measure(obj, texture_px):
     bm = bmesh.new()
     bm.from_mesh(obj.data)
@@ -72,7 +101,7 @@ def _measure(obj, texture_px):
             "surface_m2": round(area_3d, 4), "loops_outside_0_1": oob}
 
 
-def main(objects, unwrap=False, angle_deg=66.0, texture_px=2048, target_px_per_m=None):
+def main(objects, unwrap=False, angle_deg=66.0, texture_px=2048, target_px_per_m=None, lightmap=False):
     out = {}
     for name in objects:
         obj = bpy.data.objects.get(name)
@@ -84,6 +113,9 @@ def main(objects, unwrap=False, angle_deg=66.0, texture_px=2048, target_px_per_m
         entry = {}
         if unwrap:
             entry["island_margin"] = round(_unwrap(obj, angle_deg, texture_px), 5)
+        if lightmap:
+            entry["lightmap_channel"] = _lightmap(obj)
+        entry["uv_layers"] = [l.name for l in obj.data.uv_layers]
         m = _measure(obj, texture_px)
         entry.update(m or {"error": "no UV layer"})
         if m and target_px_per_m:
