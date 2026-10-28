@@ -38,6 +38,7 @@ import runpy
 skills = "<skills_dir>"  # parent folder of this skill (the plugin's skills/ directory)
 target = "SM_Asset"      # object to style / dress
 r = {}
+r["prep"] = runpy.run_path(f"{skills}/blender-mcp-workflow/scripts/fix_asset.py", init_globals={"ARGS": {"objects": [target]}})["result"]  # apply scale, add box UVs if missing
 r["light"] = runpy.run_path(f"{skills}/lighting/scripts/light_rig.py", init_globals={"ARGS": {"preset": "neon_night", "target": target}})["result"]
 r["mat"] = runpy.run_path(f"{skills}/materials/scripts/pbr_material.py", init_globals={"ARGS": {"name": "MAT_PaintedHull", "base_color": [0.5, 0.52, 0.55], "metallic": 0.8, "roughness": 0.4, "objects": [target]}})["result"]
 r["cam"] = runpy.run_path(f"{skills}/camera-cinematography/scripts/camera_rig.py", init_globals={"ARGS": {"target": target, "lens_mm": 35, "aspect": "2.39:1"}})["result"]

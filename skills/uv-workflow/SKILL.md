@@ -150,7 +150,7 @@ path of this installed script and their ARGS. Don't inline or rewrite the script
 
 | Script | What it does |
 |--------|--------------|
-| `scripts/uv_unwrap_check.py` | Unwrap (optional) and measure UVs: texel density, UV-space usage and out-of-range loops, per object. Unwrapping runs Smart UV Project with an island margin sized for the target texture resolution. |
+| `scripts/uv_unwrap_check.py` | Unwrap (optional) and measure UVs: texel density, UV-space usage and out-of-range loops, per object. Unwrapping runs Smart UV Project with an island margin sized for the target texture resolution. `lightmap: True` adds a non-overlapping `UVMap_Lightmap` second channel (Lightmap Pack) and keeps the first channel as the render UV. |
 
 ```python
 import runpy
