@@ -1,6 +1,7 @@
 """Apply a PS1/PSX-era look: low internal resolution, nearest-neighbour texture
 filtering, vertex snapping (geometry nodes, per object), flat or Gouraud shading,
-optional distance fog via world mist, and Standard view transform.
+distance fog (mist pass mixed in the compositor), 32px posterized textures for untextured meshes,
+and Standard view transform.
 
     import runpy
     result = runpy.run_path("<skill_dir>/scripts/ps1_look.py", init_globals={"ARGS": {
@@ -11,7 +12,10 @@ ARGS:
     snap        (float) world-space snap grid in meters (default 0.02; 0 disables)
     resolution  (list[2]) render resolution (default [320, 240])
     flat        (bool) flat shading on objects (default False = smooth/Gouraud)
-    fog         (bool) enable mist pass + darker world for fog in comp (default True)
+    fog         (bool|list[3]) compositor distance fog from the mist pass; a list sets the fog colour
+                (default True = dark blue-grey)
+    texture     (bool) give listed meshes without a material a 32px posterized texture with
+                nearest filtering and box projection (default True)
 """
 import json
 import sys
@@ -77,7 +81,58 @@ def _set_input(mod, name, value):
     raise KeyError(f"modifier input not found: {name}")
 
 
-def main(objects=None, snap=0.02, resolution=(320, 240), flat=False, fog=True):
+def _ps1_material(obj, seed):
+    """32x32 posterized noise texture in a per-object tint, Closest filtering, box-projected."""
+    import random
+    rnd = random.Random(seed)
+    tint = [0.25 + 0.6 * rnd.random() for _ in range(3)]
+    img = bpy.data.images.new(f"TX_PS1_{obj.name}", 32, 32)
+    px = []
+    for _ in range(32 * 32):
+        shade = (0.55, 0.75, 0.9, 1.0)[rnd.randrange(4)]  # 4-level posterize
+        px += [c * shade for c in tint] + [1.0]
+    img.pixels = px
+    img.pack()
+    mat = bpy.data.materials.new(f"MAT_PS1_{obj.name}")
+    nt = mat.node_tree
+    bsdf = next(n for n in nt.nodes if n.bl_idname == "ShaderNodeBsdfPrincipled")
+    bsdf.inputs["Roughness"].default_value = 1.0
+    tex = nt.nodes.new("ShaderNodeTexImage")
+    tex.image, tex.interpolation, tex.projection, tex.projection_blend = img, "Closest", "BOX", 0.0
+    coords = nt.nodes.new("ShaderNodeTexCoord")
+    nt.links.new(coords.outputs["Object"], tex.inputs["Vector"])
+    nt.links.new(tex.outputs["Color"], bsdf.inputs["Base Color"])
+    obj.data.materials.append(mat)
+    return mat.name
+
+
+def _fog(scene, colour):
+    """Mix the image toward the fog colour by the mist pass (5.2 compositor, SK_ nodes only)."""
+    tree = scene.compositing_node_group
+    if tree is None:
+        tree = bpy.data.node_groups.new("Compositing", "CompositorNodeTree")
+        scene.compositing_node_group = tree
+    if not any(getattr(i, "in_out", None) == "OUTPUT" for i in tree.interface.items_tree):
+        tree.interface.new_socket("Image", in_out="OUTPUT", socket_type="NodeSocketColor")
+    for node in [n for n in tree.nodes if n.name.startswith("SK_PS1_")]:
+        tree.nodes.remove(node)
+    rl = next((n for n in tree.nodes if n.bl_idname == "CompositorNodeRLayers"), None) \
+        or tree.nodes.new("CompositorNodeRLayers")
+    out = next((n for n in tree.nodes if n.bl_idname == "NodeGroupOutput"), None) \
+        or tree.nodes.new("NodeGroupOutput")
+    upstream = out.inputs[0].links[0].from_socket if out.inputs[0].is_linked else _sock(rl.outputs, "Image")
+    mix = tree.nodes.new("ShaderNodeMix")
+    mix.name = mix.label = "SK_PS1_Fog"
+    mix.data_type, mix.blend_type = "RGBA", "MIX"
+    a, b = [s for s in mix.inputs if s.enabled and s.bl_idname == "NodeSocketColor"]
+    b.default_value = (*colour, 1.0)
+    tree.links.new(_sock(rl.outputs, "Mist"), _sock(mix.inputs, "Factor"))
+    tree.links.new(upstream, a)
+    tree.links.new(next(s for s in mix.outputs if s.enabled), out.inputs[0])
+    return mix.name
+
+
+def main(objects=None, snap=0.02, resolution=(320, 240), flat=False, fog=True, texture=True):
     scene = bpy.context.scene
     r = scene.render
     r.resolution_x, r.resolution_y = resolution
@@ -108,12 +163,25 @@ def main(objects=None, snap=0.02, resolution=(320, 240), flat=False, fog=True):
             for poly in obj.data.polygons:
                 poly.use_smooth = not flat
             snapped.append(obj.name)
+    textured = []
+    if texture:
+        for i, name in enumerate(objects or []):
+            obj = bpy.data.objects.get(name)
+            if obj and obj.type == "MESH" and not any(s.material for s in obj.material_slots):
+                textured.append(_ps1_material(obj, i))
+    fog_node = None
     if fog:
+        colour = tuple(fog) if isinstance(fog, (list, tuple)) else (0.18, 0.2, 0.24)
         scene.view_layers[0].use_pass_mist = True
-        if scene.world:
-            scene.world.mist_settings.start = 2.0
-            scene.world.mist_settings.depth = 25.0
+        world = scene.world or bpy.data.worlds.new("WRL_PS1")
+        scene.world = world
+        world.mist_settings.start, world.mist_settings.depth = 2.0, 25.0
+        bg = next((n for n in world.node_tree.nodes if n.type == "BACKGROUND"), None)
+        if bg:
+            bg.inputs["Color"].default_value = (*colour, 1.0)
+        fog_node = _fog(scene, colour)
     return {"resolution": list(resolution), "nearest_textures": nearest, "snapped": snapped,
+            "textured": textured, "fog_node": fog_node,
             "view_transform": scene.view_settings.view_transform, "mist_pass": fog,
             "hint": "Pair with compositing comp_grade preset 'horror_vhs' for dithering/pixelation."}
 

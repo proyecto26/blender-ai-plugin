@@ -29,6 +29,7 @@ Fork maintained by [Proyecto 26](https://github.com/proyecto26) as **Blender AI 
 ### Changed
 - Skill triggers: `blender-mcp-workflow` now fires before any bpy code; `geometry-nodes`/`set-dressing` route scattering to `scatter_points.py`; 27 skills forbid pre-5.2 code and version fallbacks; 26 skills hand users the `runpy` call instead of inlining scripts.
 - `compositing/comp_grade.py`: `vignette` and `warmth` ARGS (Blender 5.2 `ShaderNodeMix` + socket-based Ellipse Mask/Blur).
+- `lowpoly-style/ps1_look.py`: real compositor fog from the mist pass (`fog` takes an RGB colour) and 32px posterized, nearest-filtered textures for untextured meshes (`texture`).
 - `lighting/light_rig.py`: `golden_hour` preset now renders warm (warm horizon world, dimmer cool fill).
 - Evals: graders accept a call to the plugin's tested script as well as the literal 5.2 API; case 04 hardened (coat, sheen, no fallbacks).
 - Skills moved from `.claude/skills/` to `skills/` (Agent Skills layout); shared `references/` moved into

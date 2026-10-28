@@ -134,14 +134,15 @@ path of this installed script and their ARGS. Don't inline or rewrite the script
 
 | Script | What it does |
 |--------|--------------|
-| `scripts/ps1_look.py` | Apply a PS1/PSX-era look: low internal resolution, nearest-neighbour texture filtering, vertex snapping (geometry nodes, per object), flat or Gouraud shading, optional distance fog via world mist, and Standard view transform. |
+| `scripts/ps1_look.py` | Apply a PS1/PSX-era look: low internal resolution, nearest-neighbour texture filtering, vertex snapping (geometry nodes, per object), flat or Gouraud shading, compositor distance fog from the mist pass, 32px posterized textures for untextured meshes, and Standard view transform. |
 
 ```python
 import runpy
 result = runpy.run_path("<skill_dir>/scripts/ps1_look.py", init_globals={"ARGS": {...}})["result"]
 ```
 
-ARGS: `objects`, `snap`, `resolution`, `flat`, `fog`
+ARGS: `objects`, `snap`, `resolution`, `flat`, `fog` (bool or RGB fog colour), `texture`. For a whole scene pass
+every mesh: `{"objects": [all mesh names], "flat": true}`; untextured meshes get a PS1 texture.
 
 ## Reference Guide
 

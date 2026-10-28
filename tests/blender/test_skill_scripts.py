@@ -146,6 +146,9 @@ def build_cases(out_dir):
          lambda r: r["frames"][1] - r["frames"][0] == 47),
         ("lowpoly-style.ps1_look", lambda: run("lowpoly-style", "ps1_look.py", {"objects": ["SM_Sphere_01"], "snap": 0.05}),
          lambda r: r["snapped"] == ["SM_Sphere_01"] and r["resolution"] == [320, 240]),
+        ("lowpoly-style.ps1_look_fog_texture", lambda: run("lowpoly-style", "ps1_look.py", {
+            "objects": ["SM_Sphere_01"], "flat": True, "fog": [0.2, 0.2, 0.25]}),
+         lambda r: r["fog_node"] == "SK_PS1_Fog"),
         ("stylized-style.toon_material", lambda: run("stylized-style", "toon_material.py", {
             "name": "Toon_Test", "base_color": [0.9, 0.4, 0.3], "bands": 3, "objects": ["SM_Rock_A"], "outline": 0.01}),
          lambda r: r["outlined"] == ["SM_Rock_A"] and r["bands"] == 3),
