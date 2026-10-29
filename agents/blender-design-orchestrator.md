@@ -46,30 +46,43 @@ skills, execute in small verified steps, look at the result, and only report suc
 
 ## Workflow
 
+Stages run in order: **inspect -> brief -> model -> look_dev -> light_camera -> validate -> export -> verify**.
+Each stage ends with a gate: a script result plus a capture. A FAIL blocks every later stage. Verdicts are
+PASS / FAIL / NOT_CHECKED / N/A; NOT_CHECKED is never a pass, and N/A is declared in the brief with a reason
+(a relight-only task skips model and export). A `validate_asset.py` WARN passes only with a recorded reason.
+Full table: `blender-director` -> `references/pipeline-gates.md`. Record each gate with
+`blender-director` -> `scripts/run_manifest.py`. What may run in parallel and what never may:
+`blender-director` -> `references/skill-routing.md` ("Parallel vs Sequential").
+
 ```
-1. BRIEF     Restate goal, target (game/cinematic/portfolio), engine, budget, style, deliverables.
-             If a reference image is attached: load blender-mcp-workflow -> references/reference-analysis-template.md
-             and write the analysis before touching Blender.
-2. ROUTE     Load blender-director for routing; then load only the specialist skills needed
-             (e.g. hard-surface + uv-workflow + materials + lod-pipeline + collision-proxy + unreal-export).
-             Style/genre/world/mood skills set art direction; technical skills execute it.
-3. SETUP     blender-mcp-workflow scripts/setup_collections.py (asset name) - never work in the scene root.
-4. BUILD     Blockout -> form -> detail in small steps. Prefer the skills' tested scripts:
-               hard-surface/bevel_stack.py, materials/pbr_material.py, uv-workflow/uv_unwrap_check.py,
-               geometry-nodes/scatter_points.py, lighting/light_rig.py, camera-cinematography/camera_rig.py,
-               rendering/render_preset.py, compositing/comp_grade.py, stylized-style/toon_material.py,
-               lowpoly-style/ps1_look.py, voxel-style/voxelize.py, isometric-style/iso_camera.py ...
-             Run them with runpy (see blender-mcp-workflow "Running This Plugin's Scripts").
-5. LOOK      After every visual phase: get_screenshot_of_area_as_image(area_ui_type="VIEW_3D")
-             or blender-mcp-workflow scripts/capture_views.py. Compare against the brief/reference;
-             iterate until the silhouette, value structure and palette read correctly.
-6. VALIDATE  blender-mcp-workflow scripts/validate_asset.py (+ retopology/topology_report.py for deforming
-             meshes, rigging/rig_check.py for skinned assets). Fix every FAIL.
-7. OPTIMIZE  asset-optimization/optimize_mesh.py, lod-pipeline/generate_lods.py, collision-proxy/make_collision.py
-             when the target is a game engine.
-8. DELIVER   Engine export script (unreal-export / unity-export / godot-export / export-pipeline),
-             then report: objects, triangle counts, validation verdicts, file paths, screenshots, open issues.
+1. INSPECT   get_objects_summary / scene_audit.py; note unsaved state.            Gate: scene read + screenshot.
+2. BRIEF     Restate goal, target, engine, budget, style, deliverables, N/A stages.
+             Reference image attached: blender-mcp-workflow -> references/reference-analysis-template.md first.
+             Load blender-director for routing, then only the specialist skills needed.
+             Gate: brief written before any change.
+3. MODEL     setup_collections.py, then blockout -> form -> detail with the skills' tested scripts
+             (hard-surface/bevel_stack.py, environment-artist/blockout.py ...), run via runpy
+             (blender-mcp-workflow "Running This Plugin's Scripts"). Destructive steps (apply, join,
+             boolean apply, remesh, decimate) go through blender-mcp-workflow scripts/work_copy.py.
+             Gate: validate_asset.py shows no FAIL on geometry checks.
+4. LOOK_DEV  uv-workflow, materials, stylized-style/toon_material.py ...  Gate: UV + material checks PASS, 3/4 capture.
+5. LIGHT_CAMERA  lighting/light_rig.py, camera-cinematography/camera_rig.py (eye_height for first-person views).
+             Gate: camera_rig occluded_by == [] and visible_fraction near 1.0, plus a camera capture.
+6. VALIDATE  validate_asset.py (+ topology_report.py, rig_check.py when relevant); optimize_mesh.py,
+             generate_lods.py, make_collision.py for game targets. Gate: PASS (WARN only with a reason).
+7. EXPORT    Engine export script, only after stage 6 PASS. Gate: exists and bytes > 0.
+8. VERIFY    Read the returned `verify`: ok must be true; checked:false is NOT_CHECKED.
+             Report objects, tri counts, verdicts, paths, screenshots, open issues.
 ```
+
+Look after every visual phase with `get_screenshot_of_area_as_image(area_ui_type="VIEW_3D")` or
+`capture_views.py`; iterate until silhouette, value structure and palette read correctly.
+
+## Repeat-failure stop
+
+If the same gate fails twice, stop. Classify the cause (geometry, materials, lighting, camera, export,
+tool-error), record it in the manifest, and report what was tried, what still fails and your best
+hypothesis. Do not make a third blind retry. Never export after a FAIL.
 
 ## Blender 5.x API discipline
 

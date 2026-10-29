@@ -1,6 +1,6 @@
 ---
 name: genre-shooter
-description: Art direction for FPS, TPS, shooter, battle royale, and extraction-shooter maps and props in Blender with sightline and cover language.
+description: "Art direction for FPS, TPS, shooter, battle royale and extraction-shooter maps and props in Blender, with sightline, cover and landmark language. Use when the user wants an FPS or TPS arena, a cover layout, sightlines and lanes, a 'make a shooter map' blockout, or a player-eye (first-person) camera check."
 license: MIT
 metadata:
   author: https://github.com/arjun988
@@ -24,7 +24,7 @@ Sightline-driven map: cover at 1.0-1.2 m (crouch) and 1.8 m (full), lanes 4-8 m 
 3. Bevel cover edges with `bevel_stack.py` (`width` 0.01, `segments` 1) so edges catch light.
 4. Scatter low cover props with `scatter_props.py` (`count` 10, `kinds` [box, barrel, pallet]).
 5. Light with `light_rig.py` preset `overcast` for fair, readable visibility.
-6. Eye-level camera with `camera_rig.py`: `lens_mm` 24, `elevation_deg` 0 (FPS-like view).
+6. Eye-level camera with `camera_rig.py`: `lens_mm` 24, `eye_height` 1.6 (FPS eye), `max_distance` 3.0 so the camera stays inside the 4 m cover ring. Then check `cam.occluded_by`: if it is non-empty, move the camera, don't ship.
 
 ```python
 import runpy
@@ -36,7 +36,9 @@ r["bevel"] = runpy.run_path(f"{skills}/hard-surface/scripts/bevel_stack.py", ini
 r["col"] = runpy.run_path(f"{skills}/collision-proxy/scripts/make_collision.py", init_globals={"ARGS": {"objects": [target], "shape": "box", "engine": "unreal"}})["result"]
 r["props"] = runpy.run_path(f"{skills}/set-dressing/scripts/scatter_props.py", init_globals={"ARGS": {"target": target, "count": 10, "kinds": ["box", "barrel", "pallet"]}})["result"]
 r["light"] = runpy.run_path(f"{skills}/lighting/scripts/light_rig.py", init_globals={"ARGS": {"preset": "overcast", "target": target}})["result"]
-r["cam"] = runpy.run_path(f"{skills}/camera-cinematography/scripts/camera_rig.py", init_globals={"ARGS": {"name": "CAM_FPS", "target": target, "lens_mm": 24, "elevation_deg": 0}})["result"]
+r["cam"] = runpy.run_path(f"{skills}/camera-cinematography/scripts/camera_rig.py", init_globals={"ARGS": {"name": "CAM_FPS", "target": target, "lens_mm": 24, "eye_height": 1.6, "max_distance": 3.0}})["result"]
+if r["cam"]["occluded_by"]:
+    raise RuntimeError(f"camera blocked by {r['cam']['occluded_by']}")
 result = r
 ```
 

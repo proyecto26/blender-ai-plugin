@@ -1,6 +1,6 @@
 ---
 name: procedural-modeling
-description: Procedural asset creation for rocks, buildings, vegetation, roads, terrain, pipes, cables, and sci-fi panels using Geometry Nodes and modifier-based workflows in Blender via MCP.
+description: "Procedural asset creation for rocks, buildings, vegetation, roads, terrain, pipes, cables and sci-fi panels using Geometry Nodes and modifier-based workflows in Blender via MCP. Use when the user wants pipes, cables, rails or other swept shapes, or an editable parametric asset instead of hand modeling. Ships tested scripts: gn_curve_profile.py (poly-curve swept by a circular profile, idempotent)."
 license: MIT
 metadata:
   author: https://github.com/arjun988

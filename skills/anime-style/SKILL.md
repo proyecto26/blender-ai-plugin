@@ -1,6 +1,6 @@
 ---
 name: anime-style
-description: Anime and cel-shaded art direction for Blender with hard color breaks, toon shaders, clean silhouettes, and anime proportion language.
+description: "Anime and cel-shaded art direction for Blender with hard color breaks, toon shaders, clean silhouettes and anime proportion language. Use when the user says 'make it look like anime', 'cel shaded', 'toon shader', 'hard shadows, flat colors', or wants a Japanese-animation look for a 3D render (for monochrome comics use manga-style; for Western rubbery cartoons use cartoon-style)."
 license: MIT
 metadata:
   author: https://github.com/arjun988

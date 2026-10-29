@@ -1,6 +1,6 @@
 ---
 name: painterly-style
-description: Painterly art direction spanning watercolor and oil-painting looks for Blender using soft edges, pigment texture, and illustrative lighting.
+description: "Painterly art direction spanning watercolor and oil-painting looks for Blender using soft edges, pigment texture and illustrative lighting. Use when the user wants the whole render to look like a 'watercolor', 'oil painting', gouache or impressionist illustration (for painted textures on game assets use hand-painted-style)."
 license: MIT
 metadata:
   author: https://github.com/arjun988

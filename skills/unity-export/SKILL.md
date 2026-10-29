@@ -1,6 +1,6 @@
 ---
 name: unity-export
-description: Unity-specific Blender export for scale, axis, materials, humanoid/generic rigs, LODs, and collision import via MCP.
+description: "Unity-specific Blender export for scale, axis, materials, humanoid/generic rigs, LODs and collision import via MCP. Use when an asset is headed for Unity, or arrives rotated, scaled wrongly or without materials. Ships tested scripts: export_unity.py (FBX export with pre-flight checks on transforms, UVs and material slots)."
 license: MIT
 metadata:
   author: https://github.com/arjun988

@@ -1,6 +1,6 @@
 ---
 name: vehicle-artist
-description: Dedicated vehicle modeling for cars, trucks, aircraft, ships, boats, mechs, and transit assets with proportion, panel flow, and game LOD awareness in Blender via MCP.
+description: "Dedicated vehicle modeling for cars, trucks, aircraft, ships, boats, mechs and transit assets with proportion, panel flow and game LOD awareness in Blender via MCP. Use when the user asks to 'model a car/plane/ship/tank' or needs vehicle bodywork and panel lines."
 license: MIT
 metadata:
   author: https://github.com/arjun988

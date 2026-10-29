@@ -1,6 +1,6 @@
 ---
 name: frutiger-aero-style
-description: Frutiger Aero art direction for Blender with glossy skeuomorphism, aqua UI cues, nature-tech optimism, and mid-2000s futurism.
+description: "Frutiger Aero art direction for Blender with glossy skeuomorphism, aqua UI cues, nature-tech optimism and mid-2000s futurism. Use when the user asks for 'Frutiger Aero', 'Windows Vista/2000s aqua' looks, glossy bubbles and glass with blue-sky nature (for dark synthwave looks use neon-retrofuturism)."
 license: MIT
 metadata:
   author: https://github.com/arjun988

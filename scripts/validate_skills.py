@@ -5,6 +5,9 @@ Checks per skill:
   - SKILL.md exists with YAML frontmatter; `name` matches the folder (Agent Skills spec:
     lowercase a-z0-9-, <= 64 chars), `description` present and <= 1024 chars
   - no duplicate frontmatter keys
+  - strict scalars: an unquoted value containing ': ' or ' #', or starting with a YAML indicator, is an
+    error ("quote the value"); double-quoted values are decoded before the length check; PyYAML, if
+    importable, additionally parses the whole frontmatter
   - metadata.related-skills all resolve to existing skills
   - every `references/...` / `scripts/...` path mentioned in SKILL.md exists in the skill
   - self-contained: no `../` paths escaping the skill folder
@@ -13,7 +16,7 @@ Checks per skill:
   - scripts: parse as Python, expose main(), read ARGS, have a module docstring with ARGS:
     and never shell out or touch the network
 
-Usage: python3 scripts/validate_skills.py [--json]
+Usage: python3 scripts/validate_skills.py [--json | --self-test]
 Exit code 0 = no errors (warnings allowed).
 """
 import ast
@@ -47,14 +50,88 @@ FORBIDDEN_CALLS = {"eval": "dynamic code", "exec": "dynamic code", "__import__":
                    "os.unlink": "deletes files", "os.rmdir": "deletes folders"}
 
 
+YAML_BAD_START = {"@": "reserved indicator", "`": "reserved indicator", "%": "directive indicator",
+                  "*": "alias indicator", "&": "anchor indicator", "!": "tag indicator",
+                  "|": "block scalar indicator", ">": "block scalar indicator"}
+BLOCK_SCALAR_RE = re.compile(r"[|>][+-]?\d*")
+ESCAPES = {"n": "\n", "t": "\t", "r": "\r", "0": "\0", "\\": "\\", '"': '"', "/": "/", "b": "\b", "f": "\f",
+           "a": "\a", "e": "\x1b", " ": " ", "v": "\v", "N": "\x85", "_": "\xa0"}
+
+
+def _decode_double(raw):
+    """Decode a YAML double-quoted scalar (raw[0] == '"'). Returns (value, rest) or raises ValueError."""
+    out, i = [], 1
+    while i < len(raw):
+        c = raw[i]
+        if c == "\\":
+            i += 1
+            if i >= len(raw):
+                raise ValueError("dangling backslash")
+            e = raw[i]
+            if e in "xuU":
+                width = {"x": 2, "u": 4, "U": 8}[e]
+                digits = raw[i + 1:i + 1 + width]
+                if len(digits) != width or not re.fullmatch(r"[0-9A-Fa-f]+", digits):
+                    raise ValueError(f"bad \\{e} escape")
+                out.append(chr(int(digits, 16)))
+                i += width
+            elif e in ESCAPES:
+                out.append(ESCAPES[e])
+            else:
+                raise ValueError(f"unknown escape \\{e}")
+        elif c == '"':
+            return "".join(out), raw[i + 1:]
+        else:
+            out.append(c)
+        i += 1
+    raise ValueError("unterminated double-quoted string")
+
+
+def decode_scalar(raw):
+    """Decode one frontmatter scalar the way YAML would. Returns (value, [errors]); never raises."""
+    raw = raw.strip()
+    if raw.startswith('"'):
+        try:
+            value, rest = _decode_double(raw)
+        except ValueError as exc:
+            return raw, [f"invalid double-quoted value ({exc})"]
+        if rest.strip() and not rest.strip().startswith("#"):
+            return value, ["text after the closing quote"]
+        return value, []
+    if raw.startswith("'"):
+        m = re.fullmatch(r"'((?:[^']|'')*)'\s*(#.*)?", raw)
+        if not m:
+            return raw, ["invalid single-quoted value (unterminated or text after the closing quote)"]
+        return m.group(1).replace("''", "'"), []
+    errors = []
+    if raw and raw[0] in YAML_BAD_START and not BLOCK_SCALAR_RE.fullmatch(raw):
+        errors.append(f"unquoted value starts with '{raw[0]}' ({YAML_BAD_START[raw[0]]}): quote the value")
+    elif raw[:2] in ("- ", "? ") or raw in ("-", "?"):
+        errors.append("unquoted value starts with a YAML sequence/key indicator: quote the value")
+    elif raw and raw[0] in "[{":
+        close = "]" if raw[0] == "[" else "}"
+        if not raw.endswith(close):
+            errors.append(f"unquoted value starts with '{raw[0]}' but is not a closed flow collection: quote the value")
+    if ": " in raw or raw.endswith(":"):
+        errors.append("unquoted value contains ': ' (YAML reads a nested mapping): quote the value")
+    if " #" in raw:
+        errors.append("unquoted value contains ' #' (YAML starts a comment there): quote the value")
+    return raw, errors
+
+
 def parse_frontmatter(text):
+    """Lenient line parser plus strict scalar checks. Returns (data, errors); values are decoded scalars."""
     if not text.startswith("---\n"):
         return None, ["missing frontmatter"]
     end = text.find("\n---", 4)
     if end == -1:
         return None, ["unterminated frontmatter"]
     data, errors, seen, current = {}, [], set(), None
-    for raw in text[4:end].splitlines():
+    lines = text[4:end].splitlines()
+    i = 0
+    while i < len(lines):
+        raw = lines[i]
+        i += 1
         if not raw.strip():
             continue
         indent = len(raw) - len(raw.lstrip())
@@ -63,12 +140,85 @@ def parse_frontmatter(text):
         if scope in seen:
             errors.append(f"duplicate frontmatter key '{scope}'")
         seen.add(scope)
+        if value.strip() and BLOCK_SCALAR_RE.fullmatch(value.strip()):
+            block = []
+            while i < len(lines) and (not lines[i].strip() or len(lines[i]) - len(lines[i].lstrip()) > indent):
+                block.append(lines[i].strip())
+                i += 1
+            decoded = " ".join(b for b in block if b)
+        elif value.strip():
+            decoded, scalar_errors = decode_scalar(value)
+            errors += [f"{scope}: {e}" for e in scalar_errors]
+        else:
+            decoded = {}
         if indent == 0:
             current = key
-            data[key] = value.strip().strip('"') if value.strip() else {}
+            data[key] = decoded
         elif isinstance(data.get(current), dict):
-            data[current][key] = value.strip().strip('"')
+            data[current][key] = decoded
     return data, errors
+
+
+def yaml_strict_check(text):
+    """Strict parse with PyYAML when it is importable; returns [] when PyYAML is absent."""
+    try:
+        import yaml
+    except ImportError:
+        return []
+    end = text.find("\n---", 4)
+    if not text.startswith("---\n") or end == -1:
+        return []
+    try:
+        loaded = yaml.safe_load(text[4:end])
+    except yaml.YAMLError as exc:
+        return [f"strict YAML parse failed: {str(exc).splitlines()[0]} (quote the value)"]
+    if not isinstance(loaded, dict):
+        return ["frontmatter is not a YAML mapping"]
+    return []
+
+
+SELF_TEST_GOOD = [
+    "---\nname: x\ndescription: Plain text with a colon:no-space and 5# no comment\n---\n",
+    '---\nname: x\ndescription: "Quoted: with colon, and # hash and \\"escapes\\""\n---\n',
+    "---\nname: x\ndescription: 'Single: quoted'\n---\n",
+    '---\nname: x\ndescription: >\n  folded text: allowed\n  here\nmetadata:\n  version: "1.0"\n---\n',
+]
+SELF_TEST_BAD = [
+    "---\nname: x\ndescription: Use before: this breaks\n---\n",
+    "---\nname: x\ndescription: text then # comment\n---\n",
+    "---\nname: x\ndescription: @starts with at\n---\n",
+    "---\nname: x\ndescription: `backtick start`\n---\n",
+    "---\nname: x\ndescription: *alias start\n---\n",
+    "---\nname: x\ndescription: [unclosed flow\n---\n",
+    '---\nname: x\ndescription: "unterminated\n---\n',
+    '---\nname: x\ndescription: "bad \\q escape"\n---\n',
+    '---\nname: x\ndescription: "closed" trailing\n---\n',
+]
+
+
+def self_test():
+    failures = []
+    for n, text in enumerate(SELF_TEST_GOOD):
+        _, errs = parse_frontmatter(text)
+        errs += yaml_strict_check(text)
+        if errs:
+            failures.append(f"good sample {n} flagged: {errs}")
+    for n, text in enumerate(SELF_TEST_BAD):
+        _, errs = parse_frontmatter(text)
+        if not errs:
+            failures.append(f"bad sample {n} was not flagged: {text!r}")
+    fm, _ = parse_frontmatter('---\nname: x\ndescription: "a\\tb\\u00e9 \\"q\\""\n---\n')
+    if fm["description"] != 'a\tbé "q"':
+        failures.append(f"double-quoted decode wrong: {fm['description']!r}")
+    long_text = '---\nname: x\ndescription: "' + 'a\\"' * 400 + '"\n---\n'
+    fm, errs = parse_frontmatter(long_text)
+    if errs or len(fm["description"]) != 800:
+        failures.append(f"escaped length should decode to 800 chars, got {len(fm['description'])} {errs}")
+    for f in failures:
+        print("SELF-TEST FAIL:", f)
+    print(f"self-test: {len(SELF_TEST_GOOD)} good, {len(SELF_TEST_BAD)} bad samples, "
+          f"{'OK' if not failures else str(len(failures)) + ' failure(s)'}")
+    return 1 if failures else 0
 
 
 def check_script(path):
@@ -107,6 +257,8 @@ def check_script(path):
 
 
 def main():
+    if "--self-test" in sys.argv:
+        return self_test()
     as_json = "--json" in sys.argv
     skills = sorted(p for p in SKILLS.iterdir() if p.is_dir())
     names = {p.name for p in skills}
@@ -120,7 +272,7 @@ def main():
             continue
         text = md.read_text(encoding="utf-8")
         fm, fm_errors = parse_frontmatter(text)
-        errors += fm_errors
+        errors += fm_errors + yaml_strict_check(text)
         if fm:
             if fm.get("name") != skill.name:
                 errors.append(f"name '{fm.get('name')}' != folder '{skill.name}'")

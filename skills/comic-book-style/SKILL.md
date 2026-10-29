@@ -1,6 +1,6 @@
 ---
 name: comic-book-style
-description: Comic book and graphic-novel art direction for Blender with ink-line emphasis, halftone cues, and high-contrast framing.
+description: "Comic book and graphic-novel art direction for Blender with ink-line emphasis, halftone cues and high-contrast framing. Use when the user wants a 'comic book look', 'ink outlines', 'Ben-Day dots/halftone' or a superhero-comic render (for Japanese black-and-white comics use manga-style)."
 license: MIT
 metadata:
   author: https://github.com/arjun988

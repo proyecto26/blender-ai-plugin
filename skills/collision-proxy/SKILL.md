@@ -1,6 +1,6 @@
 ---
 name: collision-proxy
-description: Collision proxy authoring for games including UCX/UHX naming, convex hulls, capsules, and simple collider meshes in Blender via MCP.
+description: "Collision proxy authoring for games: UCX/UHX naming, convex hulls, capsules and simple collider meshes in Blender via MCP. Use when a mesh needs a collider for Unreal, Unity or Godot, or collision shapes are missing, mis-named or too dense. Ships tested scripts: make_collision.py (box or convex-hull proxies named per engine, tagged collision_proxy so re-runs replace their own proxies; replace false stacks extra hulls)."
 license: MIT
 metadata:
   author: https://github.com/arjun988
@@ -98,7 +98,9 @@ import runpy
 result = runpy.run_path("<skill_dir>/scripts/make_collision.py", init_globals={"ARGS": {...}})["result"]
 ```
 
-ARGS: `objects`, `shape`, `engine`, `max_hull_verts`
+ARGS: `objects`, `shape`, `engine`, `max_hull_verts`, `replace` (default true)
+
+Proxies carry the custom property `collision_proxy = "<source>|<engine>"`. Re-runs replace only their own tagged proxies (one `_01` per source and engine); untagged objects are never touched, and a name clash is reported in `name_conflicts`. Pass `replace: false` to stack extra hulls (`_02`, `_03`) deliberately. For a hand-made multi-part hull set, rerun with `replace: false` (or remove the `collision_proxy` property from hulls you edit by hand): a default rerun replaces every tagged `UCX_<name>_NN` under the source, including copies you made of a proxy.
 
 ## Reference Guide
 

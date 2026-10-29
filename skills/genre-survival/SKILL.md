@@ -1,6 +1,6 @@
 ---
 name: genre-survival
-description: Art direction for survival and survival-horror gameplay spaces in Blender emphasizing resource props, crafting readability, and tension routes.
+description: "Art direction for survival and survival-horror gameplay spaces in Blender emphasizing resource props, crafting readability and tension routes. Use when the user is building a survival game, crafting/scavenging environments, or a survival-horror map with scarce resources."
 license: MIT
 metadata:
   author: https://github.com/arjun988

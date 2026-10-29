@@ -15,12 +15,14 @@ Or through the official Blender MCP, against a scratch .blend:
 import json
 import os
 import runpy
+import struct
 import sys
 import tempfile
 import traceback
 
 import bmesh
 import bpy
+from mathutils import Vector
 
 HERE = os.path.dirname(os.path.abspath(globals().get("__file__") or sys.argv[0]))
 SKILLS = os.path.normpath(os.path.join(HERE, "..", "..", "skills"))
@@ -77,8 +79,307 @@ def run(skill, script, args):
     return runpy.run_path(path, init_globals={"ARGS": args}, run_name="__skill_test__")["result"]
 
 
+def run_globals(skill, script, args):
+    """Like run(), but also reports whether the script exposes a callable main() (the script contract)."""
+    path = os.path.join(SKILLS, skill, "scripts", script)
+    g = runpy.run_path(path, init_globals={"ARGS": args}, run_name="__skill_test__")
+    return {"has_main": callable(g.get("main")), "result": g["result"]}
+
+
+def glb_nodes(path):
+    """Node names from the JSON chunk of a .glb (or from a .gltf file)."""
+    with open(path, "rb") as fh:
+        data = fh.read()
+    if data[:4] == b"glTF":
+        length, kind = struct.unpack("<I4s", data[12:20])
+        assert kind == b"JSON", "first GLB chunk is not JSON"
+        doc = json.loads(data[20:20 + length].decode("utf-8"))
+    else:
+        doc = json.loads(data.decode("utf-8"))
+    return [n.get("name", "") for n in doc.get("nodes", [])]
+
+
+def _bbox_centre(obj):
+    pts = [obj.matrix_world @ Vector(c) for c in obj.bound_box]
+    return sum(pts, Vector()) / len(pts)
+
+
+def _tag(obj):
+    v = obj.get("collision_proxy")
+    if v is None:
+        return None
+    source, _, engine = str(v).rpartition("|")  # make_collision tags "<source>|<engine>"
+    return {"source": source, "engine": engine}
+
+
+def _objs(prefix):
+    return sorted(o.name for o in bpy.data.objects if o.name.startswith(prefix))
+
+
+def _camera_occlusion_case(stage):
+    """Camera rig occlusion: free view, wall between camera and target, then a hide_render wall."""
+    if "SM_CamTarget" not in bpy.data.objects:
+        _cube("SM_CamTarget", 1.0, loc=(30, 30, 0))
+    args = {"name": "CAM_Occ_Test", "target": "SM_CamTarget", "lens_mm": 50}
+    r = run("camera-cinematography", "camera_rig.py", args)
+    if stage == "free":
+        return r
+    bpy.context.view_layer.update()
+    cam = bpy.data.objects["CAM_Occ_Test"]
+    centre = _bbox_centre(bpy.data.objects["SM_CamTarget"])
+    mid = cam.matrix_world.translation.lerp(centre, 0.5)
+    wall = bpy.data.objects.get("WALL_Occ_Test") or _cube("WALL_Occ_Test", 1.0)
+    wall.scale = (1.2, 1.2, 1.2)
+    wall.location = (mid.x, mid.y, mid.z - 0.6)
+    wall.hide_render = stage == "hidden_wall"
+    bpy.context.view_layer.update()
+    return run("camera-cinematography", "camera_rig.py", args)
+
+
+def _glb_check(r, expected, forbidden=("OTHER_Selected",)):
+    """Exported nodes contain the requested objects, none of the other-scene object, and verify.ok is true."""
+    nodes = set(glb_nodes(r["path"]))
+    v = r.get("verify") or {}
+    return bool(r["exists"] and set(expected) <= nodes and not (nodes & set(forbidden))
+                and v.get("ok") is True and not v.get("missing") and not v.get("leaked"))
+
+
+def _blockout_twice(args, group):
+    r1 = run("environment-artist", "blockout.py", args)
+    n1 = len([o for o in bpy.data.objects if o.get("blockout") == group])
+    meshes1, objs1 = len(bpy.data.meshes), len(bpy.data.objects)
+    run("environment-artist", "blockout.py", args)
+    n2 = len([o for o in bpy.data.objects if o.get("blockout") == group])
+    return {"first": r1, "n1": n1, "n2": n2, "meshes1": meshes1, "meshes2": len(bpy.data.meshes),
+            "objs1": objs1, "objs2": len(bpy.data.objects)}
+
+
+def _rerun2(skill, script, args_a, args_b):
+    return {"a": run(skill, script, args_a), "b": run(skill, script, args_b)}
+
+
+def _scatter_twice():
+    args = {"target": "SM_Crate_01", "count": 6, "max_dist": 3.0, "min_dist": 0.4, "clusters": 2, "seed": 3,
+            "ground": "GEO_Ground"}
+    r1 = run("set-dressing", "scatter_props.py", args)
+    r2 = run("set-dressing", "scatter_props.py", args)
+    centre = _bbox_centre(bpy.data.objects["SM_Crate_01"])
+    props = [bpy.data.objects[p["name"]] for p in r2["props"]]
+    max_xy = max(((o.matrix_world.translation.xy - centre.xy).length for o in props), default=0.0)
+    col = bpy.data.collections["COL_SetDressing"]
+    return {"count1": r1["count"], "count2": r2["count"], "max_dist": r2.get("max_dist"), "max_xy": max_xy,
+            "props2": len([o for o in col.objects if o.name.startswith("PROP_")]),
+            "extra_props": [o.name for o in col.objects if not o.name.startswith("PROP_")]}
+
+
+OUT = None
+
+
+def _wc(args):
+    return run("blender-mcp-workflow", "work_copy.py", args)
+
+
+def _mesh_sig(obj):
+    return (tuple(round(c, 5) for v in obj.data.vertices for c in v.co), tuple(obj.scale), tuple(obj.location))
+
+
+def _work_copy_accept():
+    crate = _cube("SM_Crate", 1.0)
+    crate.scale = (1.2, 0.8, 1.5)
+    sock = bpy.data.objects.new("SOCKET_Crate_Top", None)
+    bpy.context.scene.collection.objects.link(sock)
+    sock.parent = crate
+    sig = _mesh_sig(crate)
+    begin = _wc({"action": "begin", "objects": ["SM_Crate"]})
+    run("blender-mcp-workflow", "fix_asset.py", {"objects": [begin["pairs"]["SM_Crate"]]})
+    untouched = _mesh_sig(bpy.data.objects["SM_Crate"]) == sig
+    acc = _wc({"action": "accept"})
+    new = bpy.data.objects["SM_Crate"]
+    prev = bpy.data.objects[acc["accepted"]["SM_Crate"]["checkpoint"]]
+    cp = bpy.data.collections["__Checkpoint"]
+    ex = run("unreal-export", "export_unreal.py", {"mesh": "SM_Crate", "out_dir": os.path.join(OUT, "wc_unreal")})
+    return {"untouched_during": untouched, "scale_applied": tuple(new.scale) == (1.0, 1.0, 1.0),
+            "socket_parent": sock.parent is new, "prev_in_cp": prev.name in cp.objects, "prev_sig": _mesh_sig(prev) == sig,
+            "no_work_left": "SM_Crate__work" not in bpy.data.objects and "__Work" not in bpy.data.collections,
+            "exported": ex["exported"], "sockets": ex["sockets"],
+            "excluded": any(lc.exclude for lc in bpy.context.view_layer.layer_collection.children
+                            if lc.name == "__Checkpoint"),
+            "status": _wc({"action": "status"})["pending"]}
+
+
+def _work_copy_revert():
+    obj = _cube("SM_Revert", 1.0)
+    obj.scale = (1.2, 0.8, 1.5)
+    obj.data.materials.append(bpy.data.materials.new("MAT_Revert"))
+    before = (len(bpy.data.objects), len(bpy.data.meshes), len(bpy.data.materials), len(bpy.data.collections),
+              _mesh_sig(obj))
+    b = _wc({"action": "begin", "objects": ["SM_Revert"], "materials": True})
+    run("blender-mcp-workflow", "fix_asset.py", {"objects": [b["pairs"]["SM_Revert"]]})
+    mid_pending = _wc({"action": "status"})["pending"]
+    _wc({"action": "revert"})
+    after = (len(bpy.data.objects), len(bpy.data.meshes), len(bpy.data.materials), len(bpy.data.collections),
+             _mesh_sig(bpy.data.objects["SM_Revert"]))
+    return {"mid_pending": mid_pending, "before": before, "after": after,
+            "pending_after": _wc({"action": "status"})["pending"]}
+
+
+def _work_copy_twice():
+    _cube("SM_Twice", 1.0)
+    _wc({"action": "begin", "objects": ["SM_Twice"]})
+    err = None
+    try:
+        _wc({"action": "begin", "objects": ["SM_Twice"]})
+    except Exception as exc:  # the error text is the assertion
+        err = str(exc)
+    _wc({"action": "revert"})
+    return {"error": err, "pending_after": _wc({"action": "status"})["pending"]}
+
+
+def _expect_error(fn):
+    try:
+        fn()
+    except Exception as exc:
+        return str(exc)
+    return None
+
+
+def _manifest_case():
+    import hashlib
+    d = os.path.join(OUT, "manifest_run")
+    os.makedirs(d, exist_ok=True)
+    with open(os.path.join(d, "model.glb"), "wb") as fh:
+        fh.write(b"abc")
+    base = {"out_dir": d, "skill": "blender-mcp-workflow", "script": "validate_asset.py", "args": {"objects": ["SM_Crate_01"]}}
+    rm = lambda **kw: run("blender-director", "run_manifest.py", dict(base, **kw))
+    run("blender-director", "run_manifest.py", {"out_dir": d, "brief": {"asset": "SM_Crate_01"}})
+    rm(stage="validate", verdict="PASS", result_summary={"fails": 0})
+    r2 = rm(stage="export", verdict="PASS", exports=["model.glb"], result_summary={"exists": True})
+    outside = _expect_error(lambda: rm(stage="verify", verdict="PASS", exports=[os.path.join(d, "..", "x.glb")]))
+    outside_cap = _expect_error(lambda: rm(stage="verify", verdict="PASS", capture="../shot.png"))
+    with open(os.path.join(d, "run_manifest.json"), encoding="utf-8") as fh:
+        m = json.load(fh)
+    with open(os.path.join(SKILLS, "blender-director", "references", "run-manifest.schema.json"), encoding="utf-8") as fh:
+        schema = json.load(fh)
+    item = schema["properties"]["events"]["items"]
+    keys_ok = all(k in m for k in schema["required"]) and all(all(k in e for k in item["required"]) for e in m["events"])
+    enums_ok = all(e["stage"] in item["properties"]["stage"]["enum"] and e["verdict"] in item["properties"]["verdict"]["enum"]
+                   for e in m["events"])
+    rm(stage="validate", verdict="FAIL", reason="n-gons")
+    blocked = _expect_error(lambda: rm(stage="export", verdict="PASS"))
+    need_cause = _expect_error(lambda: rm(stage="validate", verdict="FAIL", reason="n-gons again"))
+    stopped = rm(stage="validate", verdict="FAIL", reason="n-gons again", cause="geometry")
+    return {"events": len(m["events"]), "r2_events": r2["events"], "hash": m["events"][1]["exports"][0]["sha256"],
+            "expect_hash": hashlib.sha256(b"abc").hexdigest(), "outside": outside, "outside_cap": outside_cap,
+            "keys_ok": keys_ok, "enums_ok": enums_ok, "blocked": blocked, "need_cause": need_cause,
+            "stop": stopped["stop"], "blocked_by": stopped["blocked_by"], "final_events": stopped["events"]}
+
+
+def _world_close(a, b, tol=1e-5):
+    return all(abs(a[i][j] - b[i][j]) <= tol for i in range(4) for j in range(4))
+
+
+def _kid_scene(parent_name, kid_name, loc=(1.0, 2.0, 0.0), rot_z=0.5, scale=2.0):
+    """Scaled + rotated parent cube with an offset empty child (non-identity parent inverse)."""
+    parent = _cube(parent_name, 1.0, loc=loc)
+    parent.scale = (scale, scale, scale)
+    parent.rotation_euler = (0.0, 0.0, rot_z)
+    kid = bpy.data.objects.new(kid_name, None)
+    bpy.context.scene.collection.objects.link(kid)
+    bpy.context.view_layer.update()
+    kid.parent = parent
+    kid.matrix_parent_inverse = parent.matrix_world.inverted()
+    kid.location = (0.0, 0.0, 0.5)
+    bpy.context.view_layer.update()
+    return parent, kid
+
+
+def _fix_asset_children_world():
+    parent, kid = _kid_scene("SM_FixKidP", "SOCKET_FixKid")
+    before = kid.matrix_world.copy()
+    run("blender-mcp-workflow", "fix_asset.py", {"objects": ["SM_FixKidP"]})
+    bpy.context.view_layer.update()
+    return {"kid_world_kept": _world_close(before, kid.matrix_world), "applied": tuple(parent.scale) == (1.0, 1.0, 1.0),
+            "z": round(kid.matrix_world.translation.z, 4)}
+
+
+def _work_copy_child_world():
+    parent, kid = _kid_scene("SM_WcKidP", "SOCKET_WcKid")
+    before = kid.matrix_world.copy()
+    b = _wc({"action": "begin", "objects": ["SM_WcKidP"]})
+    run("blender-mcp-workflow", "fix_asset.py", {"objects": [b["pairs"]["SM_WcKidP"]]})
+    _wc({"action": "accept"})
+    bpy.context.view_layer.update()
+    return {"kid_world_kept": _world_close(before, kid.matrix_world), "parent_is_new": kid.parent is bpy.data.objects["SM_WcKidP"],
+            "applied": tuple(bpy.data.objects["SM_WcKidP"].scale) == (1.0, 1.0, 1.0)}
+
+
+def _work_copy_set_checkpoint():
+    """Parent and child both in the work set: the checkpoint originals must stay exactly as they were."""
+    parent = _cube("SM_SetP", 1.0, loc=(4.0, 5.0, 0.0))
+    parent.scale = (1.5, 1.5, 1.5)
+    bpy.context.view_layer.update()
+    child = _cube("SM_SetC", 0.5, loc=(0.5, 0.0, 0.0))
+    child.parent = parent
+    child.matrix_parent_inverse = parent.matrix_world.inverted()
+    bpy.context.view_layer.update()
+    child_world = child.matrix_world.copy()
+    pinv = child.matrix_parent_inverse.copy()
+    _wc({"action": "begin", "objects": ["SM_SetP", "SM_SetC"]})
+    _wc({"action": "accept"})
+    bpy.context.view_layer.update()
+    prev_p, prev_c = bpy.data.objects["SM_SetP__prev"], bpy.data.objects["SM_SetC__prev"]
+    return {"prev_child_parent": prev_c.parent.name if prev_c.parent else None,
+            "prev_child_world": _world_close(child_world, prev_c.matrix_world),
+            "prev_child_pinv": _world_close(pinv, prev_c.matrix_parent_inverse),
+            "new_child_parent": bpy.data.objects["SM_SetC"].parent.name if bpy.data.objects["SM_SetC"].parent else None,
+            "prev_parent_is_prev": prev_p.name}
+
+
+def _manifest_validate_gate():
+    d = os.path.join(OUT, "manifest_gate")
+    os.makedirs(d, exist_ok=True)
+    base = {"out_dir": d, "skill": "blender-mcp-workflow", "script": "validate_asset.py"}
+    rm = lambda **kw: run("blender-director", "run_manifest.py", dict(base, **kw))
+    rm(stage="model", verdict="PASS")
+    missing = _expect_error(lambda: rm(stage="export", verdict="PASS"))
+    rm(stage="validate", verdict="NOT_CHECKED", reason="not run yet")
+    not_checked = _expect_error(lambda: rm(stage="export", verdict="PASS"))
+    verify_nc = _expect_error(lambda: rm(stage="verify", verdict="PASS"))
+    rm(stage="validate", verdict="N/A", reason="no mesh output")
+    ok_na = rm(stage="export", verdict="PASS")
+    rm(stage="validate", verdict="PASS")
+    ok_verify = rm(stage="verify", verdict="PASS")
+    return {"missing": missing, "not_checked": not_checked, "verify_nc": verify_nc,
+            "export_after_na": ok_na["gates"]["export"], "verify_after_pass": ok_verify["gates"]["verify"]}
+
+
+def _collision_dup_survives():
+    _cube("SM_DupCol", 1.0, loc=(-12, 0, 0))
+    run("collision-proxy", "make_collision.py", {"objects": ["SM_DupCol"], "shape": "box", "engine": "unreal"})
+    dup = bpy.data.objects["UCX_SM_DupCol_01"].copy()
+    dup.name = "MY_HANDMADE_HULL"
+    bpy.context.scene.collection.objects.link(dup)
+    r = run("collision-proxy", "make_collision.py", {"objects": ["SM_DupCol"], "shape": "box", "engine": "unreal"})
+    return {"survives": "MY_HANDMADE_HULL" in bpy.data.objects, "removed": r["removed"],
+            "proxies": _objs("UCX_SM_DupCol_")}
+
+
+def _camera_eye_height_case():
+    _cube("SM_EyeT", 1.0, loc=(60, 60, 0))
+    r = run("camera-cinematography", "camera_rig.py", {"name": "CAM_Eye_Test", "target": "SM_EyeT", "eye_height": 1.6,
+                                                        "azimuth_deg": 40})
+    cam = bpy.data.objects["CAM_Eye_Test"]
+    centre = _bbox_centre(bpy.data.objects["SM_EyeT"])
+    ok = abs((cam.matrix_world.translation - centre).length - r["distance_m"]) < 2e-3
+    clamp = run("camera-cinematography", "camera_rig.py", {"name": "CAM_Eye_Clamp", "target": "SM_EyeT", "eye_height": 400.0,
+                                                           "max_distance": 5.0})
+    return {"distance_matches": ok, "notes_free": r["notes"], "notes_clamp": clamp["notes"], "z": r["location"][2]}
+
+
 def build_cases(out_dir):
     """Each case: (id, callable returning result, assertion on result)."""
+    global OUT
+    OUT = out_dir
     W = "blender-mcp-workflow"
     return [
         ("core.setup_collections", lambda: run(W, "setup_collections.py", {"asset": "Crate"}),
@@ -130,7 +431,7 @@ def build_cases(out_dir):
          lambda r: r["exists"] and r["bytes"] > 1000),
         ("export-pipeline.glb", lambda: run("export-pipeline", "export_asset.py", {
             "objects": ["SM_Crate_01"], "engine": "web", "out_path": os.path.join(out_dir, "SM_Crate_01.glb")}),
-         lambda r: r["exists"] and r["bytes"] > 500),
+         lambda r: r["bytes"] > 500 and _glb_check(r, {"SM_Crate_01"}) and set(glb_nodes(r["path"])) == {"SM_Crate_01"}),
         ("unreal-export.export_unreal", lambda: run("unreal-export", "export_unreal.py", {
             "mesh": "SM_Sphere_01", "out_dir": out_dir, "strict": False}),
          lambda r: r["exported"] and r["collision"] and r["checks"]["prefix"] == "PASS"),
@@ -139,7 +440,9 @@ def build_cases(out_dir):
          lambda r: r["exported"]),
         ("godot-export.export_godot", lambda: run("godot-export", "export_godot.py", {
             "objects": ["SM_Crate_01", "SM_Crate_01-colonly"], "out_path": os.path.join(out_dir, "godot", "crate.glb")}),
-         lambda r: r["exported"] and r["import_hints"].get("SM_Crate_01-colonly") == "-colonly"),
+         lambda r: r["exported"] and r["import_hints"].get("SM_Crate_01-colonly") == "-colonly"
+         and set(glb_nodes(r["path"])) == {"SM_Crate_01", "SM_Crate_01-colonly"}
+         and (r.get("verify") or {}).get("ok") is True),
         ("rigging.rig_check", lambda: run("rigging", "rig_check.py", {"armature": "ARM_Test"}),
          lambda r: r["deform_bones"] == 3 and r["unpaired_side_bones"] == [] and "SK_Arm" in r["meshes"]),
         ("animation.turntable", lambda: run("animation", "turntable.py", {"target": "SM_Crate_01", "frames": 48}),
@@ -172,6 +475,102 @@ def build_cases(out_dir):
             "low": "SM_Crate_01", "high": "HP_Crate_01", "maps": ["normal", "ao"], "size": 64, "samples": 4,
             "out_dir": os.path.join(out_dir, "bakes")}),
          lambda r: len(r["images"]) == 2 and all(os.path.exists(p) for p in r["images"])),
+
+        # ---- iteration 6: leak-proof exports, idempotency, occlusion, distance contract ----
+        ("export-pipeline.glb_skinned", lambda: run("export-pipeline", "export_asset.py", {
+            "objects": ["SK_Arm", "ARM_Test"], "engine": "web", "out_path": os.path.join(out_dir, "skinned.glb")}),
+         lambda r: _glb_check(r, {"SK_Arm", "ARM_Test"}) and {"spine", "arm.L", "arm.R"} <= set(glb_nodes(r["path"]))),
+        ("export-pipeline.glb_other_scene_excluded", lambda: run("export-pipeline", "export_asset.py", {
+            "objects": ["SM_Sphere_01"], "engine": "web", "out_path": os.path.join(out_dir, "sphere.glb")}),
+         lambda r: _glb_check(r, {"SM_Sphere_01"}) and "SM_Crate_01" not in glb_nodes(r["path"])),
+        ("collision-proxy.rerun_x3_single_proxy", lambda: [
+            run("collision-proxy", "make_collision.py", {"objects": ["SM_Sphere_01"], "shape": "box", "engine": "unity"})
+            for _ in range(3)][-1],
+         lambda r: _objs("SM_Sphere_01_COL_") == ["SM_Sphere_01_COL_01"] and r["proxies"][0]["name"] == "SM_Sphere_01_COL_01"
+         and _tag(bpy.data.objects["SM_Sphere_01_COL_01"]) == {"source": "SM_Sphere_01", "engine": "unity"}),
+        ("collision-proxy.replace_false_appends", lambda: run("collision-proxy", "make_collision.py", {
+            "objects": ["SM_Sphere_01"], "shape": "box", "engine": "unity", "replace": False}),
+         lambda r: _objs("SM_Sphere_01_COL_") == ["SM_Sphere_01_COL_01", "SM_Sphere_01_COL_02"]),
+        ("collision-proxy.replace_true_collapses", lambda: run("collision-proxy", "make_collision.py", {
+            "objects": ["SM_Sphere_01"], "shape": "box", "engine": "unity"}),
+         lambda r: _objs("SM_Sphere_01_COL_") == ["SM_Sphere_01_COL_01"]),
+        ("collision-proxy.other_engine_untouched", lambda: run("collision-proxy", "make_collision.py", {
+            "objects": ["SM_Sphere_01"], "shape": "box", "engine": "generic"}),
+         lambda r: _objs("SM_Sphere_01_COL_") == ["SM_Sphere_01_COL_01"] and _objs("COL_SM_Sphere_01_") == ["COL_SM_Sphere_01_01"]),
+        ("collision-proxy.name_conflict_reported", lambda: (
+            _cube("UCX_SM_ColTest_01", 0.5), _cube("SM_ColTest", 1.0, loc=(-9, 0, 0)),
+            run("collision-proxy", "make_collision.py", {"objects": ["SM_ColTest"], "shape": "box", "engine": "unreal"}))[-1],
+         lambda r: "UCX_SM_ColTest_01" in json.dumps(r.get("name_conflicts"))
+         and _tag(bpy.data.objects["UCX_SM_ColTest_01"]) is None
+         and r["proxies"][0]["name"] != "UCX_SM_ColTest_01"),
+        ("camera.occlusion_free_view", lambda: _camera_occlusion_case("free"),
+         lambda r: r["occluded_by"] == [] and r["visible_fraction"] == 1.0),
+        ("camera.occlusion_wall_reported", lambda: _camera_occlusion_case("wall"),
+         lambda r: "WALL_Occ_Test" in r["occluded_by"] and r["visible_fraction"] < 1.0),
+        ("camera.occlusion_hide_render_ignored", lambda: _camera_occlusion_case("hidden_wall"),
+         lambda r: r["occluded_by"] == [] and r["visible_fraction"] == 1.0),
+        ("blender-mcp-workflow.fix_asset_main_contract", lambda: run_globals("blender-mcp-workflow", "fix_asset.py", {
+            "objects": ["SM_FixMe"]}),
+         lambda g: g["has_main"] and g["result"]["objects"]["SM_FixMe"]["uv_added"] == "box"
+         and tuple(bpy.data.objects["SM_FixMe"].scale) == (1.0, 1.0, 1.0)
+         and len(bpy.data.objects["SM_FixMe"].data.uv_layers) == 1
+         and abs(bpy.data.objects["SM_FixMe"].dimensions.x - 2.4) < 1e-3),
+        ("blender-mcp-workflow.fix_asset_rerun", lambda: run("blender-mcp-workflow", "fix_asset.py", {"objects": ["SM_FixMe"]}),
+         lambda r: r["objects"]["SM_FixMe"]["uv_added"] is None and len(r["objects"]["SM_FixMe"]["uv_layers"]) == 1),
+        ("environment-artist.blockout_ring", lambda: _blockout_twice({
+            "group": "TestRing", "pieces": [{"kind": "box", "size": [1.8, 0.6, 1.1]}],
+            "layout": {"pattern": "ring", "count": 6, "radius": 4.0, "center": "SM_Crate_01", "face_center": True}}, "TestRing"),
+         lambda r: r["n1"] == 6 and r["n1"] == r["n2"] and r["meshes1"] == r["meshes2"] and r["objs1"] == r["objs2"]),
+        ("environment-artist.blockout_room", lambda: _blockout_twice({
+            "group": "TestRoom", "room": {"size": [6, 8, 3], "at": [-20, -20], "wall": 0.2,
+                                          "fixtures": {"size": [0.8, 0.3], "spacing": 3.0, "lights": False}}}, "TestRoom"),
+         lambda r: r["n1"] >= 1 and r["n1"] == r["n2"] and r["meshes1"] == r["meshes2"] and r["objs1"] == r["objs2"]),
+        ("procedural-modeling.gn_curve_profile", lambda: _rerun2("procedural-modeling", "gn_curve_profile.py", {
+            "name": "GEO_TestPipe", "points": [[0, -5, 0.5], [0, 5, 0.5]], "radius": 0.15}, {
+            "name": "GEO_TestPipe", "points": [[0, -5, 0.5], [0, 5, 0.5], [3, 5, 0.5]], "radius": 0.3, "resolution": 8}),
+         lambda r: len(_objs("GEO_TestPipe")) == 1 and r["b"]["object"] == "GEO_TestPipe"
+         and r["b"]["evaluated"]["verts"] != r["a"]["evaluated"]["verts"]
+         and len(bpy.data.objects["GEO_TestPipe"].modifiers) == 1 and r["b"]["radius"] == 0.3),
+        ("set-dressing.scatter_props_max_dist", lambda: _scatter_twice(),
+         lambda r: r["count1"] == 6 and r["count2"] == 6 and r["props2"] == 6 and r["max_xy"] <= 3.0 + 1e-3
+         and r["max_dist"] == 3.0 and not r["extra_props"]),
+        ("vfx-fx.smoke_domain", lambda: _rerun2("vfx-fx", "smoke_domain.py", {"emitter": "SM_Crate_01", "flow_type": "BOTH"},
+                                                {"emitter": "SM_Crate_01", "flow_type": "BOTH"}),
+         lambda r: r["a"]["domain"] == r["b"]["domain"] and r["b"]["flow_type"] == "BOTH"
+         and len([o for o in bpy.data.objects if o.name.startswith(r["b"]["domain"].split(".")[0])]) == 1
+         and len([o for o in bpy.data.objects if any(m.type == "FLUID" and m.fluid_type == "DOMAIN" for m in o.modifiers)]) == 1),
+        ("hd-2d-style.sprite_billboard", lambda: run("hd-2d-style", "sprite_billboard.py", {
+            "name": "SPR_Test", "location": [-4, 3], "height": 1.6}),
+         lambda r: r["object"] == "SPR_Test" and abs(bpy.data.objects["SPR_Test"].dimensions.z - 1.6) < 1e-2
+         and r["interpolation"] == "Closest"),
+        ("work-copy.accept_remaps_children", lambda: _work_copy_accept(),
+         lambda r: r["untouched_during"] and r["scale_applied"] and r["socket_parent"] and r["prev_in_cp"] and r["prev_sig"]
+         and r["no_work_left"] and r["exported"] and "SOCKET_Crate_Top" in r["sockets"] and r["excluded"]
+         and not r["status"]),
+        ("work-copy.revert_identical", lambda: _work_copy_revert(),
+         lambda r: r["mid_pending"] and r["before"] == r["after"] and not r["pending_after"]),
+        ("work-copy.begin_twice_errors", lambda: _work_copy_twice(),
+         lambda r: r["error"] and "pending" in r["error"] and not r["pending_after"]),
+        ("director.run_manifest", lambda: _manifest_case(),
+         lambda r: r["events"] == 2 and r["r2_events"] == 2 and r["hash"] == r["expect_hash"]
+         and r["outside"] and "outside" in r["outside"] and r["outside_cap"] and "outside" in r["outside_cap"]
+         and r["keys_ok"] and r["enums_ok"] and r["blocked"] and "blocked" in r["blocked"]
+         and r["need_cause"] and "cause" in r["need_cause"] and r["stop"] is True
+         and r["blocked_by"] == "validate" and r["final_events"] == 4),
+        ("blender-mcp-workflow.fix_asset_children_keep_world", lambda: _fix_asset_children_world(),
+         lambda r: r["kid_world_kept"] and r["applied"]),
+        ("work-copy.accept_children_keep_world", lambda: _work_copy_child_world(),
+         lambda r: r["kid_world_kept"] and r["parent_is_new"] and r["applied"]),
+        ("work-copy.checkpoint_set_untouched", lambda: _work_copy_set_checkpoint(),
+         lambda r: r["prev_child_parent"] == "SM_SetP__prev" and r["prev_child_world"] and r["prev_child_pinv"]
+         and r["new_child_parent"] == "SM_SetP"),
+        ("director.export_needs_validate_pass", lambda: _manifest_validate_gate(),
+         lambda r: r["missing"] and "validate" in r["missing"] and r["not_checked"] and "validate" in r["not_checked"]
+         and r["verify_nc"] and r["export_after_na"] == "PASS" and r["verify_after_pass"] == "PASS"),
+        ("collision-proxy.user_duplicate_survives", lambda: _collision_dup_survives(),
+         lambda r: r["survives"] and r["proxies"] == ["UCX_SM_DupCol_01"]),
+        ("camera.eye_height_distance_and_notes", lambda: _camera_eye_height_case(),
+         lambda r: r["distance_matches"] and r["notes_free"] == [] and len(r["notes_clamp"]) == 1 and abs(r["z"] - 1.6) < 1e-3),
     ]
 
 
@@ -220,9 +619,27 @@ def _fixtures(scene):
     bmesh.ops.split_edges(bm, edges=bm.edges)
     bm.to_mesh(dirty.data)
     bm.free()
+    # Unapplied scale and no UVs, for fix_asset.
+    fixme = _cube("SM_FixMe", 2.0, loc=(8, 8, 0))
+    fixme.data.uv_layers.remove(fixme.data.uv_layers[0])
+    fixme.scale = (1.2, 0.8, 1.5)
     # Godot collision-only twin.
     col_twin = _cube("SM_Crate_01-colonly", 1.0)
     col_twin.hide_render = True
+
+
+def _other_scene():
+    """A second scene holding a SELECTED object: exports must never pick it up (use_active_scene)."""
+    other = bpy.data.scenes.new("__SkillTestsOther")
+    me = bpy.data.meshes.new("OTHER_Selected")
+    bm = bmesh.new()
+    bmesh.ops.create_cube(bm, size=1.0)
+    bm.to_mesh(me)
+    bm.free()
+    obj = bpy.data.objects.new("OTHER_Selected", me)
+    other.collection.objects.link(obj)
+    obj.select_set(True, view_layer=other.view_layers[0])
+    return other
 
 
 def main(out_dir=None, only=None):
@@ -234,7 +651,7 @@ def main(out_dir=None, only=None):
     if window:
         window.scene = scene
     created_before = {c.name for c in bpy.data.collections}
-    results, passed = [], 0
+    results, passed, other = [], 0, None
     try:
         with bpy.context.temp_override(scene=scene, view_layer=scene.view_layers[0]) if not window else _nullctx():
             _cube("SM_Crate_01", 1.0)
@@ -245,6 +662,7 @@ def main(out_dir=None, only=None):
             _cube("SM_Rock_A", 0.2, collection=rocks)
             _cube("SM_Rock_B", 0.3, collection=rocks)
             _fixtures(scene)
+            other = _other_scene()
             for case_id, fn, check in build_cases(out_dir):
                 if only and not any(case_id.startswith(o) for o in only):
                     continue
@@ -261,6 +679,10 @@ def main(out_dir=None, only=None):
         for obj in list(scene.objects):
             bpy.data.objects.remove(obj, do_unlink=True)
         bpy.data.scenes.remove(scene)
+        if other is not None:
+            for obj in list(other.objects):
+                bpy.data.objects.remove(obj, do_unlink=True)
+            bpy.data.scenes.remove(other)
         for name in {c.name for c in bpy.data.collections} - created_before:
             bpy.data.collections.remove(bpy.data.collections[name])
     return {"blender": bpy.app.version_string, "passed": passed, "total": len(results),
@@ -277,6 +699,8 @@ class _nullctx:
 
 ARGS = globals().get("ARGS") or _cli_args()
 result = main(**ARGS)
+with open(os.path.join(result["out_dir"], "skill_tests_report.json"), "w", encoding="utf-8") as _fh:
+    json.dump(result, _fh, indent=2, default=str)  # report file: some Blender launchers do not forward stdout
 if bpy.app.background and __name__ == "__main__":
-    print(json.dumps(result, indent=2))
+    print(json.dumps(result, indent=2, default=str))
     sys.exit(0 if result["passed"] == result["total"] else 1)

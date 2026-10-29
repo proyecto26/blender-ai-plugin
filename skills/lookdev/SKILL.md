@@ -1,6 +1,6 @@
 ---
 name: lookdev
-description: Look development loop for Blender assets combining materials, lighting, camera, and screenshot comparison until shading reads correctly via MCP.
+description: "Look development loop for Blender assets combining materials, lighting, camera and screenshot comparison until shading reads correctly via MCP. Use when the user says 'my asset looks flat/wrong', 'review the shading', 'set up a turntable', or wants an asset presentation render checked against a reference."
 license: MIT
 metadata:
   author: https://github.com/arjun988

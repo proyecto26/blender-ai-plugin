@@ -1,6 +1,6 @@
 ---
 name: pixel-art-style
-description: Pixel-art and texel-constrained art direction for Blender assets destined for pixel rendering, low-res textures, or HD-2D-adjacent pixel reads.
+description: "Pixel-art and texel-constrained art direction for Blender assets destined for pixel rendering, low-res textures or HD-2D-adjacent pixel reads. Use when the user asks for 'pixel art from 3D', pixelated low-res textures, or sprite-like renders (for strict console palettes use retro-8bit-style or retro-16bit-style)."
 license: MIT
 metadata:
   author: https://github.com/arjun988

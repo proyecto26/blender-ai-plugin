@@ -1,6 +1,6 @@
 ---
 name: blender-director
-description: Use when starting any Blender asset task, planning a production pipeline, coordinating multiple disciplines, or matching a reference photo/concept art. Invoke for game-ready assets, hard surface, environment, character, creature, export, or any multi-skill Blender workflow.
+description: "Orchestrates a Blender production from brief to verified export: inspect, brief, model, look-dev, light and camera, validate, export, post-export check, each stage behind a gate. Use when starting any Blender asset task, planning a pipeline, coordinating several disciplines, matching a reference photo or concept art, or when a result looks wrong, does not match the reference, or must be made game-ready. Ships tested scripts: run_manifest.py (records stage verdicts PASS/FAIL/NOT_CHECKED, captures and export hashes in run_manifest.json, blocks later stages after a failed gate)."
 license: MIT
 metadata:
   author: https://github.com/arjun988
@@ -40,11 +40,35 @@ Every asset follows the universal pipeline in `blender-mcp-workflow` skill → `
 1. ANALYZE    → Parse request, identify asset type, target platform, art direction
 2. PLAN       → Select skills, define polycount/texture budgets, export format
 3. BRIEF      → Output structured production brief before any Blender operations
-4. DELEGATE   → Activate specialist skills in pipeline order
-5. EXECUTE    → Drive work via Blender MCP (see `blender-mcp-workflow` skill → `references/mcp-integration.md`)
+4. DELEGATE   → Activate specialist skills in pipeline order (rules: `references/skill-routing.md`)
+5. EXECUTE    → Drive work via Blender MCP, stage by stage with gates (see Stage Gates)
 6. VALIDATE   → Run checklist (`blender-mcp-workflow` skill → `references/validation-checklist.md`)
-7. DELIVER    → Export + validation report
+7. DELIVER    → Export, check `verify`, then the validation report
 ```
+
+## Stage Gates
+
+Production runs eight stages in order; each needs a gate (a script result **and** a capture) and a
+FAIL blocks every later stage:
+
+| # | Stage | Gate |
+|---|-------|------|
+| 1 | inspect | `scene_audit.py` read, viewport screenshot |
+| 2 | brief | brief written, N/A stages declared |
+| 3 | model | `validate_asset.py` no FAIL on geometry checks |
+| 4 | look_dev | UVs + materials PASS, 3/4 capture |
+| 5 | light_camera | `camera_rig` `occluded_by == []`, `visible_fraction` ~1.0 |
+| 6 | validate | `validate_asset.py` PASS (WARN only with a recorded reason) |
+| 7 | export | engine export script, only after 6 PASS |
+| 8 | verify | export `verify.ok == true` |
+
+Verdicts: **PASS / FAIL / NOT_CHECKED / N/A**. NOT_CHECKED (e.g. `verify.checked: false`) is never a pass.
+N/A is declared in the brief with a reason (relight-only tasks skip model and export). The same gate
+failing twice: stop, classify the cause (geometry / materials / lighting / camera / export / tool-error),
+report it; no third blind retry. Record each gate with `scripts/run_manifest.py`. Details:
+`references/pipeline-gates.md`. Which skills may run in parallel and which never: `references/skill-routing.md`
+(section "Parallel vs Sequential"). Before a destructive step (apply, join, boolean apply, remesh, decimate)
+use the `blender-mcp-workflow` skill → `scripts/work_copy.py`.
 
 ## Analysis Framework
 
@@ -294,9 +318,11 @@ blender-director → asset-optimization → lod-pipeline → collision-proxy →
 - Declare "done" without visual-match checklist when reference was provided
 - Start modeling without scale reference
 - Mix styles without explicit direction
-- Export without validation
+- Export without validation, or after a FAIL gate
+- Count NOT_CHECKED as a pass
+- Retry the same failing gate a third time without classifying the cause
 - Explain Blender UI when MCP is available
-- Apply destructive operations without backup
+- Apply destructive operations without a working copy (`work_copy.py`)
 
 ## Reference Guide
 
@@ -307,7 +333,9 @@ blender-director → asset-optimization → lod-pipeline → collision-proxy →
 | Naming | `blender-mcp-workflow` skill → `references/naming-conventions.md` | Scene setup |
 | Validation | `blender-mcp-workflow` skill → `references/validation-checklist.md` | Before delivery |
 | Polycount Budgets | `blender-mcp-workflow` skill → `references/polycount-budgets.md` | Planning phase |
-| Skill Routing | `references/skill-routing.md` | Complex multi-skill tasks |
+| Skill Routing | `references/skill-routing.md` | Complex multi-skill tasks (parallel vs sequential rules) |
+| Stage Gates | `references/pipeline-gates.md` | Every production |
+| Run Manifest | `scripts/run_manifest.py`, `references/run-manifest.schema.json` | Recording gates |
 | MCP Tools | `blender-mcp-workflow` skill → `references/mcp-tools.md` | Before MCP execution |
 | Reference Image Match | `blender-mcp-workflow` skill → `references/reference-image-match.md` | Photo/concept attached |
 | Reference Analysis | `blender-mcp-workflow` skill → `references/reference-analysis-template.md` | Before first MCP call |

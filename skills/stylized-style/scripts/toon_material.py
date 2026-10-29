@@ -47,8 +47,6 @@ def _outline_material():
     if mat:
         return mat
     mat = bpy.data.materials.new("MAT_Outline_Black")
-    if hasattr(mat, "use_nodes") and not mat.use_nodes:
-        mat.use_nodes = True
     nodes = mat.node_tree.nodes
     nodes.clear()
     out = nodes.new("ShaderNodeOutputMaterial")
@@ -65,8 +63,6 @@ def main(name="MAT_Toon", base_color=(0.8, 0.5, 0.4), bands=2, rim=0.3, objects=
         name = "MAT_" + name
     bands = max(2, min(4, int(bands)))
     mat = bpy.data.materials.get(name) or bpy.data.materials.new(name)
-    if hasattr(mat, "use_nodes") and not mat.use_nodes:
-        mat.use_nodes = True
     nt = mat.node_tree
     nodes, links = nt.nodes, nt.links
     nodes.clear()

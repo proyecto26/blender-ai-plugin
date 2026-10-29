@@ -1,6 +1,6 @@
 ---
 name: hard-surface
-description: AAA hard surface modeling for sci-fi, industrial, military, vehicles, weapons, robotics, and mechanical props. Use for boolean/bevel workflows, panel lines, greebles, chamfers, and manufacturing-accurate surfaces in Blender via MCP.
+description: "AAA hard surface modeling for sci-fi, industrial, military, vehicles, weapons, robotics and mechanical props via MCP. Use when the user wants boolean and bevel workflows, panel lines, greebles, chamfers or crisp edges that catch light. Ships tested scripts: bevel_stack.py (non-destructive Bevel plus Weighted Normal finishing stack, optional Triangulate)."
 license: MIT
 metadata:
   author: https://github.com/arjun988

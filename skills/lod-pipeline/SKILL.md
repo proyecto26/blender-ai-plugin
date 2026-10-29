@@ -1,6 +1,6 @@
 ---
 name: lod-pipeline
-description: Dedicated LOD generation, naming, screen-size targets, and validation for game meshes in Blender via MCP.
+description: "Dedicated LOD generation, naming, screen-size targets and validation for game meshes in Blender via MCP. Use when a mesh needs LOD1..N, a lower-poly distant version, or LOD naming for Unreal, Unity or Godot. Ships tested scripts: generate_lods.py (Decimate-based LOD copies in COL_LODs; stacked copies get hide_render so renders show LOD0 only)."
 license: MIT
 metadata:
   author: https://github.com/arjun988

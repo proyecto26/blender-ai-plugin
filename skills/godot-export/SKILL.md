@@ -1,6 +1,6 @@
 ---
 name: godot-export
-description: Godot-specific Blender export favoring GLTF/GLB with correct scale, materials, animation clips, and collision shapes via MCP.
+description: "Godot-specific Blender export favoring glTF/GLB with correct scale, materials, animation clips and collision shapes via MCP. Use when an asset is headed for Godot 4, or collision hints such as -col and -colonly or the .glb contents look wrong. Ships tested scripts: export_godot.py (GLB export from the active scene with import-hint naming checks and a read-back verify; checked false means NOT_CHECKED)."
 license: MIT
 metadata:
   author: https://github.com/arjun988
@@ -96,6 +96,8 @@ result = runpy.run_path("<skill_dir>/scripts/export_godot.py", init_globals={"AR
 ```
 
 ARGS: `objects`, `out_path`, `animation`
+
+The export uses the active scene only and reads the file back: check `verify.ok` after export (`missing` and `leaked` list mismatches). `verify.checked: false` means NOT_CHECKED, never a pass.
 
 ## Reference Guide
 

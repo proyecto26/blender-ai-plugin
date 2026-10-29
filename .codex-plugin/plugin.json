@@ -1,7 +1,7 @@
 {
   "name": "blender-ai-plugin",
   "version": "2.0.0",
-  "description": "AI technical-art team for Blender: 95 skills, 29 tested bpy scripts and a design orchestrator agent that drive the official Blender MCP server to model, texture, light, render, validate and export game-ready assets (Unreal, Unity, Godot) in any art style. Use for any Blender modeling, look-dev, scene or export task.",
+  "description": "AI technical-art team for Blender: a full library of Blender skills, tested bpy scripts and a design orchestrator agent that drive the official Blender MCP server to model, texture, light, render, validate and export game-ready assets (Unreal, Unity, Godot) in any art style. Use for any Blender modeling, look-dev, scene or export task.",
   "author": {
     "name": "Proyecto 26",
     "url": "https://github.com/proyecto26"
@@ -34,7 +34,7 @@
   "interface": {
     "displayName": "Blender AI Plugin",
     "shortDescription": "Drive Blender through the official Blender MCP with a full technical-art skill set",
-    "longDescription": "95 Blender skills (modeling, sculpt/retopo, UVs, PBR materials, geometry nodes, lighting, camera, rendering, compositing, rigging, animation, simulation, LODs, collision, Unreal/Unity/Godot export) plus art-style, genre, world and mood direction. Ships 29 bpy scripts tested on Blender 5.2 LTS and runs them through the official Blender Lab MCP server.",
+    "longDescription": "A full library of Blender skills (modeling, sculpt/retopo, UVs, PBR materials, geometry nodes, lighting, camera, rendering, compositing, rigging, animation, simulation, LODs, collision, Unreal/Unity/Godot export) plus art-style, genre, world and mood direction. Ships tested bpy scripts for Blender 5.2 LTS and runs them through the official Blender Lab MCP server.",
     "developerName": "Proyecto 26",
     "category": "Creative",
     "websiteURL": "https://github.com/proyecto26/blender-ai-plugin",

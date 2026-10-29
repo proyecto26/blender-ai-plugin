@@ -1,6 +1,6 @@
 ---
 name: vegetation-artist
-description: Vegetation and foliage authoring for Blender including trees, plants, grass cards, canopy LODs, and game-friendly leaf atlases via MCP.
+description: "Vegetation and foliage authoring for Blender including trees, plants, grass cards, canopy LODs and game-friendly leaf atlases via MCP. Use when the user says 'make a tree', 'add grass/bushes/ivy', 'build leaf cards' or needs a forest with LOD-friendly foliage."
 license: MIT
 metadata:
   author: https://github.com/arjun988

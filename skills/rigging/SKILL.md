@@ -1,6 +1,6 @@
 ---
 name: rigging
-description: Production rigging in Blender with armatures, IK/FK, constraints, weight painting, mechanical rigs, facial rigs, and drivers. Use before animation on deforming assets via MCP.
+description: "Production rigging in Blender with armatures, IK/FK, constraints, weight painting, mechanical rigs, facial rigs and drivers via MCP. Use before animating a deforming asset, or when a rig bends wrongly, skinning is broken or bones are mis-named. Ships tested scripts: rig_check.py (read-only armature and skinning audit: deform bones, .L/.R symmetry, weights, max influences)."
 license: MIT
 metadata:
   author: https://github.com/arjun988

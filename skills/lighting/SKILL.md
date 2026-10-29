@@ -1,6 +1,6 @@
 ---
 name: lighting
-description: Cinematic and game lighting in Blender including three-point lighting, HDRI, horror lighting, volumetrics, rim lighting, and mood-driven illumination. Use for look development and scene atmosphere via MCP.
+description: "Cinematic and game lighting in Blender: three-point lighting, HDRI, horror lighting, volumetrics, rim lighting and mood-driven illumination via MCP. Use when a scene looks flat, too dark or too bright, needs a mood, or needs a quick key/fill/rim setup. Ships tested scripts: light_rig.py (named lighting presets with lights, world and color management)."
 license: MIT
 metadata:
   author: https://github.com/arjun988

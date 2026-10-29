@@ -1,6 +1,6 @@
 ---
 name: set-dressing
-description: Set dressing and environmental storytelling placement for interiors and exteriors using prop density, narrative clusters and readability rules via MCP. For scattering many small props (rocks, debris, foliage) over terrain, use the geometry-nodes skill's scatter_points.py script.
+description: "Set dressing and environmental storytelling placement for interiors and exteriors using prop density, narrative clusters and readability rules via MCP. Use when a scene feels empty, props should tell a story, or small props need placing around an object. For scattering many small props over terrain use the geometry-nodes skill's scatter_points.py. Ships tested scripts: scatter_props.py (exact-count clusters on the ground; max_dist is the max XY distance of any prop origin from the target bbox centre)."
 license: MIT
 metadata:
   author: https://github.com/arjun988
@@ -83,6 +83,8 @@ path of this installed script and their ARGS. Don't inline or rewrite the script
 import runpy
 result = runpy.run_path("<skill_dir>/scripts/scatter_props.py", init_globals={"ARGS": {"target": "SM_Crate", "count": 8, "kinds": ["box", "barrel", "pallet"]}})["result"]
 ```
+
+`max_dist` (default 3.5) is the maximum horizontal (XY) distance from the target's bbox centre to any prop origin, enforced per prop. If the requested count cannot fit inside it the script raises `RuntimeError` (raise `max_dist` or lower `count`).
 
 ## Reference Guide
 

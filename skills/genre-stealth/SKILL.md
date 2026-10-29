@@ -1,6 +1,6 @@
 ---
 name: genre-stealth
-description: Art direction for stealth-game spaces in Blender with shadow volumes, patrol-friendly layouts, and concealment materials.
+description: "Art direction for stealth-game spaces in Blender with shadow volumes, patrol-friendly layouts and concealment materials. Use when the user is designing a stealth level, infiltration map, or asks where shadows, cover and patrol routes should go."
 license: MIT
 metadata:
   author: https://github.com/arjun988

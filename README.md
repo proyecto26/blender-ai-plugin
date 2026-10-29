@@ -3,12 +3,11 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Claude Code](https://img.shields.io/badge/Claude_Code-Plugin-blueviolet)](https://code.claude.com/docs/en/plugins)
 [![Agent Plugins](https://img.shields.io/badge/Agent_Plugins-1.0-orange)](https://agent-plugins.org/)
-[![Skills](https://img.shields.io/badge/Skills-95-brightgreen)](#-skill-categories)
 [![Blender](https://img.shields.io/badge/Blender-5.2%2B-E87D0D?logo=blender&logoColor=white)](https://www.blender.org/lab/mcp-server/)
 
 <img src="https://github.com/proyecto26/sherlock-ai-plugin/blob/main/images/claude-mascot-jumping-animated.svg" width="150">
 
-**Your AI technical-art team inside Blender.** 95 skills, 29 tested `bpy` scripts and a design
+**Your AI technical-art team inside Blender.** A full library of skills, tested `bpy` scripts and a design
 orchestrator agent that drive the [official Blender Lab MCP server](https://www.blender.org/lab/mcp-server/):
 it models, unwraps, textures, lights, grades, validates and exports game-ready assets for Unreal, Unity and
 Godot, in any of 40+ art styles. Works with Claude Code, Codex and any [Agent Plugins](https://agent-plugins.org/)
@@ -118,7 +117,7 @@ Every skill acts through the official MCP (`execute_blender_code`, `get_objects_
 `get_screenshot_of_area_as_image`, ...) instead of describing UI clicks. After each step the agent captures the
 viewport and checks the result against the brief.
 
-### 29 tested `bpy` scripts
+### Tested `bpy` scripts
 
 Skills are **self-contained**: each one carries its own `references/` and, where it helps, `scripts/`.
 Every script takes JSON args, returns a JSON-safe dict, never deletes user data, and passes
@@ -202,7 +201,7 @@ blender-ai-plugin/
 ├── .agents/plugins/               # Codex / Copilot marketplace catalog
 ├── agents/
 │   └── blender-design-orchestrator.md
-├── skills/                        # 95 self-contained skills
+├── skills/                        # self-contained skills
 │   ├── blender-director/          # routing brain
 │   ├── blender-mcp-workflow/      # MCP safety, tool catalog, shared refs, core scripts
 │   │   ├── references/

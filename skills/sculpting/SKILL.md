@@ -1,6 +1,6 @@
 ---
 name: sculpting
-description: Blender sculpting for organic and hard surface detail using Dyntopo, multiresolution, brushes, alpha workflow, wrinkles, and damage. Use when high-frequency surface detail is needed before retopology in Blender via MCP.
+description: "Blender sculpting for organic and hard surface detail using Dyntopo, multiresolution, brushes, alpha workflow, wrinkles and damage. Use when the user says 'sculpt this', 'add wrinkles/damage/surface detail' or needs high-frequency detail before retopology in Blender via MCP."
 license: MIT
 metadata:
   author: https://github.com/arjun988

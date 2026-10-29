@@ -1,6 +1,6 @@
 ---
 name: retro-16bit-style
-description: Retro 16-bit art direction for Blender-assisted SNES/Genesis-era color richness, dither cues, and sprite-like clarity.
+description: "Retro 16-bit art direction for Blender-assisted SNES/Genesis-era color richness, dither cues and sprite-like clarity. Use when the user asks for a '16-bit', 'SNES' or 'Mega Drive' look with richer palettes and dithering (for NES-style four-color chunk use retro-8bit-style)."
 license: MIT
 metadata:
   author: https://github.com/arjun988

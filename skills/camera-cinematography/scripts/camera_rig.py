@@ -15,6 +15,16 @@ ARGS:
     dof_fstop      (float|None) enable DOF with this f-stop (e.g. 2.8); None disables
     set_active     (bool) make it the scene camera (default True)
     aspect         (str|None) "16:9", "2.39:1", "1:1", "9:16" - sets render resolution
+    eye_height     (float|None) absolute camera Z in metres (e.g. 1.6 for a first-person eye); keeps the
+                   horizontal bearing from azimuth_deg and recomputes the direction (elevation_deg is ignored)
+    min_distance, max_distance (float|None) clamp the framing distance (metres), e.g. to keep the camera
+                   inside a ring of cover
+
+Result `distance_m` is the actual camera-to-centre distance; `notes` lists any clamp that was applied.
+Result also reports `occluded_by` (sorted names of objects between the camera and the subject) and
+`visible_fraction` (share of 6 sample points on the subject's bounds that a ray from the camera reaches).
+Ignored when casting: the subject and its children (all visible meshes when target is None), hide_render
+objects, objects carrying the `collision_proxy` property, and fluid domains (they render as volumes).
 """
 import json
 import math
@@ -45,8 +55,55 @@ def _bounds(target):
     return (lo + hi) / 2, (hi - lo)
 
 
+def _subject(target):
+    scene = bpy.context.scene
+    if target:
+        root = bpy.data.objects[target]
+        return {root} | set(root.children_recursive)
+    return {o for o in scene.objects if o.type == "MESH" and o.visible_get()}
+
+
+def _is_volume(obj):
+    """Fluid domains render as a volume, not as their box surface."""
+    return any(m.type == "FLUID" and m.fluid_type == "DOMAIN" for m in getattr(obj, "modifiers", ()))
+
+
+def _occluders(cam, subject, center, dims):
+    """Cast from the camera to 6 sample points on the subject bounds; skip ignorable hits."""
+    scene = bpy.context.scene
+    bpy.context.view_layer.update()  # evaluate the Track To constraint and transforms before casting
+    dg = bpy.context.evaluated_depsgraph_get()
+    eye = cam.matrix_world.translation.copy()
+    hx, hy, hz = dims.x / 2 * 0.9, dims.y / 2 * 0.9, dims.z / 2 * 0.9
+    points = [center, center + Vector((hx, 0, 0)), center + Vector((-hx, 0, 0)),
+              center + Vector((0, hy, 0)), center + Vector((0, -hy, 0)), center + Vector((0, 0, hz))]
+    blockers, visible = set(), 0
+    for p in points:
+        origin = eye.copy()
+        blocked = False
+        for _ in range(16):
+            vec = p - origin
+            remaining = vec.length
+            if remaining <= 1e-4:
+                break
+            direction = vec / remaining
+            hit, loc, _n, _i, obj, _m = scene.ray_cast(dg, origin, direction, distance=remaining)
+            if not hit:
+                break
+            if obj in subject or obj.hide_render or obj.get("collision_proxy") is not None or _is_volume(obj):
+                origin = loc + direction * 1e-4
+                continue
+            blockers.add(obj.name)
+            blocked = True
+            break
+        visible += 0 if blocked else 1
+    return sorted(blockers), round(visible / len(points), 3)
+
+
 def main(name="CAM_Shot_01", target=None, lens_mm=50.0, azimuth_deg=30.0, elevation_deg=12.0, fill=0.7,
-         dof_fstop=None, set_active=True, aspect=None):
+         dof_fstop=None, set_active=True, aspect=None, eye_height=None, min_distance=None, max_distance=None):
+    if min_distance is not None and max_distance is not None and min_distance > max_distance:
+        raise ValueError("min_distance must not exceed max_distance")
     if not name.startswith("CAM_"):
         name = "CAM_" + name
     if target and target not in bpy.data.objects:
@@ -54,6 +111,7 @@ def main(name="CAM_Shot_01", target=None, lens_mm=50.0, azimuth_deg=30.0, elevat
     scene = bpy.context.scene
     if aspect:
         scene.render.resolution_x, scene.render.resolution_y = ASPECTS[aspect]
+    bpy.context.view_layer.update()  # matrix_world of objects moved in this same call is stale until updated
     center, dims = _bounds(target)
 
     cam = bpy.data.objects.get(name)
@@ -86,8 +144,24 @@ def main(name="CAM_Shot_01", target=None, lens_mm=50.0, azimuth_deg=30.0, elevat
     fov_h = 2 * math.atan(sensor / (2 * lens_mm))
     fov_small = fov_h if res_x <= res_y else 2 * math.atan(math.tan(fov_h / 2) * res_y / res_x)
     distance = radius / math.sin(fov_small * fill / 2)
+    notes = []
+    if min_distance is not None and distance < min_distance:
+        notes.append(f"framing distance {distance:.2f} m raised to min_distance {min_distance:.2f} m")
+        distance = min_distance
+    if max_distance is not None and distance > max_distance:
+        notes.append(f"framing distance {distance:.2f} m lowered to max_distance {max_distance:.2f} m")
+        distance = max_distance
     a, e = math.radians(azimuth_deg), math.radians(elevation_deg)
-    cam.location = center + Vector((math.sin(a) * math.cos(e), -math.cos(a) * math.cos(e), math.sin(e))) * distance
+    if eye_height is None:
+        cam.location = center + Vector((math.sin(a) * math.cos(e), -math.cos(a) * math.cos(e), math.sin(e))) * distance
+    else:
+        dz = eye_height - center.z
+        if abs(dz) > distance:
+            notes.append(f"eye_height is {abs(dz):.2f} m from the subject centre, more than the framing distance "
+                         f"{distance:.2f} m: the horizontal offset is clamped to ~0, so the camera sits almost "
+                         "directly above/below the subject")
+        horiz = math.sqrt(max(distance * distance - dz * dz, 1e-4))
+        cam.location = Vector((center.x + math.sin(a) * horiz, center.y - math.cos(a) * horiz, eye_height))
     data.clip_start = max(0.01, distance * 0.01)
     data.clip_end = max(100.0, distance * 20)
 
@@ -103,8 +177,12 @@ def main(name="CAM_Shot_01", target=None, lens_mm=50.0, azimuth_deg=30.0, elevat
         data.dof.aperture_fstop = dof_fstop
     if set_active:
         scene.camera = cam
-    return {"camera": cam.name, "lens_mm": lens_mm, "distance_m": round(distance, 3),
-            "dof": data.dof.use_dof, "resolution": [res_x, res_y], "active": scene.camera == cam}
+    occluded_by, visible_fraction = _occluders(cam, _subject(target), center, dims)
+    actual = (cam.matrix_world.translation - center).length  # with eye_height this differs from the framing distance
+    return {"camera": cam.name, "lens_mm": lens_mm, "distance_m": round(actual, 3), "notes": notes,
+            "location": [round(v, 3) for v in cam.matrix_world.translation],
+            "dof": data.dof.use_dof, "resolution": [res_x, res_y], "active": scene.camera == cam,
+            "occluded_by": occluded_by, "visible_fraction": visible_fraction}
 
 
 ARGS = globals().get("ARGS") or _cli_args()

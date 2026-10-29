@@ -1,6 +1,6 @@
 ---
 name: visual-console-eras
-description: Visual era art direction for Blender covering PS1–PS5 stylistic cues, retro arcade, DOS, CRT, VHS, and film-grain presentation.
+description: "Visual era art direction for Blender covering PS1 through PS5 stylistic cues, retro arcade, DOS, CRT and VHS and film-grain presentation. Use when the user asks for a specific console generation look ('PS2-era graphics', 'make it look like a DOS game') or CRT/VHS/film-grain presentation without horror framing."
 license: MIT
 metadata:
   author: https://github.com/arjun988

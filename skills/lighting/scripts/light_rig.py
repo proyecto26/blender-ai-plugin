@@ -112,8 +112,6 @@ def main(preset="studio_3pt", target=None, collection="COL_Lights", set_world=Tr
     if set_world:
         world = scene.world or bpy.data.worlds.new("WRL_Rig")
         scene.world = world
-        if hasattr(world, "use_nodes") and not world.use_nodes:
-            world.use_nodes = True
         bg = next((n for n in world.node_tree.nodes if n.type == "BACKGROUND"), None)
         if bg is None:
             bg = world.node_tree.nodes.new("ShaderNodeBackground")

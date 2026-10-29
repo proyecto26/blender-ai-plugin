@@ -1,6 +1,6 @@
 ---
 name: qa-review
-description: Production QA gate for Blender assets using viewport screenshots, validation checklists, naming audits, and ship/no-ship verdicts via MCP.
+description: "Production QA gate for Blender assets using viewport screenshots, validation checklists, naming audits and ship/no-ship verdicts via MCP. Use when the user asks 'is this ready to ship', 'review my asset', 'check naming and topology', or wants a final art/technical QA pass before export."
 license: MIT
 metadata:
   author: https://github.com/arjun988

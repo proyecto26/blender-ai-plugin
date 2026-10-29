@@ -1,6 +1,6 @@
 ---
 name: dark-gritty-mood
-description: Dark, grim, gritty, rusty, abandoned, decayed, industrial, lonely, and melancholic mood direction for Blender.
+description: "Dark, grim, gritty, rusty, abandoned, decayed, industrial, lonely and melancholic mood direction for Blender. Use when the user says 'make it grimy', 'abandoned and rusty', 'bleak and lonely' or the scene looks too clean and needs wear, decay and a tense, eerie atmosphere."
 license: MIT
 metadata:
   author: https://github.com/arjun988

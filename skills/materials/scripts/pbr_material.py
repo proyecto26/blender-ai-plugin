@@ -45,8 +45,6 @@ def main(name, base_color=(0.8, 0.8, 0.8), metallic=0.0, roughness=0.5, specular
     if not name.startswith("MAT_"):
         name = "MAT_" + name
     mat = bpy.data.materials.get(name) or bpy.data.materials.new(name)
-    if hasattr(mat, "use_nodes") and not mat.use_nodes:
-        mat.use_nodes = True
     nodes, links = mat.node_tree.nodes, mat.node_tree.links
     nodes.clear()
     out = nodes.new("ShaderNodeOutputMaterial")

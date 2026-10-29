@@ -1,6 +1,6 @@
 ---
 name: genre-narrative-vn
-description: Art direction for visual novel, interactive movie, walking simulator, and story-driven presentation spaces in Blender.
+description: "Art direction for visual novel, interactive movie, walking simulator and story-driven presentation spaces in Blender. Use when the user needs a 'visual novel background', a narrative game scene, or story-focused environments with clear character staging."
 license: MIT
 metadata:
   author: https://github.com/arjun988

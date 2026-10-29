@@ -1,6 +1,6 @@
 ---
 name: scene-assembly
-description: Large scene layout in Blender with collections, linking, overrides, streaming-friendly organization, and set assembly via MCP.
+description: "Large scene layout in Blender with collections, linking, library overrides, streaming-friendly organization and set assembly via MCP. Use when the user says 'assemble the scene', 'my outliner is a mess', or needs collection instances, linked libraries or a level layout organized."
 license: MIT
 metadata:
   author: https://github.com/arjun988

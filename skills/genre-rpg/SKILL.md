@@ -1,6 +1,6 @@
 ---
 name: genre-rpg
-description: Art direction for RPG, JRPG, CRPG, ARPG, and MMORPG worlds in Blender including loot rarity reads and region identity.
+description: "Art direction for RPG, JRPG, CRPG, ARPG and MMORPG worlds in Blender including loot rarity reads and region identity. Use when the user asks for an RPG town, quest hub, region identity, or items whose rarity should be readable at a glance."
 license: MIT
 metadata:
   author: https://github.com/arjun988

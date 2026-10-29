@@ -1,6 +1,6 @@
 ---
 name: environment-artist
-description: AAA environment art for modular kits, buildings, terrain, vegetation, architecture, and scene composition. Use for game-optimized environments, storytelling through space, and modular asset pipelines in Blender via MCP.
+description: "AAA environment art for modular kits, buildings, terrain, vegetation, architecture and scene composition via MCP. Use when the user wants a greybox or blockout, a level layout, cover, rooms, stairs or modular pieces before final art. Ships tested scripts: blockout.py (floor-pivoted primitives such as box, cylinder, rock, ramp, stairs in rows, rings or grids; idempotent re-runs)."
 license: MIT
 metadata:
   author: https://github.com/arjun988

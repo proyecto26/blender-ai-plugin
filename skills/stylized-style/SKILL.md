@@ -1,6 +1,6 @@
 ---
 name: stylized-style
-description: Stylized art direction for Blender with shape language, exaggeration, color harmony, NPR rendering, and hand-painted asset workflows. Use for non-photorealistic game and animation projects.
+description: "Stylized art direction for Blender: shape language, exaggeration, color harmony, NPR rendering and hand-painted asset workflows. Use when the user wants a toon, cel-shaded or non-photorealistic look. Ships tested scripts: toon_material.py (cel material with a constant ColorRamp for banded shading, optional rim and inverted-hull outline)."
 license: MIT
 metadata:
   author: https://github.com/arjun988

@@ -1,6 +1,6 @@
 ---
 name: vfx-fx
-description: Cinematic and game VFX in Blender including smoke, fire, particles, trails, and Geometry Nodes FX setups via MCP.
+description: "Cinematic and game VFX in Blender: smoke, fire, particles, trails and Geometry Nodes FX setups via MCP. Use when the user wants smoke, fire, steam or other gas effects from an emitter. Ships tested scripts: smoke_domain.py (Mantaflow gas domain around an emitter plus a flow, idempotent; domains are ignored by camera occlusion checks)."
 license: MIT
 metadata:
   author: https://github.com/arjun988

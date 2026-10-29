@@ -88,6 +88,21 @@ It should call `get_objects_summary`. Then try a skill script:
 `get_python_api_docs`, `search_api_docs`, `search_manual_docs` (bundled API reference and user manual for
 the installed version). Recipes: [`skills/blender-mcp-workflow/references/mcp-tools.md`](../skills/blender-mcp-workflow/references/mcp-tools.md).
 
+## Headless tests on Windows (Microsoft Store install)
+
+`blender.exe` inside `WindowsApps` cannot be executed directly. Use the execution alias instead:
+
+```powershell
+& "$env:LOCALAPPDATA\Microsoft\WindowsApps\blender-launcher.exe" -b --factory-startup --python tests\blender\test_skill_scripts.py -- '{"out_dir": "C:\\temp\\bst"}'
+```
+
+This runs Blender 5.2.3 LTS headless, but the alias does not forward stdout, so the tests write JSON
+reports to `out_dir`; read those instead of the console.
+
+The MCP tool `execute_blender_code_for_cli` launches a background Blender and needs the `BLENDER_PATH`
+environment variable set (to the Blender executable or launcher alias) in the environment of the MCP server
+process. Set it in whichever way your client passes environment variables to MCP servers, then restart the agent.
+
 ## Troubleshooting
 
 | Symptom | Fix |

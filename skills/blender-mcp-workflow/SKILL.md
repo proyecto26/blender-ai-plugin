@@ -1,6 +1,6 @@
 ---
 name: blender-mcp-workflow
-description: Use before writing ANY Blender Python (bpy) code, even a short snippet and even when no Blender version is mentioned: Blender 5.2 removed APIs that most examples online still use (mesh auto smooth, EEVEE bloom, scene.node_tree, Geometry Nodes modifier item assignment, old Principled socket names), so unchecked code usually breaks. Also use whenever driving Blender through the official Blender Lab MCP server (execute_blender_code, get_objects_summary, screenshots, API/manual doc search) and for the shared production rules: naming, polycount budgets, the asset pipeline, validation gates, reference matching. Ships tested bpy scripts for scene audit, collection setup, game-ready validation and review captures, and points to every other skill's scripts.
+description: "Use before writing ANY Blender Python (bpy) code, even a short snippet and even when no Blender version is mentioned. Blender 5.2 removed APIs that most examples online still use (mesh auto smooth, EEVEE bloom, scene.node_tree, Geometry Nodes modifier item assignment, old Principled socket names), so unchecked code usually breaks. Also use when driving Blender through the official Blender Lab MCP server (execute_blender_code, get_objects_summary, screenshots, API/manual doc search) and for shared production rules: naming, polycount budgets, validation gates. Ships tested scripts: scene_audit.py (read-only scene report), setup_collections.py (COL_ hierarchy), validate_asset.py (game-ready PASS/WARN/FAIL gate), fix_asset.py (apply scale/rotation, add missing UVs), work_copy.py (disposable working copies for destructive edits), capture_views.py (review stills)."
 license: MIT
 metadata:
   author: https://github.com/proyecto26
@@ -82,7 +82,16 @@ rewrite the script: the tested file is what makes the result reliable.
 | `scripts/setup_collections.py` | Idempotent `COL_` hierarchy (Reference/Blockout/HighPoly/LowPoly/Collision/Lights/Cameras/Export) | Adds collections only |
 | `scripts/validate_asset.py` | PASS/WARN/FAIL gate: transforms, tri budget, n-gons, manifold, loose geo, UVs, materials, naming, scale, origin | No |
 | `scripts/fix_asset.py` | Fixes the usual FAILs: bakes unapplied scale (or rotation+scale) into the mesh and adds a box-projected or Smart UV layer only where none exists; idempotent | Edits the named meshes |
+| `scripts/work_copy.py` | Disposable working copies for destructive steps: `begin` / `accept` / `revert` / `status`; originals are never modified, accepted originals go to an excluded `__Checkpoint` collection | Adds `__Work` copies; accept relinks |
 | `scripts/capture_views.py` | Front / 3-4 / side / back / top / camera PNGs with a temporary camera; restores settings | No (temp camera removed) |
+
+## Before a Destructive Step
+
+Before a destructive step (apply transforms/modifiers, join, boolean apply, remesh, decimate) use
+`scripts/work_copy.py`: `begin` copies the objects into `__Work`, edit the copies (for example
+`fix_asset.py` on `SM_Crate__work`), check them, then `accept` (the copy takes the original name and
+every reference; the untouched original goes to the excluded `__Checkpoint`) or `revert` (copies removed).
+One pending work set at a time. Details: `references/mcp-integration.md`.
 
 ## Execution Protocol
 

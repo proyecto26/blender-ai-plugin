@@ -1,6 +1,6 @@
 ---
 name: unreal-export
-description: Unreal Engine-specific Blender export for FBX scale, LODs, UCX collision, sockets, materials, and skeletal mesh workflows via MCP.
+description: "Unreal Engine-specific Blender export for FBX scale, LODs, UCX collision, sockets, materials and skeletal mesh workflows via MCP. Use when an asset is headed for Unreal, or collision, naming or scale is wrong after import. Ships tested scripts: export_unreal.py (FBX export with pre-flight checks on SM_/SK_ prefixes and UCX_ collision)."
 license: MIT
 metadata:
   author: https://github.com/arjun988

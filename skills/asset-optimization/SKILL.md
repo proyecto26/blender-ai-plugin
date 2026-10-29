@@ -1,6 +1,6 @@
 ---
 name: asset-optimization
-description: Validates and optimizes Blender assets for polycount, topology, UV efficiency, material count, naming, collections, and game-ready performance. Use before export on all production assets via MCP.
+description: "Validates and optimizes Blender assets for polycount, topology, UV efficiency, material count, naming, collections and game-ready performance via MCP. Use when an asset is too heavy, has stray geometry or duplicate vertices, fails a budget, or must be cleaned before export. Ships tested scripts: optimize_mesh.py (safe cleanup: merge by distance, delete loose geometry, report before/after counts)."
 license: MIT
 metadata:
   author: https://github.com/arjun988

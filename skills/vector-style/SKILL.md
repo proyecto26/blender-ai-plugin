@@ -1,6 +1,6 @@
 ---
 name: vector-style
-description: Vector-clean art direction for Blender with flat fills, sharp silhouettes, and UI-like graphic clarity.
+description: "Vector-clean art direction for Blender with flat fills, sharp silhouettes and UI-like graphic clarity. Use when the user wants a 'flat design', 'vector/SVG-like' render or clean flat-color shapes without gradients (for Western bouncy cartoons use cartoon-style)."
 license: MIT
 metadata:
   author: https://github.com/arjun988

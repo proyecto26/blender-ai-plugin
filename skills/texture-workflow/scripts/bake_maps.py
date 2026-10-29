@@ -40,8 +40,6 @@ def _target_node(low, image):
     for mat in low.data.materials:
         if mat is None:
             continue
-        if hasattr(mat, "use_nodes") and not mat.use_nodes:
-            mat.use_nodes = True
         nodes = mat.node_tree.nodes
         node = nodes.get("SK_BakeTarget") or nodes.new("ShaderNodeTexImage")
         node.name = node.label = "SK_BakeTarget"

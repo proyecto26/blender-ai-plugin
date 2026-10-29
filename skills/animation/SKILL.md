@@ -1,6 +1,6 @@
 ---
 name: animation
-description: Game-ready animation in Blender including walk/run/idle cycles, combat, mechanical animation, camera animation, constraints, Graph Editor, and NLA workflows via MCP.
+description: "Game-ready animation in Blender: walk/run/idle cycles, combat and mechanical animation, camera animation, constraints, Graph Editor and NLA workflows via MCP. Use when the user asks to animate a character or prop, loop a cycle, add a turntable, fix floaty or popping motion, or clean up keyframes. Ships tested scripts: turntable.py (looping 360-degree turntable with a pivot empty and linear rotation)."
 license: MIT
 metadata:
   author: https://github.com/arjun988

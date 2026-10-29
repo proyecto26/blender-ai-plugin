@@ -1,6 +1,6 @@
 ---
 name: lowpoly-style
-description: Low-poly art direction for Blender inspired by PS1/PS2, Lethal Company, Mouthwashing, and Fear to Fathom. Use for readable silhouettes, minimal polygons, simple materials, and strong atmosphere.
+description: "Low-poly art direction for Blender inspired by PS1/PS2, Lethal Company, Mouthwashing and Fear to Fathom. Use when the user wants readable silhouettes, minimal polygons, simple materials, a PS1 or PSX look, or strong atmosphere from few triangles. Ships tested scripts: ps1_look.py (low internal resolution, nearest-neighbour textures, vertex snapping, fog and the other PSX-era look settings)."
 license: MIT
 metadata:
   author: https://github.com/arjun988

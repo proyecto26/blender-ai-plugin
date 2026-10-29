@@ -187,6 +187,8 @@ def main(group, pieces=None, layout=None, room=None, ground=None, bevel=0.0, col
         bpy.data.objects.remove(o)
         if isinstance(data, bpy.types.Light) and data.users == 0:
             bpy.data.lights.remove(data)
+        elif isinstance(data, bpy.types.Mesh) and data.users == 0 and data.name.startswith(f"ME_BLK_{group}_room"):
+            bpy.data.meshes.remove(data)  # room shells are per-rebuild meshes; shared kind meshes are reused
     gnd = bpy.data.objects[ground] if ground else None
     made, counts = [], {}
 

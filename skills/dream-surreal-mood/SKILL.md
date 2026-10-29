@@ -1,6 +1,6 @@
 ---
 name: dream-surreal-mood
-description: Dreamlike, surreal, mysterious, mystical, hopeful, and chaotic mood direction for Blender scenes.
+description: "Dreamlike, surreal, mysterious, mystical, hopeful and chaotic mood direction for Blender scenes. Use when the user wants a 'dreamy', 'surreal', 'otherworldly' or mystical atmosphere, or an uncanny-yet-hopeful tone rather than horror."
 license: MIT
 metadata:
   author: https://github.com/arjun988

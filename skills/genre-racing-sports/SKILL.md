@@ -1,6 +1,6 @@
 ---
 name: genre-racing-sports
-description: Art direction for racing and sports games in Blender with track landmarks, stadium kits, and high-speed readability.
+description: "Art direction for racing and sports games in Blender with track landmarks, stadium kits and high-speed readability. Use when the user asks for a race track, stadium, sports arena or trackside props that read well at speed."
 license: MIT
 metadata:
   author: https://github.com/arjun988

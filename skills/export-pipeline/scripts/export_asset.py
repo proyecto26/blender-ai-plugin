@@ -11,9 +11,13 @@ ARGS:
     engine   (str) unreal | unity | godot | web | generic
     out_path (str, required) file path; extension decides the format (.fbx .glb .gltf .usd/.usdc/.usda .obj)
     animation (bool) include animation (default False)
+
+glTF/GLB exports use the active scene only and return `verify` (the file is read back):
+{checked, nodes, joints, missing, leaked, ok}. Other formats return {"checked": False}.
 """
 import json
 import os
+import struct
 import sys
 
 import bpy
@@ -52,6 +56,55 @@ def _targets(names):
     raise ValueError("nothing to export: pass objects, fill COL_Export, or select objects")
 
 
+def _gltf_json(path):
+    """Return the glTF JSON dict of a .glb (JSON chunk) or .gltf file."""
+    if path.lower().endswith(".gltf"):
+        with open(path, "r", encoding="utf-8") as fh:
+            return json.load(fh)
+    with open(path, "rb") as fh:
+        head = fh.read(12)
+        if len(head) < 12 or head[:4] != b"glTF":
+            raise ValueError("not a GLB file")
+        length, ctype = struct.unpack("<I4s", fh.read(8))
+        if ctype != b"JSON":
+            raise ValueError("first GLB chunk is not JSON")
+        return json.loads(fh.read(length).decode("utf-8"))
+
+
+def _allowed_names(targets):
+    allowed = set()
+    stack = list(targets)
+    while stack:
+        o = stack.pop()
+        if o.name in allowed:
+            continue
+        allowed.add(o.name)
+        stack.extend(o.children)
+        for mod in o.modifiers:
+            if mod.type == "ARMATURE" and mod.object:
+                stack.append(mod.object)
+        if o.parent:
+            stack.append(o.parent)
+    return allowed
+
+
+def _verify(path, targets):
+    """Read the exported file back: nodes, joints, requested meshes missing, other objects leaked."""
+    if not path.lower().endswith((".glb", ".gltf")) or not os.path.exists(path):
+        return {"checked": False}
+    data = _gltf_json(path)
+    nodes = [n.get("name", "") for n in data.get("nodes", [])]
+    joint_idx = {j for s in data.get("skins", []) for j in s.get("joints", [])}
+    joints = sorted({nodes[i] for i in joint_idx if i < len(nodes)})
+    allowed = _allowed_names(targets)
+    present = set(nodes)
+    missing = sorted(o.name for o in targets if o.type == "MESH" and o.name not in present)
+    leaked = sorted({n for i, n in enumerate(nodes)
+                     if i not in joint_idx and n in bpy.data.objects and n not in allowed})
+    return {"checked": True, "nodes": sorted(present), "joints": joints, "missing": missing,
+            "leaked": leaked, "ok": not missing and not leaked}
+
+
 def main(out_path, objects=None, engine="generic", animation=False):
     targets = _targets(objects)
     ext = os.path.splitext(out_path)[1].lower()
@@ -73,7 +126,7 @@ def main(out_path, objects=None, engine="generic", animation=False):
                                          object_types={"MESH", "ARMATURE", "EMPTY"}, bake_anim=animation,
                                          path_mode="COPY", embed_textures=False, **preset)
             elif ext in (".glb", ".gltf"):
-                bpy.ops.export_scene.gltf(filepath=out_path, use_selection=True, export_apply=True,
+                bpy.ops.export_scene.gltf(filepath=out_path, use_selection=True, use_active_scene=True, export_apply=True,
                                           export_format="GLB" if ext == ".glb" else "GLTF_SEPARATE",
                                           export_yup=True, export_animations=animation)
             elif ext in (".usd", ".usdc", ".usda"):
@@ -93,7 +146,8 @@ def main(out_path, objects=None, engine="generic", animation=False):
         view_layer.objects.active = prev_active
     ok = os.path.exists(out_path)
     return {"path": out_path, "exists": ok, "bytes": os.path.getsize(out_path) if ok else 0,
-            "engine": engine, "objects": [o.name for o in targets]}
+            "engine": engine, "objects": [o.name for o in targets],
+            "verify": _verify(out_path, targets)}
 
 
 ARGS = globals().get("ARGS") or _cli_args()

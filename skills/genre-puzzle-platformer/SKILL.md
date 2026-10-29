@@ -1,6 +1,6 @@
 ---
 name: genre-puzzle-platformer
-description: Art direction for puzzle and platformer games in Blender with readable interactables, jump volumes, and clear hazard language.
+description: "Art direction for puzzle and platformer games in Blender with readable interactables, jump volumes and clear hazard language. Use when the user says 'platformer level', 'puzzle room', or complains that players cannot tell what is climbable, jumpable or dangerous."
 license: MIT
 metadata:
   author: https://github.com/arjun988

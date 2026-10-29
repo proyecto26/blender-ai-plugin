@@ -1,6 +1,6 @@
 ---
 name: hair-groom
-description: Hair and fur grooming in Blender using curves, particle hair, geometry nodes, and game hair-card workflows. Use for characters, creatures, and real-time hair cards via MCP.
+description: "Hair and fur grooming in Blender using curves, particle hair, geometry nodes and game hair-card workflows. Use when the user says 'add hair', 'groom fur', 'make hair cards for a game', needs beards, bangs or whiskers, or real-time hair via MCP."
 license: MIT
 metadata:
   author: https://github.com/arjun988

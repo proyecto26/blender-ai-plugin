@@ -1,6 +1,6 @@
 ---
 name: historical-worlds
-description: Historical and period world art direction for Blender including Western, pirate, samurai/ninja, Viking, ancient Egypt/Greece/Rome, Victorian, modern, and military eras.
+description: "Historical and period world art direction for Blender including Western, pirate, samurai/ninja, Viking, ancient Egypt/Greece/Rome, Victorian, modern and military eras. Use when the user asks for a period-accurate setting ('pirate ship', 'samurai castle', 'Victorian street', 'WWII bunker') and needs props, architecture and palette."
 license: MIT
 metadata:
   author: https://github.com/arjun988

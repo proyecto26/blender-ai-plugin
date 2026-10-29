@@ -1,6 +1,6 @@
 ---
 name: isometric-style
-description: Isometric and strategy-game art direction for Blender including diorama framing, true-iso camera setup, readable silhouettes, and tile asset rules.
+description: "Isometric and strategy-game art direction for Blender: diorama framing, true-iso camera setup, readable silhouettes and tile asset rules. Use when the user wants an isometric or dimetric view, a tile or diorama render, or a game camera at a fixed angle. Ships tested scripts: iso_camera.py (orthographic isometric or dimetric camera framed on the scene or a target)."
 license: MIT
 metadata:
   author: https://github.com/arjun988

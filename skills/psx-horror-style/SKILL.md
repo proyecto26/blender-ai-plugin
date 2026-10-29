@@ -1,6 +1,6 @@
 ---
 name: psx-horror-style
-description: PS1/PSX-era horror art direction combining low-poly affine textures, limited color depth, fog, and psychological horror staging for Blender assets.
+description: "PS1/PSX-era horror art direction combining low-poly affine textures, limited color depth, fog and psychological horror staging for Blender assets. Use when the user says 'make it look like a PS1 horror game', 'crunchy low-poly horror', 'Puppet Combo vibes' or wants affine-warped textures with heavy fog."
 license: MIT
 metadata:
   author: https://github.com/arjun988

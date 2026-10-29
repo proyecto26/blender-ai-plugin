@@ -1,6 +1,6 @@
 ---
 name: fantasy-worlds
-description: Fantasy world-building art direction for Blender covering medieval, high fantasy, dark fantasy, and urban fantasy asset language.
+description: "Fantasy world-building art direction for Blender covering medieval, high fantasy, dark fantasy and urban fantasy asset language. Use when the user asks for a 'medieval castle', 'high fantasy village', 'dark fantasy ruins' or a magic-world setting and needs props, architecture and palette."
 license: MIT
 metadata:
   author: https://github.com/arjun988

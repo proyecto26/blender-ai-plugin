@@ -1,6 +1,6 @@
 ---
 name: retro-8bit-style
-description: Retro 8-bit art direction for Blender-assisted pixel/low-res aesthetics inspired by NES-era constraints.
+description: "Retro 8-bit art direction for Blender-assisted pixel/low-res aesthetics inspired by NES-era constraints. Use when the user asks for an '8-bit' or 'NES' look with very small palettes and chunky pixels (for richer SNES-style color use retro-16bit-style)."
 license: MIT
 metadata:
   author: https://github.com/arjun988

@@ -1,6 +1,6 @@
 ---
 name: genre-strategy-sim
-description: Art direction for strategy, RTS, turn-based strategy, tower defense, MOBA, city builder, colony sim, and simulation games in Blender.
+description: "Art direction for strategy, RTS, turn-based strategy, tower defense, MOBA, city builder, colony sim and simulation games in Blender. Use when the user needs readable top-down or isometric-friendly units, buildings and tiles for RTS, tower defense, city builder or farming/life sim."
 license: MIT
 metadata:
   author: https://github.com/arjun988

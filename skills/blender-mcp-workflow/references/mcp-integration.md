@@ -54,10 +54,34 @@ Created by `scripts/setup_collections.py`. Naming prefixes: `naming-conventions.
 
 ## Non-Destructive Defaults
 
-- Duplicate before destructive operations; keep backups in a hidden collection
+- Run destructive operations on a working copy (`scripts/work_copy.py`, below); never edit the original first
 - Apply modifiers only at export unless downstream work requires it
 - Never delete or rename user objects you did not create without confirmation
 - Never discard unsaved user work (`read_homefile`, `open_mainfile`, `revert`)
+
+## Working Copies for Destructive Steps
+
+Apply transforms/modifiers, join, boolean apply, remesh and decimate cannot be undone reliably through
+MCP, so they run on disposable copies:
+
+```python
+import runpy
+W = "<skill_dir>/scripts/work_copy.py"
+r = runpy.run_path(W, init_globals={"ARGS": {"action": "begin", "objects": ["SM_Crate"]}})["result"]
+# r["pairs"] == {"SM_Crate": "SM_Crate__work"}; edit and check the copy, e.g. fix_asset.py on it
+runpy.run_path(W, init_globals={"ARGS": {"action": "accept"}})   # or {"action": "revert"}
+```
+
+| Action | Effect |
+|--------|--------|
+| `begin` | Full copies (object + `data.copy()`, materials too with `materials: true`) in `__Work`, re-targeted to each other. Originals untouched. Error if a work set is already pending |
+| `accept` | `original.user_remap(copy)` moves every user (children's parent, modifier/constraint targets, collections, `scene.camera`) onto the copy; the original is linked into the excluded `__Checkpoint` collection as `<name>__prev`; the copy takes the original name |
+| `revert` | Removes only the copies and datablocks they created |
+| `status` | Pending state, from the scene custom property `work_copy` |
+
+`__Checkpoint` is cleared only when the user asks. If the object has children outside the set (sockets,
+colliders), they follow the accepted copy automatically. Gate order for a whole production:
+the `blender-director` skill → `references/pipeline-gates.md`.
 
 ## Validation Queries
 

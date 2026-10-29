@@ -1,6 +1,6 @@
 ---
 name: mascot-puppet-horror
-description: Mascot and puppet horror art direction for Blender with cheerful brand characters made wrong, felt/foam materials, and uncanny performance.
+description: "Mascot and puppet horror art direction for Blender with cheerful brand characters made wrong, felt/foam materials and uncanny performance. Use when the user asks for 'mascot horror', creepy costumed characters, felt puppets or 'Happy Tree wrongness'."
 license: MIT
 metadata:
   author: https://github.com/arjun988

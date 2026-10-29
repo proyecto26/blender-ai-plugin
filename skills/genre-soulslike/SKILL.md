@@ -1,6 +1,6 @@
 ---
 name: genre-soulslike
-description: Art direction for soulslike games in Blender with monumental melancholy spaces, fog gates, bonfire landmarks, and lethal readability.
+description: "Art direction for soulslike games in Blender with monumental melancholy spaces, fog gates, bonfire landmarks and lethal readability. Use when the user asks for 'Dark Souls/Elden Ring-like' areas, fog-gate boss approaches, bonfire checkpoints or vast ruined spaces."
 license: MIT
 metadata:
   author: https://github.com/arjun988

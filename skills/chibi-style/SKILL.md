@@ -1,6 +1,6 @@
 ---
 name: chibi-style
-description: Chibi and SD proportion art direction for Blender characters with oversized heads, simplified anatomy, and cute silhouette rules.
+description: "Chibi and SD (super-deformed) proportion art direction for Blender characters with oversized heads, simplified anatomy and cute silhouette rules. Use when the user asks for 'chibi', 'cute big-head proportions' or a super-deformed version of a character."
 license: MIT
 metadata:
   author: https://github.com/arjun988

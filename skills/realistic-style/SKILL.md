@@ -1,6 +1,6 @@
 ---
 name: realistic-style
-description: Photorealistic AAA art direction for Blender including photogrammetry cleanup, real-world scale, high-poly workflows, PBR accuracy, and scan optimization. Use for cinematic and AAA game realism.
+description: "Photorealistic AAA art direction for Blender including photogrammetry cleanup, real-world scale, high-poly workflows, PBR accuracy and scan optimization. Use when the user wants 'photoreal', 'AAA quality', cinematic realism, or to clean up scanned meshes."
 license: MIT
 metadata:
   author: https://github.com/arjun988

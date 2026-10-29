@@ -1,6 +1,6 @@
 ---
 name: compositing
-description: Blender compositor workflows for beauty stacks, render passes, color grade, glare, bloom/glow, and delivery outputs via MCP. Use whenever adding bloom or glow (EEVEE's built-in bloom was removed in 4.2) or writing compositor Python for Blender 5.x (the compositor now lives in scene.compositing_node_group).
+description: "Blender compositor workflows for beauty stacks, render passes, color grade, glare, bloom/glow and delivery outputs via MCP. Use whenever adding bloom or glow (EEVEE's built-in bloom was removed in 4.2), grading a render, or writing compositor Python for Blender 5.x (the compositor now lives in scene.compositing_node_group). Ships tested scripts: comp_grade.py (compositor grade with presets, vignette, warmth and posterize)."
 license: MIT
 metadata:
   author: https://github.com/arjun988
@@ -118,7 +118,7 @@ import runpy
 result = runpy.run_path("<skill_dir>/scripts/comp_grade.py", init_globals={"ARGS": {...}})["result"]
 ```
 
-ARGS: `preset`, `vignette` (0-1), `warmth` (-1..1, warm/cool highlights). A "subtle vignette with warm
+ARGS: `preset`, `vignette` (0-1), `warmth` (-1..1, warm/cool highlights), `posterize` (colour steps per channel). A "subtle vignette with warm
 highlights" is `{"preset": "clean", "vignette": 0.35, "warmth": 0.4}`.
 
 Blender 5.2 compositor facts this script relies on (hand-written graphs usually miss them): node settings

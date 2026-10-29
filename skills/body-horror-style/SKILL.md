@@ -1,6 +1,6 @@
 ---
 name: body-horror-style
-description: Body horror art direction for Blender focusing on flesh wrongness, mutation, fusion, and visceral material storytelling.
+description: "Body horror art direction for Blender focusing on flesh wrongness, mutation, fusion and visceral material storytelling. Use when the user asks for 'body horror', 'Cronenberg-style' flesh, grotesque anatomy, mutated or fused organic forms, or wet fleshy materials."
 license: MIT
 metadata:
   author: https://github.com/arjun988

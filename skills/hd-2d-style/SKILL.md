@@ -1,6 +1,6 @@
 ---
 name: hd-2d-style
-description: HD-2D art direction combining pixel characters/sprites with 3D environments, depth of field, and theatrical lighting.
+description: "HD-2D art direction combining pixel-art characters and sprites with 3D environments, depth of field and theatrical lighting. Use when the user wants an Octopath-style look, pixel sprites standing in a 3D scene, or billboard sprites in Blender. Ships tested scripts: sprite_billboard.py (vertical plane carrying a nearest-neighbour pixel image with alpha cut-out)."
 license: MIT
 metadata:
   author: https://github.com/arjun988

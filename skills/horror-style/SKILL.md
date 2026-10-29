@@ -1,6 +1,6 @@
 ---
 name: horror-style
-description: Psychological horror art direction for Blender assets inspired by Silent Hill, Resident Evil, Chilla's Art, Fear to Fathom, and Iron Lung. Use for sparse industrial environments, analog aesthetics, and tension-driven lighting.
+description: "Psychological horror art direction for Blender assets inspired by Silent Hill, Resident Evil, Chilla's Art, Fear to Fathom and Iron Lung. Use when the user says 'make it scary/unsettling', wants sparse industrial environments, analog aesthetics, or tension-driven lighting (pick psx-horror-style for PS1 crunch, folk-horror-style for rural dread)."
 license: MIT
 metadata:
   author: https://github.com/arjun988

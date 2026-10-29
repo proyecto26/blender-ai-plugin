@@ -1,6 +1,6 @@
 ---
 name: materials
-description: Blender PBR and stylized material creation for metal, wood, concrete, fabric, glass, dirt, rust, and procedural shaders. Use for look development, material reuse, and production shading in Blender via MCP.
+description: "Blender PBR and stylized material creation for metal, wood, concrete, fabric, glass, dirt, rust and procedural shaders via MCP. Use when an object is grey, shiny the wrong way, needs a metal, wood or rust look, or materials must be reused across assets. Ships tested scripts: pbr_material.py (create or update a Principled BSDF material and assign it to objects)."
 license: MIT
 metadata:
   author: https://github.com/arjun988

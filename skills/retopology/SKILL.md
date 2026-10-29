@@ -1,6 +1,6 @@
 ---
 name: retopology
-description: Production retopology for animation-ready, low-poly, quad-dominant meshes with proper edge loops and efficient polygon flow. Use after sculpting or high-poly modeling before rigging and UV work in Blender via MCP.
+description: "Production retopology for animation-ready, low-poly, quad-dominant meshes with proper edge loops and efficient polygon flow via MCP. Use after sculpting or high-poly modeling, before rigging and UV work, or when a mesh has n-gons, poles or messy topology. Ships tested scripts: topology_report.py (read-only quad/tri/n-gon ratios and pole counts)."
 license: MIT
 metadata:
   author: https://github.com/arjun988

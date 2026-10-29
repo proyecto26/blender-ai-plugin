@@ -1,6 +1,6 @@
 ---
 name: blender-modeler
-description: Core Blender modeling specialist for Edit Mode, modifiers, collections, precision modeling, shading (smooth/flat, auto smooth via Smooth by Angle, weighted normals) and scene organization. Use for general 3D modeling, blockouts, cleanup, non-destructive workflows and scene structure in Blender via MCP, including any bpy code that shades meshes smooth.
+description: "Core Blender modeling specialist for Edit Mode, modifiers, collections, precision modeling, shading (smooth/flat, auto smooth via Smooth by Angle, weighted normals) and scene organization. Use when the user says 'model this', 'block out a shape', 'clean up the mesh', 'why does my mesh look faceted/shaded wrong', or needs non-destructive modifier workflows and scene structure via MCP, including any bpy code that shades meshes smooth."
 license: MIT
 metadata:
   author: https://github.com/arjun988

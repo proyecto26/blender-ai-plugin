@@ -1,6 +1,6 @@
 # Blender AI Plugin — Skills Guide
 
-Decision trees and workflow combinations for the Blender AI Plugin (**95 skills**).
+Decision trees and workflow combinations for the Blender AI Plugin.
 
 ## Start Here
 

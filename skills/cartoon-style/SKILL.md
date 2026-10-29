@@ -1,6 +1,6 @@
 ---
 name: cartoon-style
-description: Cartoon art direction for Blender with squash-stretch readable shapes, bold colors, and graphic silhouettes for games and animation.
+description: "Cartoon art direction for Blender with squash-and-stretch readable shapes, bold colors and graphic silhouettes for games and animation. Use when the user says 'make it cartoony', 'Saturday-morning cartoon', 'rubber hose' or wants bold, bouncy Western-cartoon shapes (for anime cel-shading use anime-style; for flat vector looks use vector-style)."
 license: MIT
 metadata:
   author: https://github.com/arjun988

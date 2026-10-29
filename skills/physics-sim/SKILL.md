@@ -1,6 +1,6 @@
 ---
 name: physics-sim
-description: Rigid body, soft body, and destruction setups in Blender including constraints, cell fracture debris, and baked caches via MCP.
+description: "Rigid body, soft body and destruction setups in Blender including constraints, cell fracture debris and baked caches via MCP. Use when objects should fall, collide, stack or break apart, or a simulation explodes or never settles. Ships tested scripts: rigid_body_setup.py (rigid body world, ACTIVE or PASSIVE bodies, mass and collision shapes, optional bake)."
 license: MIT
 metadata:
   author: https://github.com/arjun988

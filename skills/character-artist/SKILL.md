@@ -1,6 +1,6 @@
 ---
 name: character-artist
-description: AAA character modeling for human anatomy, stylization, facial topology, clothing, hair, and animation-ready meshes. Use for game characters, facial expressions, and production character assets in Blender via MCP.
+description: "AAA character modeling for human anatomy, stylization, facial topology, clothing, hair and animation-ready meshes. Use when the user says 'model a character', 'my face topology deforms badly', 'sculpt a portrait', needs clothing or edge loops for expressions, or production character assets in Blender via MCP."
 license: MIT
 metadata:
   author: https://github.com/arjun988

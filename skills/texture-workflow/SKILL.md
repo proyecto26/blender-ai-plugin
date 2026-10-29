@@ -1,6 +1,6 @@
 ---
 name: texture-workflow
-description: Production texture workflow for atlases, baking AO/curvature/normal/roughness maps, decals, and texture memory optimization. Use for game-ready texture pipelines in Blender via MCP.
+description: "Production texture workflow for atlases, baking AO/curvature/normal/roughness maps, decals and texture memory optimization via MCP. Use when the user wants baked maps from a high-poly mesh, a texture atlas, or lower texture memory. Ships tested scripts: bake_maps.py (Cycles high-to-low bakes of normal, AO, roughness and color)."
 license: MIT
 metadata:
   author: https://github.com/arjun988

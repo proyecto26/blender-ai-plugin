@@ -1,6 +1,6 @@
 ---
 name: noir-style
-description: Noir art direction for Blender with high-contrast lighting, wet streets, silhouettes, and monochrome or limited-color grading.
+description: "Noir art direction for Blender with high-contrast lighting, wet streets, silhouettes and monochrome or limited-color grading. Use when the user asks for 'film noir', 'neo-noir', a detective scene, venetian-blind shadows or a black-and-white moody city."
 license: MIT
 metadata:
   author: https://github.com/arjun988

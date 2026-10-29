@@ -15,6 +15,7 @@ ARGS:
     uv_scale    (float) metres per UV unit for "box" (default 1.0)
 
 A mesh shared by several objects is made single-user first, so siblings are never changed.
+Children of a fixed object keep their world transform (their parent inverse absorbs the change).
 """
 import json
 import math
@@ -33,15 +34,9 @@ def _cli_args():
     return {}
 
 
-A = globals().get("ARGS") or _cli_args()
-APPLY = A.get("apply", "scale")
-UV = A.get("uv", "box")
-UV_SCALE = float(A.get("uv_scale", 1.0))
-
-
-def _apply(obj):
+def _apply(obj, apply):
     loc, rot, scale = obj.matrix_basis.decompose()
-    if APPLY == "rotation_scale":
+    if apply == "rotation_scale":
         bake = rot.to_matrix().to_4x4() @ Matrix.Diagonal((*scale, 1.0))
         keep = Matrix.Translation(loc)
     else:
@@ -49,14 +44,25 @@ def _apply(obj):
         keep = Matrix.Translation(loc) @ rot.to_matrix().to_4x4()
     if bake == Matrix.Identity(4):
         return False
+    # Like Blender's Apply Scale, children keep their world transform: the parent's world matrix
+    # changes from W to W @ basis^-1 @ keep, so fold the difference into each child's parent inverse.
+    for vl in bpy.context.scene.view_layers:
+        vl.update()
+    old_world = obj.matrix_world.copy()
+    new_world = old_world @ obj.matrix_basis.inverted_safe() @ keep
+    # Vertex-parented children follow the baked vertices instead (a VERTEX child stays put; a VERTEX_3
+    # child may shift, as with Blender's own Apply Scale): re-check them after applying.
+    kids = [c for c in bpy.data.objects if c.parent is obj and c.parent_type == "OBJECT"]
     obj.data.transform(bake)
     obj.matrix_basis = keep
+    for c in kids:
+        c.matrix_parent_inverse = new_world.inverted_safe() @ old_world @ c.matrix_parent_inverse
     if any(s < 0 for s in scale):
         obj.data.flip_normals()
     return True
 
 
-def _box_uv(me):
+def _box_uv(me, uv_scale):
     bm = bmesh.new()
     bm.from_mesh(me)
     uv = bm.loops.layers.uv.get("UVMap") or bm.loops.layers.uv.new("UVMap")
@@ -64,7 +70,7 @@ def _box_uv(me):
         ax = max(range(3), key=lambda i: abs(f.normal[i]))
         u, v = [i for i in range(3) if i != ax]
         for loop in f.loops:
-            loop[uv].uv = (loop.vert.co[u] / UV_SCALE, loop.vert.co[v] / UV_SCALE)
+            loop[uv].uv = (loop.vert.co[u] / uv_scale, loop.vert.co[v] / uv_scale)
     bm.to_mesh(me)
     bm.free()
 
@@ -81,21 +87,30 @@ def _smart_uv(obj):
     bpy.context.view_layer.objects.active = prev
 
 
-report = {}
-for name in A["objects"]:
-    obj = bpy.data.objects.get(name)
-    if obj is None or obj.type != "MESH":
-        report[name] = {"error": "not a mesh object"}
-        continue
-    if obj.data.users > 1:
-        obj.data = obj.data.copy()
-    r = {"applied": _apply(obj) if APPLY else False, "uv_added": None}
-    if UV and not obj.data.uv_layers:
-        _box_uv(obj.data) if UV == "box" else _smart_uv(obj)
-        r["uv_added"] = UV
-    r["scale"] = [round(s, 4) for s in obj.scale]
-    r["dimensions"] = [round(d, 4) for d in obj.dimensions]
-    r["uv_layers"] = [l.name for l in obj.data.uv_layers]
-    report[name] = r
+def main(objects=None, apply="scale", uv="box", uv_scale=1.0):
+    if not objects:
+        raise ValueError("objects (list of mesh object names) is required")
+    uv_scale = float(uv_scale)
+    report = {}
+    for name in objects:
+        obj = bpy.data.objects.get(name)
+        if obj is None or obj.type != "MESH":
+            report[name] = {"error": "not a mesh object"}
+            continue
+        if obj.data.users > 1:
+            obj.data = obj.data.copy()
+        r = {"applied": _apply(obj, apply) if apply else False, "uv_added": None}
+        if uv and not obj.data.uv_layers:
+            _box_uv(obj.data, uv_scale) if uv == "box" else _smart_uv(obj)
+            r["uv_added"] = uv
+        r["scale"] = [round(s, 4) for s in obj.scale]
+        r["dimensions"] = [round(d, 4) for d in obj.dimensions]
+        r["uv_layers"] = [l.name for l in obj.data.uv_layers]
+        report[name] = r
+    return {"objects": report}
 
-result = {"objects": report}
+
+ARGS = globals().get("ARGS") or _cli_args()
+result = main(**ARGS)
+if bpy.app.background and __name__ == "__main__":
+    print(json.dumps(result, indent=2))

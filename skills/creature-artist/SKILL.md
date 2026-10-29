@@ -1,6 +1,6 @@
 ---
 name: creature-artist
-description: AAA creature modeling for fantasy, aliens, monsters, and organic creature design with believable anatomy and movement. Use for creature blockouts, muscle flow, bone structure, and animation-ready creature assets in Blender via MCP.
+description: "AAA creature modeling for fantasy, aliens, monsters and organic creature design with believable anatomy and movement. Use when the user asks to 'model a dragon/monster/alien', needs creature blockouts, muscle flow and bone structure, or animation-ready creature assets in Blender via MCP."
 license: MIT
 metadata:
   author: https://github.com/arjun988

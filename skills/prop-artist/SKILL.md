@@ -1,6 +1,6 @@
 ---
 name: prop-artist
-description: Everyday and hero prop modeling for furniture, tools, household objects, kitbash parts, and readable game props. Use when hard-surface is too sci-fi/mechanical and the asset is a grounded prop.
+description: "Everyday and hero prop modeling for furniture, tools, household objects, kitbash parts and readable game props. Use when the user says 'model a chair/bottle/tool' or needs set-dressing objects, and hard-surface is too sci-fi/mechanical because the asset is a grounded prop."
 license: MIT
 metadata:
   author: https://github.com/arjun988

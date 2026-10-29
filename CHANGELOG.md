@@ -6,6 +6,37 @@ Format: [Semantic Versioning](https://semver.org/) — `Major.Minor.Patch`
 
 ---
 
+## [Unreleased]
+
+Iteration 6: fixes from the skill review, verified in headless Blender 5.2.
+
+### Fixed
+- Quoted skill frontmatter values so descriptions with colons parse as YAML
+- glTF exports were limited to the active scene and are now verified after export
+- Made collision proxy generation idempotent: re-running replaces its own proxies instead of stacking `_02`, `_03`
+- Placed the genre-shooter FPS camera at eye height; `camera_rig` now reports occlusion
+- Made `scatter_props` enforce `max_dist`
+- Gave `fix_asset` a proper `main()`; applying scale now keeps object-parented children in place
+- Fixed `work_copy` accept so checkpoint originals stay untouched (parent links included)
+- Made the run manifest refuse an export or verify PASS unless validate is PASS or N/A
+- Stopped collision proxy reruns from deleting a user's renamed duplicate of a proxy
+- Fixed `camera_rig` to report the real camera distance and note every clamp it applies
+- Made the recipe runner fail on blocks that are not inventoried and sample 6 occlusion points
+- Removed deprecated `use_nodes` guards (Blender 5.2+ only)
+
+### Added
+- New smoke tests, a recipe runner (`tests/blender/run_recipes.py`) and a stricter skill validator
+- Director stage gates (PASS / FAIL / NOT_CHECKED / N/A), `run_manifest.py` and `work_copy.py` for destructive steps
+- Evals `09-director-gates` and `10-shooter-camera`
+- Skill descriptions carry "Use when" triggers and name the scripts they ship
+
+### Changed
+- `scatter_props` `max_dist` is a hard limit on prop distance; stacked LOD copies no longer render; fluid domains never count as camera occluders
+- User-facing docs and manifests no longer state fixed skill or script counts
+- `docs/BLENDER_MCP_SETUP.md`: running the headless tests on Windows with a Microsoft Store install
+
+---
+
 ## [2.0.0] — 2026-10-27
 
 Fork maintained by [Proyecto 26](https://github.com/proyecto26) as **Blender AI Plugin**.
