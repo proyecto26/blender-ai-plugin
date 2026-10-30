@@ -41,7 +41,9 @@ ARGS:
 
 A moving shot shorter than 1 s at fps raises ValueError (Seam rejects it): mark it "still" or lengthen it.
 Every scene setting touched (engine, samples, resolution, fps, frame range/current, camera, film, file
-format, view transform, compositor, mist pass/settings, hide_render, window scene) is restored in `finally`.
+format, view transform, compositor, mist pass/settings, hide_render, window scene, camera marker bindings) is
+restored in `finally`. Marker bindings are lifted while rendering, since Blender would otherwise switch to a
+marker's camera at render time instead of the shot's camera.
 """
 import json
 import math
@@ -186,6 +188,7 @@ class _State:
         self.view = {k: getattr(vs, k) for k in ("view_transform", "look", "exposure", "gamma", "use_curve_mapping")}
         self.frames = {k: getattr(scene, k) for k in ("frame_current", "frame_start", "frame_end", "frame_step")}
         self.camera = scene.camera
+        self.markers = [(m, m.camera) for m in scene.timeline_markers if m.camera]
         self.eevee_samples = scene.eevee.taa_render_samples
         self.cycles_samples = scene.cycles.samples if hasattr(scene, "cycles") and scene.cycles else None
         self.comp_group = scene.compositing_node_group
@@ -196,6 +199,10 @@ class _State:
         self.hide = [(o, o.hide_render) for o in scene.objects]
         self.temp_groups, self.temp_world = [], None
         self.errors = []
+
+    def unbind_markers(self):
+        for marker, _ in self.markers:
+            marker.camera = None
 
     def restore_view(self):
         vs = self.scene.view_settings
@@ -242,6 +249,8 @@ class _State:
         self._set(scene.view_settings, {"view_transform": self.view["view_transform"]})
         self._set(scene.view_settings, {k: v for k, v in self.view.items() if k != "view_transform"})
         self._set(scene, {k: self.frames[k] for k in ("frame_start", "frame_end", "frame_step")})
+        for marker, cam in self.markers:
+            marker.camera = cam
         scene.frame_set(self.frames["frame_current"])
         scene.camera = self.camera
         if self.window is not None and self.window_scene is not None:
@@ -413,6 +422,7 @@ def main(out_dir=None, target="both", shots=None, size=None, fps=None, clip_seco
     seam_paths, seam_files, comfy_entries, files = [], [], [], []
     mist_note = None
     try:
+        state.unbind_markers()
         if window is not None and window.scene != scene:
             window.scene = scene
         scene.render.engine = engine

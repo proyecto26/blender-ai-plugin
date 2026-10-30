@@ -16,6 +16,8 @@ Iteration 9: fixes found by an end-to-end film and export test (a fox short, Ble
   `strips[].scale` reports the factor
 - `capture_views.py` lifts camera-marker bindings while capturing (a shot list's markers switched every
   view to a shot camera) and puts them back afterwards
+- `preview_frames.py` and `render_handoff.py` do the same, so a preview, still, pass or clip always shows
+  the shot's own camera even when a marker in the shot is bound to another camera
 
 Iteration 8: delivery routing in user words, and the known issues left after iteration 7.
 

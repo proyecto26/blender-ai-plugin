@@ -104,6 +104,7 @@ def snapshot(scene, window):
         "view": {k: getattr(vs, k) for k in ("view_transform", "look", "exposure", "gamma", "use_curve_mapping")},
         "frames": {k: getattr(scene, k) for k in ("frame_current", "frame_start", "frame_end", "frame_step")},
         "camera": scene.camera.name if scene.camera else None,
+        "markers": [(m.name, m.frame, m.camera.name if m.camera else None) for m in scene.timeline_markers],
         "samples": scene.eevee.taa_render_samples,
         "comp_group": scene.compositing_node_group.name if scene.compositing_node_group else None,
         "world": scene.world.name if scene.world else None,
@@ -316,6 +317,39 @@ def main(out_dir=None):
             doc = json.load(open(d("frame_end", "comfy", "handoff.json"), encoding="utf-8"))
             assert doc["shots"][1]["frame"] == 36
         check("comfy.frame_selection_follows_shot_range", comfy_frame_selection)
+
+        def marker_cameras_do_not_override_shots():
+            """Shot markers rebound to a decoy camera (looking at the sky) must not change what each shot renders."""
+            decoy = bpy.data.objects.new("__Decoy", bpy.data.cameras.new("__Decoy"))
+            S.collection.objects.link(decoy)
+            decoy.location, decoy.rotation_euler = (0, 0, 40), (np.pi, 0, 0)
+            args = {"target": "both", "size": SIZE, "passes": ["beauty"]}
+            run({"out_dir": d("mk_base"), **args})
+            bound = [(m, m.camera) for m in S.timeline_markers]
+            saved_cam = S.camera
+            try:
+                for m, _ in bound:
+                    m.camera = decoy
+                S.camera = cams["CAM_S020"]  # differs from the (decoy) marker camera at the current frame
+                run({"out_dir": d("mk_decoy"), **args})
+                assert all(m.camera is decoy for m, _ in bound), "marker bindings were not restored"
+                assert S.camera is cams["CAM_S020"], f"scene camera not restored: {S.camera.name}"
+            finally:
+                for m, c in bound:
+                    m.camera = c
+                S.camera = saved_cam
+                bpy.data.objects.remove(decoy)
+            for sid in ("S010", "S020"):
+                a = pixels(d("mk_base", "comfy", "assets", sid, "beauty.png"), False)
+                b = pixels(d("mk_decoy", "comfy", "assets", sid, "beauty.png"), False)
+                diff = float(np.abs(a - b).max())
+                assert diff < 0.02, f"{sid}: rendered through the marker camera (max diff {diff:.3f})"
+            # the moving shot is a clip (animation render): compare its first decoded frame too
+            a = pixels(d("mk_base", "seam", "S020.mp4"), False)
+            b = pixels(d("mk_decoy", "seam", "S020.mp4"), False)
+            diff = float(np.abs(a - b).max())
+            assert diff < 0.06, f"S020 clip: rendered through the marker camera (max diff {diff:.3f})"
+        check("restore.marker_cameras_do_not_override_shots", marker_cameras_do_not_override_shots)
 
         def comfy_rerun_lists_only_new_files():
             run({"out_dir": d("rerun"), "target": "comfy", "size": SIZE, "subject": ["Subject"]})
