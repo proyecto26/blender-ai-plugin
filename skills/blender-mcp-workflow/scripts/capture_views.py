@@ -1,7 +1,9 @@
 """Render review stills of a target from standard angles (front, 3/4, side,
 back, top, plus the active camera) to a folder, without changing the scene.
 
-A temporary camera is created, used and removed; render settings are restored.
+A temporary camera is created, used and removed; render settings are restored. Timeline markers bound to
+cameras (shot lists) would switch the camera at render time, so their bindings are lifted while capturing and
+put back afterwards.
 Use it for QA review or the reference-match comparison loop, then open the PNGs
 (or call the MCP screenshot tools for the live viewport).
 
@@ -77,7 +79,10 @@ def main(out_dir, target=None, views=None, resolution=768, engine="BLENDER_WORKB
     cam = bpy.data.objects.new("__capture_cam", cam_data)
     scene.collection.objects.link(cam)
     written = []
+    bound = [(m, m.camera) for m in scene.timeline_markers if m.camera]
     try:
+        for m, _ in bound:
+            m.camera = None
         r.engine = engine
         r.resolution_x = r.resolution_y = resolution
         r.resolution_percentage = 100
@@ -100,6 +105,8 @@ def main(out_dir, target=None, views=None, resolution=768, engine="BLENDER_WORKB
             bpy.ops.render.render(write_still=True)
             written.append(path)
     finally:
+        for m, c in bound:
+            m.camera = c
         r.engine, r.resolution_x, r.resolution_y = saved["engine"], saved["x"], saved["y"]
         r.resolution_percentage, r.filepath = saved["pct"], saved["path"]
         r.image_settings.file_format = saved["fmt"]
