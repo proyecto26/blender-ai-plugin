@@ -21,7 +21,8 @@ ARGS:
     render        (bool) render the edit scene's animation to out_path (default False); the rendered file is read
                   back into `verify`: frames and size, and with audio a decoded stream of the right length
     frames        ([start, end]|None) limit the edit frame range (for tests / quick checks)
-    resolution    ([w, h]|None) edit resolution (default: the source scene's)
+    resolution    ([w, h]|None) edit resolution (default: the source scene's); each shot is scaled to fit it
+                  (letterboxed if the aspect differs), never cropped
 Shots are laid back to back from edit frame 1 (gaps in the source timeline are dropped). The script never
 downloads audio and never generates sound. Without `audio` the mp4 gets no audio stream at all.
 """
@@ -237,6 +238,14 @@ def main(out_path=None, source_scene=None, edit_scene="EDIT", audio=None, render
         (int(resolution[0]), int(resolution[1])) if resolution else (src.render.resolution_x, src.render.resolution_y))
     edit.render.resolution_percentage = 100
     edit.render.use_sequencer = True
+    # a scene strip renders at the source scene's size; without this a smaller edit shows only its centre
+    src_w = src.render.resolution_x * src.render.resolution_percentage // 100  # Blender's own integer size
+    src_h = src.render.resolution_y * src.render.resolution_percentage // 100
+    fit = min(edit.render.resolution_x / src_w, edit.render.resolution_y / src_h)
+    for info in strips_out:
+        strip = seq.strips_all[info["name"]]
+        strip.transform.scale_x = strip.transform.scale_y = fit
+        info["scale"] = round(fit, 5)
     _copy_color_management(src, edit)
 
     sound_strips, audio_info = _add_audio(edit, audio, fps)

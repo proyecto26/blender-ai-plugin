@@ -122,8 +122,9 @@ def tile_mean(arr, tile_w, tile_h, col, row_from_top, rows):
     return arr[y0 + my:y0 + tile_h - my, x0 + mx:x0 + tile_w - mx, :3].reshape(-1, 3).mean(axis=0)
 
 
-def decode_frame_colors(mp4, edit_frames, out_dir):
-    """Decode mp4 frames through a throw-away VSE scene; returns {frame: [r,g,b]} (display values)."""
+def decode_frame_colors(mp4, edit_frames, out_dir, region=None):
+    """Decode mp4 frames through a throw-away VSE scene; returns {frame: [r,g,b]} (display values) averaged over
+    the centre, or over `region` = (x0, x1, y0, y1) as fractions of the frame."""
     sc = bpy.data.scenes.new("__FilmDecode")
     try:
         clip = bpy.data.movieclips.load(mp4)
@@ -143,7 +144,11 @@ def decode_frame_colors(mp4, edit_frames, out_dir):
         out = {}
         for f in edit_frames:
             w, h, arr = read_png(os.path.join(out_dir, f"decode_{f:04d}.png"))
-            out[f] = arr[h // 2 - 4:h // 2 + 4, w // 2 - 4:w // 2 + 4, :3].reshape(-1, 3).mean(axis=0).tolist()
+            if region:
+                x0, x1, y0, y1 = (int(region[0] * w), int(region[1] * w), int(region[2] * h), int(region[3] * h))
+                out[f] = arr[y0:y1, x0:x1, :3].reshape(-1, 3).mean(axis=0).tolist()
+            else:
+                out[f] = arr[h // 2 - 4:h // 2 + 4, w // 2 - 4:w // 2 + 4, :3].reshape(-1, 3).mean(axis=0).tolist()
         return out
     finally:
         bpy.data.scenes.remove(sc)
@@ -437,6 +442,45 @@ def build_cases(out_dir, scene):
             return False, info
         return (late > 0.1 and early < 0.25 * late), info
 
+    def ae_scaled_not_cropped():
+        """Source 320x180, edit 160x90: a white marker near the left edge of S010 must survive (a crop loses it)."""
+        me = bpy.data.meshes.new("__FilmMarker")
+        me.from_pydata([(-0.25, 0, -0.25), (0.25, 0, -0.25), (0.25, 0, 0.25), (-0.25, 0, 0.25)], [], [(0, 1, 2, 3)])
+        marker = bpy.data.objects.new("__FilmMarker", me)
+        scene.collection.objects.link(marker)
+        marker.location = (-2.7, -0.05, 0)  # 35 mm at 6 m: the frame spans x = -3.09..3.09
+        mat = bpy.data.materials.new("__FilmMarkerMat")
+        mat.use_nodes = True
+        nt = mat.node_tree
+        nt.nodes.clear()
+        emi, out = nt.nodes.new("ShaderNodeEmission"), nt.nodes.new("ShaderNodeOutputMaterial")
+        emi.inputs["Color"].default_value = (1, 1, 1, 1)
+        nt.links.new(emi.outputs["Emission"], out.inputs["Surface"])
+        me.materials.append(mat)
+        try:
+            mp4 = os.path.join(edit_dir, "scaled.mp4")
+            res = run("assemble_edit.py", {"out_path": mp4, "resolution": [160, 90], "render": True, "frames": [1, 2]})
+            left = decode_frame_colors(mp4, [1], edit_dir, region=(0.03, 0.09, 0.42, 0.58))[1]
+            scales = [s.get("scale") for s in res["strips"] if s["type"] == "SCENE"]
+            return min(left) > 0.6 and scales == [0.5, 0.5, 0.5], {"left_edge_rgb": [round(c, 2) for c in left],
+                                                                     "scales": scales}
+        finally:
+            bpy.data.objects.remove(marker)
+            bpy.data.meshes.remove(me)
+            bpy.data.materials.remove(mat)
+
+    def ae_scale_integer_percentage():
+        """Source 320x180 at 33 % renders 105x59 (integer division), so the fit is computed from that."""
+        old = scene.render.resolution_percentage
+        scene.render.resolution_percentage = 33
+        try:
+            res = run("assemble_edit.py", {"out_path": os.path.join(edit_dir, "pct.mp4"), "resolution": [160, 90]})
+        finally:
+            scene.render.resolution_percentage = old
+        want = round(min(160 / 105, 90 / 59), 5)
+        scales = [s.get("scale") for s in res["strips"] if s["type"] == "SCENE"]
+        return scales == [want] * 3, {"scales": scales, "want": want}
+
     def ae_audio_strip_reload():
         """Secondary evidence: the mp4 reloads as a sound strip with a positive duration."""
         sc = bpy.data.scenes.new("__FilmAudioProbe")
@@ -460,7 +504,8 @@ def build_cases(out_dir, scene):
         ("assemble.refuses_foreign_scene", ae_refuses_foreign_scene), ("assemble.idempotent", ae_idempotent), ("assemble.render_8_frames", ae_render),
         ("assemble.verify_with_audio", ae_verify_with_audio), ("assemble.verify_without_audio", ae_verify_without_audio),
         ("assemble.decoded_shot_colors", ae_decode_colors), ("assemble.audio_samples", ae_audio_present),
-        ("assemble.audio_strip_reload", ae_audio_strip_reload),
+        ("assemble.audio_strip_reload", ae_audio_strip_reload), ("assemble.scaled_not_cropped", ae_scaled_not_cropped),
+        ("assemble.scale_integer_percentage", ae_scale_integer_percentage),
     ]
 
 

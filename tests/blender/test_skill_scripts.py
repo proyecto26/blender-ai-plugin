@@ -352,6 +352,31 @@ def _fix_asset_vertex_children():
     return out
 
 
+def _capture_ignores_marker_cameras(out_dir):
+    """A marker bound to another camera must not hijack the capture camera (film scenes have one per shot)."""
+    import numpy as np
+    cam_data = bpy.data.cameras.new("__MarkerCam")
+    other = bpy.data.objects.new("__MarkerCam", cam_data)
+    bpy.context.scene.collection.objects.link(other)
+    other.location = (0, 0, 200)  # far above, looking down at nothing in particular
+    marker = bpy.context.scene.timeline_markers.new("__MarkerShot", frame=bpy.context.scene.frame_current)
+    marker.camera = other
+    try:
+        r = run("blender-mcp-workflow", "capture_views.py", {"target": "SM_Crate_01", "out_dir": out_dir,
+                                                             "views": ["front", "top"], "resolution": 96})
+        px = []
+        for p in r["images"]:
+            img = bpy.data.images.load(p)
+            px.append(np.array(img.pixels[:], dtype=np.float32))
+            bpy.data.images.remove(img)
+        diff = float(np.abs(px[0] - px[1]).mean())
+        return {"views_differ": diff > 0.01, "diff": round(diff, 4), "binding_restored": marker.camera is other}
+    finally:
+        bpy.context.scene.timeline_markers.remove(marker)
+        bpy.data.objects.remove(other)
+        bpy.data.cameras.remove(cam_data)
+
+
 def _work_copy_child_world():
     parent, kid = _kid_scene("SM_WcKidP", "SOCKET_WcKid")
     before = kid.matrix_world.copy()
@@ -441,6 +466,8 @@ def build_cases(out_dir):
         ("core.capture_views", lambda: run(W, "capture_views.py", {"target": "SM_Crate_01", "out_dir": out_dir,
                                                                   "views": ["three_quarter"], "resolution": 128}),
          lambda r: all(os.path.exists(p) for p in r["images"])),
+        ("blender-mcp-workflow.capture_ignores_marker_cameras", lambda: _capture_ignores_marker_cameras(out_dir),
+         lambda r: r["views_differ"] and r["binding_restored"]),
         ("hard-surface.bevel_stack", lambda: run("hard-surface", "bevel_stack.py", {"objects": ["SM_Crate_01"], "width": 0.02}),
          lambda r: r["objects"]["SM_Crate_01"]["evaluated_tris"] > 12),
         ("materials.pbr_material", lambda: run("materials", "pbr_material.py", {

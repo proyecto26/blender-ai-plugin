@@ -8,6 +8,15 @@ Format: [Semantic Versioning](https://semver.org/) — `Major.Minor.Patch`
 
 ## [Unreleased]
 
+Iteration 9: fixes found by an end-to-end film and export test (a fox short, Blender 5.2.3 headless).
+
+### Fixed
+- `assemble_edit.py` scales each scene strip to fit the edit resolution (Blender renders a scene strip at
+  the source scene's size, so a 1920x1080 scene in a 1280x720 edit showed only the centre of each shot);
+  `strips[].scale` reports the factor
+- `capture_views.py` lifts camera-marker bindings while capturing (a shot list's markers switched every
+  view to a shot camera) and puts them back afterwards
+
 Iteration 8: delivery routing in user words, and the known issues left after iteration 7.
 
 ### Changed
