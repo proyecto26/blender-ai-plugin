@@ -1,12 +1,14 @@
 ---
 name: materials
-description: Blender PBR and stylized material creation for metal, wood, concrete, fabric, glass, dirt, rust, and procedural shaders. Use for look development, material reuse, and production shading in Blender via MCP.
+description: "PBR and stylized materials: metal, wood, rust, glass, fabric, procedural shaders. Use when an object is grey or shiny the wrong way, or needs a metal or rust look. Ships tested scripts. Not for judging the full look (use lookdev)."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: discipline
+  stage: look_dev
   triggers: material, shader, PBR, procedural, metal, wood, fabric, glass, rust, moss, Principled BSDF
   related-skills: texture-workflow, uv-workflow, lighting, rendering
 ---

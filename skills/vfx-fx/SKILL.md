@@ -1,12 +1,14 @@
 ---
 name: vfx-fx
-description: Cinematic and game VFX in Blender including smoke, fire, particles, trails, and Geometry Nodes FX setups via MCP.
+description: "VFX: smoke, fire, steam, particles, trails. Use for gas effects from an emitter, sparks or muzzle flash. Ships tested scripts."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: discipline
+  stage: animate
   triggers: VFX, FX, smoke, fire, explosion, particles, sparks, trails, muzzle flash, magic effect, geometry nodes FX
   related-skills: geometry-nodes, physics-sim, materials, lighting, rendering, compositing
 ---

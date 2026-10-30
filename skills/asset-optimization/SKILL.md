@@ -1,12 +1,14 @@
 ---
 name: asset-optimization
-description: Validates and optimizes Blender assets for polycount, topology, UV efficiency, material count, naming, collections, and game-ready performance. Use before export on all production assets via MCP.
+description: "Cut an asset to budget, tested scripts: polycount, stray geometry, duplicate verts, extra materials. Use when an asset or scan is too heavy, fails a budget or needs an audit; load even for advice. Not LODs (use lod-pipeline)."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: delivery
+  stage: validate
   triggers: optimize, optimization, polycount, LOD, cleanup, performance, game ready, validate, triangle count
   related-skills: export-pipeline, blender-modeler, uv-workflow
 ---

@@ -1,0 +1,922 @@
+{
+ "_doc": "Explicit inventory for run_recipes.py. entries = complete recipes that run twice on the fixture; skip = documented exclusions with reasons. Any ```python block found in skills/**/*.md that is in neither list is reported as skipped (not inventoried).",
+ "entries": [
+  {
+   "file": "analog-found-footage-horror/SKILL.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": true,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts",
+    "camera_unoccluded"
+   ]
+  },
+  {
+   "file": "apocalypse-worlds/SKILL.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": true,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts",
+    "camera_unoccluded"
+   ]
+  },
+  {
+   "file": "biome-worlds/SKILL.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": true,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts",
+    "camera_unoccluded"
+   ]
+  },
+  {
+   "file": "blender-mcp-workflow/SKILL.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": false,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts"
+   ]
+  },
+  {
+   "file": "blender-mcp-workflow/references/mcp-integration.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": false,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe"
+   ]
+  },
+  {
+   "file": "body-horror-style/SKILL.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": true,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts",
+    "camera_unoccluded"
+   ]
+  },
+  {
+   "file": "brutalist-mood/SKILL.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": true,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts",
+    "camera_unoccluded"
+   ]
+  },
+  {
+   "file": "cartoon-style/SKILL.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": false,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts"
+   ]
+  },
+  {
+   "file": "character-archetypes/SKILL.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": true,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts",
+    "camera_unoccluded"
+   ]
+  },
+  {
+   "file": "chibi-style/SKILL.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": true,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts",
+    "camera_unoccluded"
+   ]
+  },
+  {
+   "file": "comic-book-style/SKILL.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": true,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts",
+    "camera_unoccluded"
+   ]
+  },
+  {
+   "file": "cosmic-eldritch-horror/SKILL.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": true,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts",
+    "camera_unoccluded"
+   ]
+  },
+  {
+   "file": "cozy-wholesome-mood/SKILL.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": true,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts",
+    "camera_unoccluded"
+   ]
+  },
+  {
+   "file": "dark-gritty-mood/SKILL.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": true,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts",
+    "camera_unoccluded"
+   ]
+  },
+  {
+   "file": "dream-surreal-mood/SKILL.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": true,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts",
+    "camera_unoccluded"
+   ]
+  },
+  {
+   "file": "dream-weirdcore-style/SKILL.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": true,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts",
+    "camera_unoccluded"
+   ]
+  },
+  {
+   "file": "environment-artist/SKILL.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": false,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts"
+   ]
+  },
+  {
+   "file": "fantasy-worlds/SKILL.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": true,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts",
+    "camera_unoccluded"
+   ]
+  },
+  {
+   "file": "folk-horror-style/SKILL.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": true,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts",
+    "camera_unoccluded"
+   ]
+  },
+  {
+   "file": "frutiger-aero-style/SKILL.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": true,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts",
+    "camera_unoccluded"
+   ]
+  },
+  {
+   "file": "genre-action-combat/SKILL.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": true,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts",
+    "camera_unoccluded"
+   ]
+  },
+  {
+   "file": "genre-card-party-idle/SKILL.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": true,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts",
+    "camera_unoccluded"
+   ]
+  },
+  {
+   "file": "genre-metroidvania-roguelike/SKILL.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": true,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts",
+    "camera_unoccluded"
+   ]
+  },
+  {
+   "file": "genre-narrative-vn/SKILL.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": true,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts",
+    "camera_unoccluded"
+   ]
+  },
+  {
+   "file": "genre-open-world-sandbox/SKILL.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": false,
+   "fixture_extras": {
+    "collections": [
+     {
+      "name": "COL_Assets",
+      "objects": [
+       {
+        "name": "SM_Rock_A",
+        "size": 0.4
+       },
+       {
+        "name": "SM_Rock_B",
+        "size": 0.6
+       }
+      ]
+     }
+    ]
+   },
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts"
+   ]
+  },
+  {
+   "file": "genre-puzzle-platformer/SKILL.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": true,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts",
+    "camera_unoccluded"
+   ]
+  },
+  {
+   "file": "genre-racing-sports/SKILL.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": true,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts",
+    "camera_unoccluded"
+   ]
+  },
+  {
+   "file": "genre-rpg/SKILL.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": true,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts",
+    "camera_unoccluded"
+   ]
+  },
+  {
+   "file": "genre-shooter/SKILL.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": true,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts",
+    "camera_unoccluded"
+   ]
+  },
+  {
+   "file": "genre-soulslike/SKILL.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": true,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts",
+    "camera_unoccluded"
+   ]
+  },
+  {
+   "file": "genre-stealth/SKILL.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": true,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts",
+    "camera_unoccluded"
+   ]
+  },
+  {
+   "file": "genre-strategy-sim/SKILL.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": true,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts",
+    "camera_unoccluded"
+   ]
+  },
+  {
+   "file": "genre-survival/SKILL.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": true,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts",
+    "camera_unoccluded"
+   ]
+  },
+  {
+   "file": "hand-painted-style/SKILL.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": false,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts"
+   ]
+  },
+  {
+   "file": "hd-2d-style/SKILL.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": false,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts"
+   ]
+  },
+  {
+   "file": "historical-worlds/SKILL.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": true,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts",
+    "camera_unoccluded"
+   ]
+  },
+  {
+   "file": "indie-horror-aesthetics/SKILL.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": true,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts",
+    "camera_unoccluded"
+   ]
+  },
+  {
+   "file": "liminal-space-style/SKILL.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": true,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts",
+    "camera_unoccluded"
+   ]
+  },
+  {
+   "file": "manga-style/SKILL.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": true,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts",
+    "camera_unoccluded"
+   ]
+  },
+  {
+   "file": "mascot-puppet-horror/SKILL.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": true,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts",
+    "camera_unoccluded"
+   ]
+  },
+  {
+   "file": "minimalist-style/SKILL.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": true,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts",
+    "camera_unoccluded"
+   ]
+  },
+  {
+   "file": "neon-retrofuturism/SKILL.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": true,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts",
+    "camera_unoccluded"
+   ]
+  },
+  {
+   "file": "noir-style/SKILL.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": true,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts",
+    "camera_unoccluded"
+   ]
+  },
+  {
+   "file": "painterly-style/SKILL.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": false,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts"
+   ]
+  },
+  {
+   "file": "pixel-art-style/SKILL.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": true,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts",
+    "camera_unoccluded"
+   ]
+  },
+  {
+   "file": "procedural-modeling/SKILL.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": false,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts"
+   ]
+  },
+  {
+   "file": "retro-16bit-style/SKILL.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": true,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts",
+    "camera_unoccluded"
+   ]
+  },
+  {
+   "file": "retro-8bit-style/SKILL.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": true,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts",
+    "camera_unoccluded"
+   ]
+  },
+  {
+   "file": "sci-fi-punk-worlds/SKILL.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": true,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts",
+    "camera_unoccluded"
+   ]
+  },
+  {
+   "file": "set-dressing/SKILL.md",
+   "block": 0,
+   "subject": "SM_Crate",
+   "camera": false,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts"
+   ]
+  },
+  {
+   "file": "stop-motion-craft-style/SKILL.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": true,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts",
+    "camera_unoccluded"
+   ]
+  },
+  {
+   "file": "vector-style/SKILL.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": true,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts",
+    "camera_unoccluded"
+   ]
+  },
+  {
+   "file": "vfx-fx/SKILL.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": false,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts"
+   ]
+  },
+  {
+   "file": "visual-console-eras/SKILL.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": false,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts"
+   ]
+  }
+ ],
+ "skip": [
+  {
+   "file": "animation/SKILL.md",
+   "block": 0,
+   "reason": "template: ARGS is a {...} placeholder, not a runnable call"
+  },
+  {
+   "file": "asset-optimization/SKILL.md",
+   "block": 0,
+   "reason": "template: ARGS is a {...} placeholder, not a runnable call"
+  },
+  {
+   "file": "blender-mcp-workflow/references/blender-5-api-notes.md",
+   "block": 0,
+   "reason": "fragment: not a complete recipe (relies on names/context defined elsewhere, no script call)"
+  },
+  {
+   "file": "blender-mcp-workflow/references/blender-5-api-notes.md",
+   "block": 1,
+   "reason": "fragment: not a complete recipe (relies on names/context defined elsewhere, no script call)"
+  },
+  {
+   "file": "blender-mcp-workflow/references/blender-5-api-notes.md",
+   "block": 2,
+   "reason": "fragment: not a complete recipe (relies on names/context defined elsewhere, no script call)"
+  },
+  {
+   "file": "blender-mcp-workflow/references/mcp-tools.md",
+   "block": 0,
+   "reason": "fragment: not a complete recipe (relies on names/context defined elsewhere, no script call)"
+  },
+  {
+   "file": "blender-mcp-workflow/references/mcp-tools.md",
+   "block": 1,
+   "reason": "fragment: not a complete recipe (relies on names/context defined elsewhere, no script call)"
+  },
+  {
+   "file": "blender-mcp-workflow/references/mcp-tools.md",
+   "block": 2,
+   "reason": "fragment: not a complete recipe (relies on names/context defined elsewhere, no script call)"
+  },
+  {
+   "file": "blender-mcp-workflow/references/mcp-tools.md",
+   "block": 3,
+   "reason": "fragment: not a complete recipe (relies on names/context defined elsewhere, no script call)"
+  },
+  {
+   "file": "camera-cinematography/SKILL.md",
+   "block": 0,
+   "reason": "template: ARGS is a {...} placeholder, not a runnable call"
+  },
+  {
+   "file": "cloth-sim/SKILL.md",
+   "block": 0,
+   "reason": "template: ARGS is a {...} placeholder, not a runnable call"
+  },
+  {
+   "file": "collision-proxy/SKILL.md",
+   "block": 0,
+   "reason": "template: ARGS is a {...} placeholder, not a runnable call"
+  },
+  {
+   "file": "compositing/SKILL.md",
+   "block": 0,
+   "reason": "fragment: not a complete recipe (relies on names/context defined elsewhere, no script call)"
+  },
+  {
+   "file": "compositing/SKILL.md",
+   "block": 1,
+   "reason": "template: ARGS is a {...} placeholder, not a runnable call"
+  },
+  {
+   "file": "export-pipeline/SKILL.md",
+   "block": 0,
+   "reason": "template: ARGS is a {...} placeholder, not a runnable call"
+  },
+  {
+   "file": "geometry-nodes/SKILL.md",
+   "block": 0,
+   "reason": "fragment: not a complete recipe (relies on names/context defined elsewhere, no script call)"
+  },
+  {
+   "file": "geometry-nodes/SKILL.md",
+   "block": 1,
+   "reason": "template: ARGS is a {...} placeholder, not a runnable call"
+  },
+  {
+   "file": "godot-export/SKILL.md",
+   "block": 0,
+   "reason": "template: ARGS is a {...} placeholder, not a runnable call"
+  },
+  {
+   "file": "hard-surface/SKILL.md",
+   "block": 0,
+   "reason": "template: ARGS is a {...} placeholder, not a runnable call"
+  },
+  {
+   "file": "isometric-style/SKILL.md",
+   "block": 0,
+   "reason": "template: ARGS is a {...} placeholder, not a runnable call"
+  },
+  {
+   "file": "lighting/SKILL.md",
+   "block": 0,
+   "reason": "template: ARGS is a {...} placeholder, not a runnable call"
+  },
+  {
+   "file": "lod-pipeline/SKILL.md",
+   "block": 0,
+   "reason": "template: ARGS is a {...} placeholder, not a runnable call"
+  },
+  {
+   "file": "lowpoly-style/SKILL.md",
+   "block": 0,
+   "reason": "template: ARGS is a {...} placeholder, not a runnable call"
+  },
+  {
+   "file": "materials/SKILL.md",
+   "block": 0,
+   "reason": "template: ARGS is a {...} placeholder, not a runnable call"
+  },
+  {
+   "file": "physics-sim/SKILL.md",
+   "block": 0,
+   "reason": "template: ARGS is a {...} placeholder, not a runnable call"
+  },
+  {
+   "file": "rendering/SKILL.md",
+   "block": 0,
+   "reason": "template: ARGS is a {...} placeholder, not a runnable call"
+  },
+  {
+   "file": "retopology/SKILL.md",
+   "block": 0,
+   "reason": "template: ARGS is a {...} placeholder, not a runnable call"
+  },
+  {
+   "file": "rigging/SKILL.md",
+   "block": 0,
+   "reason": "template: ARGS is a {...} placeholder, not a runnable call"
+  },
+  {
+   "file": "rigging/references/mechanical-rig.md",
+   "block": 0,
+   "reason": "fragment: not a complete recipe (relies on names/context defined elsewhere, no script call)"
+  },
+  {
+   "file": "stylized-style/SKILL.md",
+   "block": 0,
+   "reason": "template: ARGS is a {...} placeholder, not a runnable call"
+  },
+  {
+   "file": "texture-workflow/SKILL.md",
+   "block": 0,
+   "reason": "template: ARGS is a {...} placeholder, not a runnable call"
+  },
+  {
+   "file": "unity-export/SKILL.md",
+   "block": 0,
+   "reason": "template: ARGS is a {...} placeholder, not a runnable call"
+  },
+  {
+   "file": "unreal-export/SKILL.md",
+   "block": 0,
+   "reason": "template: ARGS is a {...} placeholder, not a runnable call"
+  },
+  {
+   "file": "uv-workflow/SKILL.md",
+   "block": 0,
+   "reason": "template: ARGS is a {...} placeholder, not a runnable call"
+  },
+  {
+   "file": "voxel-style/SKILL.md",
+   "block": 0,
+   "reason": "template: ARGS is a {...} placeholder, not a runnable call"
+  },
+  {
+   "file": "ai-video-handoff/SKILL.md",
+   "block": 0,
+   "reason": "example call on user files (<project> paths, renders or reads images); the script is covered by tests/blender/test_handoff.py"
+  },
+  {
+   "file": "ai-video-handoff/SKILL.md",
+   "block": 1,
+   "reason": "example call on user files (<project> paths, renders or reads images); the script is covered by tests/blender/test_handoff.py"
+  },
+  {
+   "file": "blender-mcp-workflow/references/reference-folder-workflow.md",
+   "block": 0,
+   "reason": "example call on user files (<project> paths, renders or reads images); the script is covered by tests/blender/test_refs.py"
+  },
+  {
+   "file": "blender-mcp-workflow/references/reference-folder-workflow.md",
+   "block": 1,
+   "reason": "example call on user files (<project> paths, renders or reads images); the script is covered by tests/blender/test_refs.py"
+  },
+  {
+   "file": "film-production/SKILL.md",
+   "block": 0,
+   "reason": "example call on user files (<project> paths, renders or reads images); the script is covered by tests/blender/test_film.py"
+  },
+  {
+   "file": "film-production/SKILL.md",
+   "block": 1,
+   "reason": "example call on user files (<project> paths, renders or reads images); the script is covered by tests/blender/test_film.py"
+  },
+  {
+   "file": "film-production/SKILL.md",
+   "block": 2,
+   "reason": "example call on user files (<project> paths, renders or reads images); the script is covered by tests/blender/test_film.py"
+  }
+ ]
+}

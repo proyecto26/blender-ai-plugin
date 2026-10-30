@@ -1,0 +1,1 @@
+{"expected": "blender-director", "cluster": "delegation", "also_ok": [], "forbidden": [], "required": ["unity-export"], "agent": false}

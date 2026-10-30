@@ -1,12 +1,15 @@
 ---
 name: minimalist-style
-description: Minimalist and abstract-leaning art direction for Blender with reduced forms, limited palettes, and negative space.
+description: "Minimalist, abstract look: reduced forms, negative space. Use for 'keep it minimal' or a cluttered scene."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: style
+  stage: brief
+  requires: "camera-cinematography, compositing, lighting, materials, rendering"
   triggers: minimalist, minimal, abstract, reduced forms, negative space, simple shapes
   related-skills: stylized-style, materials, camera-cinematography, lookdev
 ---

@@ -88,6 +88,48 @@ It should call `get_objects_summary`. Then try a skill script:
 `get_python_api_docs`, `search_api_docs`, `search_manual_docs` (bundled API reference and user manual for
 the installed version). Recipes: [`skills/blender-mcp-workflow/references/mcp-tools.md`](../skills/blender-mcp-workflow/references/mcp-tools.md).
 
+## Headless tests on Windows (Microsoft Store install)
+
+`blender.exe` inside `WindowsApps` cannot be executed directly. Use the execution alias instead:
+
+```powershell
+& "$env:LOCALAPPDATA\Microsoft\WindowsApps\blender-launcher.exe" -b --factory-startup --python tests\blender\test_skill_scripts.py -- '{"out_dir": "C:\\temp\\bst"}'
+```
+
+This runs Blender 5.2.3 LTS headless, but the alias does not forward stdout, so the tests write JSON
+reports to `out_dir`; read those instead of the console.
+
+The MCP tool `execute_blender_code_for_cli` launches a background Blender and needs the `BLENDER_PATH`
+environment variable set (to the Blender executable or launcher alias) in the environment of the MCP server
+process. Set it in whichever way your client passes environment variables to MCP servers, then restart the agent.
+
+## Headless runs on macOS and Linux
+
+Use the app's binary directly; the commands are otherwise the same:
+
+```bash
+# macOS
+/Applications/Blender.app/Contents/MacOS/Blender -b --factory-startup --python tests/blender/test_skill_scripts.py -- '{"out_dir": "/tmp/bst"}'
+# Linux
+blender -b --factory-startup --python tests/blender/test_skill_scripts.py -- '{"out_dir": "/tmp/bst"}'
+```
+
+On macOS set `BLENDER_PATH=/Applications/Blender.app/Contents/MacOS/Blender` for `execute_blender_code_for_cli`.
+
+## Passing ARGS to scripts on any shell
+
+Every skill script reads its ARGS from one JSON object after `--`. bash and zsh pass `'{"tri_budget": 3000}'`
+unchanged; cmd and PowerShell 5.1 strip or mangle the inner quotes. On those shells, and in any script you want
+to be portable, put the ARGS in a file:
+
+```
+blender -b asset.blend --python <skill_dir>/scripts/validate_asset.py -- --args-file args.json
+```
+
+Malformed JSON stops with a `ValueError` that says what was received, instead of a raw traceback. Inside the
+MCP session (`runpy.run_path(..., init_globals={"ARGS": {...}})`) no quoting is involved; write the script path
+with forward slashes on Windows too.
+
 ## Troubleshooting
 
 | Symptom | Fix |

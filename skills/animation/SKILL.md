@@ -1,12 +1,14 @@
 ---
 name: animation
-description: Game-ready animation in Blender including walk/run/idle cycles, combat, mechanical animation, camera animation, constraints, Graph Editor, and NLA workflows via MCP.
+description: "Game-ready animation: walk, run and idle cycles, combat moves, camera animation, NLA. Use when a character or prop must move, loop or turntable, or motion feels floaty or pops. Ships tested scripts. Not for rigs (use rigging)."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: discipline
+  stage: animate
   triggers: animation, animate, walk cycle, run cycle, idle, combat, NLA, graph editor, keyframe
   related-skills: rigging, blender-modeler, export-pipeline
 ---

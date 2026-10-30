@@ -1,12 +1,14 @@
 ---
 name: camera-cinematography
-description: Cinematic camera work in Blender including framing, lenses, composition, camera animation, and shot language beyond basic rendering setup via MCP.
+description: "Camera work: framing, lenses, depth of field, hero shots and camera moves. Use for 'frame the subject', eye-level first-person views, or a subject blocked from view. Ships tested scripts. Not for render settings (use rendering)."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: discipline
+  stage: light_camera
   triggers: camera, cinematography, lens, framing, composition, shot, dolly, orbit, focal length, depth of field, camera animation
   related-skills: rendering, lighting, animation, compositing, lookdev
 ---
@@ -101,7 +103,9 @@ import runpy
 result = runpy.run_path("<skill_dir>/scripts/camera_rig.py", init_globals={"ARGS": {...}})["result"]
 ```
 
-ARGS: `name`, `target`, `lens_mm`, `azimuth_deg`, `elevation_deg`, `fill`, `dof_fstop`, `set_active`, `aspect`
+ARGS: `name`, `target`, `lens_mm`, `azimuth_deg`, `elevation_deg`, `fill`, `dof_fstop`, `set_active`, `aspect`, `eye_height` (absolute camera Z, e.g. 1.6), `min_distance`, `max_distance`
+
+Occlusion check: the result carries `occluded_by` (names of objects between camera and subject) and `visible_fraction`. Hidden-from-render objects, collision proxies, fluid domains (they render as volumes, not as their box, so they never count as occluders) and the subject itself are ignored. If `occluded_by` is non-empty, move the camera (other azimuth, `eye_height`, distance clamps), don't ship.
 
 ## Reference Guide
 

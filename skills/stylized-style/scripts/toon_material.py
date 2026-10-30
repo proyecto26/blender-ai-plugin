@@ -22,11 +22,18 @@ import bpy
 
 
 def _cli_args():
-    if "--" in sys.argv:
-        raw = sys.argv[sys.argv.index("--") + 1:]
-        if raw:
-            return json.loads(raw[0])
-    return {}
+    """ARGS after `--`: one JSON object, or `--args-file <path.json>` (quoting-proof on every shell)."""
+    raw = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
+    if not raw:
+        return {}
+    if raw[0] == "--args-file":
+        with open(raw[1], encoding="utf-8") as fh:
+            return json.load(fh)
+    try:
+        return json.loads(raw[0])
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"ARGS after '--' must be one JSON object, got {raw[0]!r}; "
+                         "cmd/PowerShell mangle JSON quotes, so pass --args-file <path.json> instead") from exc
 
 
 def _sock(sockets, name):
@@ -47,8 +54,6 @@ def _outline_material():
     if mat:
         return mat
     mat = bpy.data.materials.new("MAT_Outline_Black")
-    if hasattr(mat, "use_nodes") and not mat.use_nodes:
-        mat.use_nodes = True
     nodes = mat.node_tree.nodes
     nodes.clear()
     out = nodes.new("ShaderNodeOutputMaterial")
@@ -65,8 +70,6 @@ def main(name="MAT_Toon", base_color=(0.8, 0.5, 0.4), bands=2, rim=0.3, objects=
         name = "MAT_" + name
     bands = max(2, min(4, int(bands)))
     mat = bpy.data.materials.get(name) or bpy.data.materials.new(name)
-    if hasattr(mat, "use_nodes") and not mat.use_nodes:
-        mat.use_nodes = True
     nt = mat.node_tree
     nodes, links = nt.nodes, nt.links
     nodes.clear()

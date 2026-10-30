@@ -1,0 +1,1 @@
+{"expected": "blender-director", "cluster": "orchestrator", "also_ok": [], "forbidden": [], "required": ["psx-horror-style", "lighting"], "agent": true}

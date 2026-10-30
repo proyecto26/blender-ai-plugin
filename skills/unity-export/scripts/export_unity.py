@@ -14,17 +14,45 @@ ARGS:
 """
 import json
 import os
+import re
 import sys
 
 import bpy
 
 
 def _cli_args():
-    if "--" in sys.argv:
-        raw = sys.argv[sys.argv.index("--") + 1:]
-        if raw:
-            return json.loads(raw[0])
-    return {}
+    """ARGS after `--`: one JSON object, or `--args-file <path.json>` (quoting-proof on every shell)."""
+    raw = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
+    if not raw:
+        return {}
+    if raw[0] == "--args-file":
+        with open(raw[1], encoding="utf-8") as fh:
+            return json.load(fh)
+    try:
+        return json.loads(raw[0])
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"ARGS after '--' must be one JSON object, got {raw[0]!r}; "
+                         "cmd/PowerShell mangle JSON quotes, so pass --args-file <path.json> instead") from exc
+
+
+
+def _verify(path, targets):
+    """Read the exported FBX back: model names in the file vs the meshes asked for (missing) and other scene
+    objects that slipped in (leaked). Binary FBX stores each object name followed by NUL, SOH and "Model"."""
+    if not os.path.exists(path):
+        return {"checked": False}
+    with open(path, "rb") as fh:
+        data = fh.read()
+    if not data.startswith(b"Kaydara FBX Binary"):
+        return {"checked": False, "reason": "not a binary FBX"}
+    nodes = {m.group(1).decode("utf-8", "replace") for m in re.finditer(rb"([^\x00-\x1f]{1,255})\x00\x01Model", data)}
+    names = {o.name for o in targets}
+    bones = {b.name for o in targets if o.type == "ARMATURE" for b in o.data.bones}
+    scene_objects = {o.name for o in bpy.context.scene.objects}
+    missing = sorted(o.name for o in targets if o.type in ("MESH", "EMPTY", "ARMATURE") and o.name not in nodes)
+    leaked = sorted(n for n in nodes if n in scene_objects and n not in names and n not in bones)
+    return {"checked": True, "nodes": sorted(nodes), "missing": missing, "leaked": leaked,
+            "ok": not missing and not leaked}
 
 
 def main(objects, out_path, animation=False, strict=True):
@@ -67,6 +95,7 @@ def main(objects, out_path, animation=False, strict=True):
             o.select_set(True)
     ok = os.path.exists(out_path)
     return {"exported": ok, "path": out_path, "bytes": os.path.getsize(out_path) if ok else 0, "checks": checks,
+            "verify": _verify(out_path, targets),
             "import_tips": "Unity: Model > Scale Factor 1, Convert Units on; Materials > Extract; Rig per asset type."}
 
 

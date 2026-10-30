@@ -1,7 +1,7 @@
 {
   "name": "blender-ai-plugin",
   "version": "2.0.0",
-  "description": "AI technical-art team for Blender: 95 skills, 29 tested bpy scripts and a design orchestrator agent that drive the official Blender MCP server to model, texture, light, render, validate and export game-ready assets (Unreal, Unity, Godot) in any art style. Use for any Blender modeling, look-dev, scene or export task.",
+  "description": "AI technical-art team for Blender: a full library of Blender skills, tested bpy scripts and a design orchestrator agent that drive the official Blender MCP server to model, texture, light, render, validate and export game-ready assets (Unreal, Unity, Godot) in any art style. Use for any Blender modeling, look-dev, scene or export task.",
   "author": {
     "name": "Proyecto 26",
     "url": "https://github.com/proyecto26"

@@ -1,12 +1,15 @@
 ---
 name: historical-worlds
-description: Historical and period world art direction for Blender including Western, pirate, samurai/ninja, Viking, ancient Egypt/Greece/Rome, Victorian, modern, and military eras.
+description: "Historical settings: pirate, samurai, Viking, Victorian, WWII, ancient Rome. Use for period-accurate props and architecture."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: world
+  stage: brief
+  requires: "camera-cinematography, compositing, lighting, materials, set-dressing"
   triggers: western, pirate, samurai, ninja, Viking, ancient Egypt, ancient Greece, Roman, Victorian, modern, military, Cold War, World War
   related-skills: environment-artist, prop-artist, character-artist, materials, set-dressing
 ---

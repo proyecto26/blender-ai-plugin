@@ -1,0 +1,1 @@
+{"expected": "godot-export", "cluster": "delivery", "also_ok": ["collision-proxy"], "forbidden": ["unity-export"]}

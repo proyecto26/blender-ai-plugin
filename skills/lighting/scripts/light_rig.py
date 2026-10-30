@@ -50,11 +50,18 @@ PRESETS = {
 
 
 def _cli_args():
-    if "--" in sys.argv:
-        raw = sys.argv[sys.argv.index("--") + 1:]
-        if raw:
-            return json.loads(raw[0])
-    return {}
+    """ARGS after `--`: one JSON object, or `--args-file <path.json>` (quoting-proof on every shell)."""
+    raw = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
+    if not raw:
+        return {}
+    if raw[0] == "--args-file":
+        with open(raw[1], encoding="utf-8") as fh:
+            return json.load(fh)
+    try:
+        return json.loads(raw[0])
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"ARGS after '--' must be one JSON object, got {raw[0]!r}; "
+                         "cmd/PowerShell mangle JSON quotes, so pass --args-file <path.json> instead") from exc
 
 
 def _bounds(target):
@@ -112,8 +119,6 @@ def main(preset="studio_3pt", target=None, collection="COL_Lights", set_world=Tr
     if set_world:
         world = scene.world or bpy.data.worlds.new("WRL_Rig")
         scene.world = world
-        if hasattr(world, "use_nodes") and not world.use_nodes:
-            world.use_nodes = True
         bg = next((n for n in world.node_tree.nodes if n.type == "BACKGROUND"), None)
         if bg is None:
             bg = world.node_tree.nodes.new("ShaderNodeBackground")

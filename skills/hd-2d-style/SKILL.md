@@ -1,12 +1,14 @@
 ---
 name: hd-2d-style
-description: HD-2D art direction combining pixel characters/sprites with 3D environments, depth of field, and theatrical lighting.
+description: "HD-2D: pixel sprites in 3D scenes. Use for Octopath looks, billboard sprites. Ships tested scripts. Not pure pixel art (pixel-art-style)."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: style
+  stage: brief
   triggers: HD-2D, HD2D, Octopath, triangle strategy, pixel 3D hybrid
   related-skills: pixel-art-style, environment-artist, camera-cinematography, lighting, compositing
 ---

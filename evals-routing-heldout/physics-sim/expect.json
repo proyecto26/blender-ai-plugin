@@ -1,0 +1,1 @@
+{"expected": "physics-sim", "cluster": "discipline", "also_ok": [], "forbidden": ["cloth-sim", "collision-proxy"]}

@@ -1,12 +1,15 @@
 ---
 name: genre-puzzle-platformer
-description: Art direction for puzzle and platformer games in Blender with readable interactables, jump volumes, and clear hazard language.
+description: "Puzzle and platformer levels. Use when players cannot tell what is climbable, jumpable or dangerous."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: genre
+  stage: brief
+  requires: "camera-cinematography, collision-proxy, environment-artist, lighting, materials, procedural-modeling"
   triggers: puzzle, platformer, jump puzzle, puzzle game art, platforming
   related-skills: environment-artist, prop-artist, materials, camera-cinematography
 ---

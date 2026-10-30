@@ -1,12 +1,15 @@
 ---
 name: stop-motion-craft-style
-description: Stop-motion and craft aesthetics for Blender including claymation, paper craft, and handmade physical-material cues.
+description: "Stop-motion/craft look: claymation, papercraft, felt. Use for fingerprints in clay or cardboard."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: style
+  stage: brief
+  requires: "camera-cinematography, compositing, lighting, materials, rendering"
   triggers: stop motion, claymation, clay, paper craft, papercraft, handmade, craft aesthetic, puppet physical
   related-skills: materials, lighting, camera-cinematography, character-artist, mascot-puppet-horror
 ---

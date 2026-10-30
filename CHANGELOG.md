@@ -6,6 +6,104 @@ Format: [Semantic Versioning](https://semver.org/) — `Major.Minor.Patch`
 
 ---
 
+## [Unreleased]
+
+Iteration 8: delivery routing in user words, and the known issues left after iteration 7.
+
+### Changed
+- The seven delivery descriptions (unreal-export, unity-export, godot-export, lod-pipeline,
+  asset-optimization, collision-proxy, export-pipeline) name the symptoms users report ("imports tiny",
+  "comes in rotated -90", "walk through walls") and say to load the skill even for advice
+- `unity-export` documents FBX (`export_unity.py`) as the scripted path; GLB goes through glTFast and the
+  `export-pipeline` skill
+- `assemble_edit.py` writes an AAC audio stream only when audio is supplied (no silent track)
+
+### Added
+- `metadata.requires` on every skill that calls another skill's script; `validate_skills.py` checks that each
+  `{skills}/<x>/scripts/<y>.py` exists and that `<x>` is declared
+- `assemble_edit.py` `verify` (with `render: True`): reads the mp4 back for frame count, size and a decoded
+  audio stream of the film's length
+- `fix_asset.py` reports `children_not_preserved` (constraints, singular transform, not in the active view
+  layer) instead of moving them silently
+- Symptom-worded delivery routing cases (`evals-routing/deliv-*`); `execute_blender_code_for_cli` notes that
+  it needs `BLENDER_PATH`
+
+### Fixed
+- `fix_asset.py`: vertex- and triangle-parented children keep their world transform when scale or rotation is
+  applied
+- `render_handoff.py`: lists only the files written in this run and warns about leftovers from earlier runs
+- Film docs no longer promise an audio check or image-sequence automation that no script performed
+
+---
+
+Iteration 7: routing that holds up with many skills, film and AI-video pipelines, refs-first worlds.
+
+### Changed
+- Rewrote every skill description to lead with the job in user words, add a "Use when" trigger and a
+  "Not for ... (use X)" clause for look-alikes. The plugin's names and descriptions dropped from 32,808 to
+  about 16,000 characters, so Claude Code's skill listing no longer drops the descriptions of 37 skills
+- `blender-design-orchestrator` now preloads `blender-director` and `blender-mcp-workflow`, reads the skill
+  catalog, follows an explicit stage-to-skill table and describes its triggers in prose ("When to invoke")
+- Every script's command line accepts `--args-file <path.json>` (portable to cmd and PowerShell) and reports
+  malformed JSON with a clear `ValueError`
+- Script paths in `runpy` calls are written with forward slashes on every OS; example paths use `<project>`
+
+### Added
+- `film-production`: shot list, preview frames and contact sheet, fix loop, EEVEE render, edit with
+  user-supplied, licensed audio to mp4 (`shot_list.py`, `preview_frames.py`, `assemble_edit.py`)
+- `ai-video-handoff`: renders stills, clips, masks and depth with a manifest for Seam (`seam_sequence.json`,
+  the `create_sequence` arguments) or ComfyUI (`handoff.json`); it never submits or pays for anything
+- Reference-folder-first workflow: `ref_board.py` (style bible from a folder of refs) and
+  `compare_to_refs.py` (plain-language drift of renders or engine screenshots against the refs)
+- `metadata.category` / `metadata.stage` on every skill; `scripts/build_catalog.py` generates
+  `blender-director/references/skill-catalog.md`
+- Validator checks: per-category description caps, total listing budget, look-alike descriptions without a
+  "Not for" clause, stale catalog
+- Routing evals: `evals-routing/` (tuning), frozen `evals-routing-heldout/`, `evals-orchestrator/`, scored by
+  `tests/routing/score_routing.py`; headless tests `test_film.py`, `test_handoff.py`, `test_refs.py`
+- macOS and Linux headless commands in `docs/BLENDER_MCP_SETUP.md`
+
+### Fixed
+- Unreal and Unity FBX exports now read the file back (`verify`: missing, leaked, `ok`), so the pipeline's
+  verify gate can pass for FBX targets; skinned exports count the armature and ignore bone names
+- `run_manifest.py` knows the optional `animate`, `film` and `handoff` stages (N/A until recorded); the schema
+  and `pipeline-gates.md` match
+- `assemble_edit.py` refuses to rebuild an edit scene it did not create; `shot_list.py` merges no longer
+  duplicate the markers of kept shots
+- `blender-director` routes film, AI handoff and reference folders; the orchestrator loads every stage's
+  skill and returns a stage table with a skill per stage
+- Description and body contradictions: geometry-nodes vs procedural-modeling, lighting vs lookdev,
+  horror-style, lowpoly-style, stylized-style, qa-review; Godot collision naming; pixel-art step order
+
+Iteration 6: fixes from the skill review, verified in headless Blender 5.2.
+
+### Fixed
+- Quoted skill frontmatter values so descriptions with colons parse as YAML
+- glTF exports were limited to the active scene and are now verified after export
+- Made collision proxy generation idempotent: re-running replaces its own proxies instead of stacking `_02`, `_03`
+- Placed the genre-shooter FPS camera at eye height; `camera_rig` now reports occlusion
+- Made `scatter_props` enforce `max_dist`
+- Gave `fix_asset` a proper `main()`; applying scale now keeps object-parented children in place
+- Fixed `work_copy` accept so checkpoint originals stay untouched (parent links included)
+- Made the run manifest refuse an export or verify PASS unless validate is PASS or N/A
+- Stopped collision proxy reruns from deleting a user's renamed duplicate of a proxy
+- Fixed `camera_rig` to report the real camera distance and note every clamp it applies
+- Made the recipe runner fail on blocks that are not inventoried and sample 6 occlusion points
+- Removed deprecated `use_nodes` guards (Blender 5.2+ only)
+
+### Added
+- New smoke tests, a recipe runner (`tests/blender/run_recipes.py`) and a stricter skill validator
+- Director stage gates (PASS / FAIL / NOT_CHECKED / N/A), `run_manifest.py` and `work_copy.py` for destructive steps
+- Evals `09-director-gates` and `10-shooter-camera`
+- Skill descriptions carry "Use when" triggers and name the scripts they ship
+
+### Changed
+- `scatter_props` `max_dist` is a hard limit on prop distance; stacked LOD copies no longer render; fluid domains never count as camera occluders
+- User-facing docs and manifests no longer state fixed skill or script counts
+- `docs/BLENDER_MCP_SETUP.md`: running the headless tests on Windows with a Microsoft Store install
+
+---
+
 ## [2.0.0] — 2026-10-27
 
 Fork maintained by [Proyecto 26](https://github.com/proyecto26) as **Blender AI Plugin**.

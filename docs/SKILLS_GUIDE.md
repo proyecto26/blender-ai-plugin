@@ -1,6 +1,6 @@
 # Blender AI Plugin — Skills Guide
 
-Decision trees and workflow combinations for the Blender AI Plugin (**95 skills**).
+Decision trees and workflow combinations for the Blender AI Plugin.
 
 ## Start Here
 
@@ -72,6 +72,13 @@ For any Blender asset task, **blender-director** analyzes the request and routes
 
 ### Visual Eras
 - **visual-console-eras** — PS1–PS5, arcade, DOS, CRT, VHS, film grain
+
+### Film & AI Video
+- **film-production** — multi-shot animated short: shot list, preview frames, fix loop, EEVEE render, edit with licensed audio to mp4
+- **ai-video-handoff** — render stills, clips, masks and depth for Seam (`seam_sequence.json`) or ComfyUI (`handoff.json`); stops at the files
+
+The full, generated list of every skill with its stage and scripts is
+[`skills/blender-director/references/skill-catalog.md`](../skills/blender-director/references/skill-catalog.md).
 
 ## Decision Trees
 
@@ -203,6 +210,26 @@ blender-director → horror-style → indie-horror-aesthetics (pick lane)
 ```
 blender-director → genre-strategy-sim → cozy-wholesome-mood → prop-artist
 → vegetation-artist → isometric-style (optional) → lookdev
+```
+
+### Game World from a Reference Folder
+```
+blender-mcp-workflow (ref_board.py on game/ref → style brief) → prop-artist / environment-artist
+→ materials → capture + compare_to_refs.py → godot-export (or unity/unreal)
+→ build the world through the engine's own MCP → compare_to_refs.py on walk-through screenshots → fix drift
+```
+
+### Animated Short (headless)
+```
+blender-director → character-artist → rigging → animation → film-production
+(shot_list → preview_frames → read contact sheet, fix failing shots → EEVEE render → assemble_edit + licensed audio)
+```
+
+### Blender Base Image + AI Background + AI Motion
+```
+[modeling skill] → lighting → camera-cinematography → ai-video-handoff
+→ ComfyUI: beauty + mask + depth (handoff.json) for the painted background
+→ Seam: stills/clips + seam_sequence.json for first/last-frame motion
 ```
 
 ### Cinematic Render

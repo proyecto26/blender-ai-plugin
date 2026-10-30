@@ -10,9 +10,12 @@ ARGS:
     objects   (list[str]|None) default: COL_Export contents, else selection
     out_path  (str, required) .glb (binary, recommended) or .gltf
     animation (bool) default False
+
+Returns `verify` (the file is read back): {checked, nodes, joints, missing, leaked, ok}.
 """
 import json
 import os
+import struct
 import sys
 
 import bpy
@@ -21,11 +24,67 @@ HINTS = ("-colonly", "-convcolonly", "-col", "-convcol", "-rigid", "-navmesh", "
 
 
 def _cli_args():
-    if "--" in sys.argv:
-        raw = sys.argv[sys.argv.index("--") + 1:]
-        if raw:
-            return json.loads(raw[0])
-    return {}
+    """ARGS after `--`: one JSON object, or `--args-file <path.json>` (quoting-proof on every shell)."""
+    raw = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
+    if not raw:
+        return {}
+    if raw[0] == "--args-file":
+        with open(raw[1], encoding="utf-8") as fh:
+            return json.load(fh)
+    try:
+        return json.loads(raw[0])
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"ARGS after '--' must be one JSON object, got {raw[0]!r}; "
+                         "cmd/PowerShell mangle JSON quotes, so pass --args-file <path.json> instead") from exc
+
+
+def _gltf_json(path):
+    """Return the glTF JSON dict of a .glb (JSON chunk) or .gltf file."""
+    if path.lower().endswith(".gltf"):
+        with open(path, "r", encoding="utf-8") as fh:
+            return json.load(fh)
+    with open(path, "rb") as fh:
+        head = fh.read(12)
+        if len(head) < 12 or head[:4] != b"glTF":
+            raise ValueError("not a GLB file")
+        length, ctype = struct.unpack("<I4s", fh.read(8))
+        if ctype != b"JSON":
+            raise ValueError("first GLB chunk is not JSON")
+        return json.loads(fh.read(length).decode("utf-8"))
+
+
+def _allowed_names(targets):
+    allowed = set()
+    stack = list(targets)
+    while stack:
+        o = stack.pop()
+        if o.name in allowed:
+            continue
+        allowed.add(o.name)
+        stack.extend(o.children)
+        for mod in o.modifiers:
+            if mod.type == "ARMATURE" and mod.object:
+                stack.append(mod.object)
+        if o.parent:
+            stack.append(o.parent)
+    return allowed
+
+
+def _verify(path, targets):
+    """Read the exported file back: nodes, joints, requested meshes missing, other objects leaked."""
+    if not path.lower().endswith((".glb", ".gltf")) or not os.path.exists(path):
+        return {"checked": False}
+    data = _gltf_json(path)
+    nodes = [n.get("name", "") for n in data.get("nodes", [])]
+    joint_idx = {j for s in data.get("skins", []) for j in s.get("joints", [])}
+    joints = sorted({nodes[i] for i in joint_idx if i < len(nodes)})
+    allowed = _allowed_names(targets)
+    present = set(nodes)
+    missing = sorted(o.name for o in targets if o.type == "MESH" and o.name not in present)
+    leaked = sorted({n for i, n in enumerate(nodes)
+                     if i not in joint_idx and n in bpy.data.objects and n not in allowed})
+    return {"checked": True, "nodes": sorted(present), "joints": joints, "missing": missing,
+            "leaked": leaked, "ok": not missing and not leaked}
 
 
 def main(out_path, objects=None, animation=False):
@@ -48,7 +107,7 @@ def main(out_path, objects=None, animation=False):
         with bpy.context.temp_override(active_object=targets[0], selected_objects=targets,
                                        selected_editable_objects=targets):
             bpy.ops.export_scene.gltf(
-                filepath=out_path, use_selection=True, export_apply=True, export_yup=True,
+                filepath=out_path, use_selection=True, use_active_scene=True, export_apply=True, export_yup=True,
                 export_format="GLB" if out_path.lower().endswith(".glb") else "GLTF_SEPARATE",
                 export_animations=animation, export_extras=True)
     finally:
@@ -58,6 +117,7 @@ def main(out_path, objects=None, animation=False):
             o.select_set(True)
     ok = os.path.exists(out_path)
     return {"exported": ok, "path": out_path, "bytes": os.path.getsize(out_path) if ok else 0,
+            "verify": _verify(out_path, targets),
             "import_hints": {k: v for k, v in hints.items() if v}, "unapplied_scale": unapplied,
             "import_tips": "Godot: keep the .glb in res://; use Advanced Import Settings for per-mesh physics/LOD."}
 

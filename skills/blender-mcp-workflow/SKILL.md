@@ -1,13 +1,15 @@
 ---
 name: blender-mcp-workflow
-description: Use before writing ANY Blender Python (bpy) code, even a short snippet and even when no Blender version is mentioned: Blender 5.2 removed APIs that most examples online still use (mesh auto smooth, EEVEE bloom, scene.node_tree, Geometry Nodes modifier item assignment, old Principled socket names), so unchecked code usually breaks. Also use whenever driving Blender through the official Blender Lab MCP server (execute_blender_code, get_objects_summary, screenshots, API/manual doc search) and for the shared production rules: naming, polycount budgets, the asset pipeline, validation gates, reference matching. Ships tested bpy scripts for scene audit, collection setup, game-ready validation and review captures, and points to every other skill's scripts.
+description: "Safe way to drive Blender through the MCP server and write bpy code that survives Blender 5.x API removals. Use before ANY bpy snippet, scene audit, validation gate, naming or polycount rule, or references-first world. Ships tested scripts. Not for planning a production (use blender-director)."
 license: MIT
 metadata:
   author: https://github.com/proyecto26
   version: "2.0.0"
   domain: blender
   role: foundation
-  triggers: Blender MCP, execute_blender_code, bpy script, scene audit, validate asset, naming convention, polycount budget, viewport screenshot, Blender 5 API, reference match
+  category: core
+  stage: any
+  triggers: Blender MCP, execute_blender_code, bpy script, scene audit, validate asset, naming convention, polycount budget, viewport screenshot, Blender 5 API, reference match, reference folder, style bible, match my refs
   related-skills: blender-director, qa-review, export-pipeline, asset-optimization
 ---
 
@@ -64,8 +66,10 @@ result = runpy.run_path("<skill_dir>/scripts/scene_audit.py",
 ```
 
 ```bash
-# headless, outside MCP
+# headless, outside MCP (bash/zsh): one JSON object after --
 blender -b asset.blend --python <skill_dir>/scripts/validate_asset.py -- '{"tri_budget": 3000}'
+# any shell, including cmd and PowerShell (they mangle JSON quotes): put the ARGS in a file
+blender -b asset.blend --python <skill_dir>/scripts/validate_asset.py -- --args-file args.json
 ```
 
 Read a script before running it the first time in a session; pass only the documented ARGS.
@@ -73,6 +77,10 @@ Read a script before running it the first time in a session; pass only the docum
 When Blender is not connected and the user will paste code into Blender's Scripting workspace, give them
 the same short `runpy` call with the absolute path of the installed script and their ARGS. Don't inline or
 rewrite the script: the tested file is what makes the result reliable.
+
+Write that path with forward slashes, also on Windows (`"C:/Users/me/.claude/plugins/.../scene_audit.py"`):
+a pasted backslash path such as `"C:\Users\..."` is a Python syntax error, because `\U` starts an escape.
+Python and Blender accept forward slashes on every OS; macOS and Linux paths need no change.
 
 ## Scripts
 
@@ -82,7 +90,18 @@ rewrite the script: the tested file is what makes the result reliable.
 | `scripts/setup_collections.py` | Idempotent `COL_` hierarchy (Reference/Blockout/HighPoly/LowPoly/Collision/Lights/Cameras/Export) | Adds collections only |
 | `scripts/validate_asset.py` | PASS/WARN/FAIL gate: transforms, tri budget, n-gons, manifold, loose geo, UVs, materials, naming, scale, origin | No |
 | `scripts/fix_asset.py` | Fixes the usual FAILs: bakes unapplied scale (or rotation+scale) into the mesh and adds a box-projected or Smart UV layer only where none exists; idempotent | Edits the named meshes |
+| `scripts/work_copy.py` | Disposable working copies for destructive steps: `begin` / `accept` / `revert` / `status`; originals are never modified, accepted originals go to an excluded `__Checkpoint` collection | Adds `__Work` copies; accept relinks |
 | `scripts/capture_views.py` | Front / 3-4 / side / back / top / camera PNGs with a temporary camera; restores settings | No (temp camera removed) |
+| `scripts/ref_board.py` | Reads a folder of reference images, writes `style_bible.json` (palette, value/saturation histograms, contrast, warm/cool) | No (writes the JSON only) |
+| `scripts/compare_to_refs.py` | Scores renders, viewport captures or engine screenshots against the bible: distances, score, plain-language drift list | No |
+
+## Before a Destructive Step
+
+Before a destructive step (apply transforms/modifiers, join, boolean apply, remesh, decimate) use
+`scripts/work_copy.py`: `begin` copies the objects into `__Work`, edit the copies (for example
+`fix_asset.py` on `SM_Crate__work`), check them, then `accept` (the copy takes the original name and
+every reference; the untouched original goes to the excluded `__Checkpoint`) or `revert` (copies removed).
+One pending work set at a time. Details: `references/mcp-integration.md`.
 
 ## Execution Protocol
 
@@ -95,6 +114,20 @@ rewrite the script: the tested file is what makes the result reliable.
 6. VALIDATE  validate_asset.py before export; fix every FAIL (fix_asset.py covers scale and missing UVs)
 7. REPORT    object names, tri counts, verdicts, file paths
 ```
+
+## Reference Folder First
+
+When the user has a folder of reference images for a game world, level or prop set (for example `game/ref/`),
+read it before building anything: refs first is what keeps the style consistent.
+
+1. Run `ref_board.py` on the folder, then look at the images yourself: the statistics cover colour and tonal
+   balance, not composition. Write a short style brief and get the user's yes.
+2. Model props in Blender with the matching skills; capture them and run `compare_to_refs.py`.
+3. Export to the engine; the engine is assembled through its own MCP, outside this plugin. Capture
+   walk-through screenshots and run `compare_to_refs.py` on them; fix the drift it names.
+4. Stop after two consecutive rounds with no improvement and report what is left.
+
+Full loop, what the numbers mean and the drift-to-fix table: `references/reference-folder-workflow.md`.
 
 ## Verify, Don't Guess
 
@@ -124,6 +157,7 @@ Model training data is full of Blender 2.8-4.0 code. Treat every API you did not
 | Polycount budgets | `references/polycount-budgets.md` |
 | Validation checklist | `references/validation-checklist.md` |
 | Reference image matching | `references/reference-image-match.md`, `references/reference-analysis-template.md`, `references/visual-match-checklist.md` |
+| Reference folder first (style bible, engine screenshots vs refs) | `references/reference-folder-workflow.md` |
 
 ## Anti-Patterns
 

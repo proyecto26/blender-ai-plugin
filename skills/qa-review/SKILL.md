@@ -1,12 +1,14 @@
 ---
 name: qa-review
-description: Production QA gate for Blender assets using viewport screenshots, validation checklists, naming audits, and ship/no-ship verdicts via MCP.
+description: "Final QA gate for Blender assets: screenshots, checklists, naming and topology audit, ship/no-ship verdict. Use for 'is this ready to ship' or a last check before export. Not for fixes (use blender-mcp-workflow fix_asset, asset-optimization)."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: core
+  stage: validate
   triggers: QA, quality assurance, review, validation, checklist, screenshot review, ship check, art review
   related-skills: asset-optimization, export-pipeline, blender-director, lookdev
 ---

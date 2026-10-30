@@ -1,12 +1,15 @@
 ---
 name: analog-found-footage-horror
-description: Analog, VHS, CRT, and found-footage horror aesthetics for Blender shots including camera imperfections and documentary framing.
+description: "VHS, CRT and found-footage horror shots. Use for 'analog horror', security-cam or lost-media looks. Not PS1 crunch (psx-horror-style)."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: mood
+  stage: brief
+  requires: "camera-cinematography, compositing, lighting, rendering"
   triggers: analog horror, found footage, VHS horror, CRT horror, tape horror, Mandel effect, lost media
   related-skills: horror-style, psx-horror-style, camera-cinematography, compositing, lighting
 ---

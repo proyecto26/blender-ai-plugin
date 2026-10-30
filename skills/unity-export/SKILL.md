@@ -1,19 +1,21 @@
 ---
 name: unity-export
-description: Unity-specific Blender export for scale, axis, materials, humanoid/generic rigs, LODs, and collision import via MCP.
+description: "Unity export, tested scripts: FBX axis, scale, materials, humanoid rigs. Use when an asset goes to Unity, comes in rotated -90, at scale 100 or white; load even for advice. Not Unreal/Godot (use unreal-export, godot-export)."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: delivery
+  stage: export
   triggers: Unity, Unity export, Unity FBX, Unity GLTF, humanoid, Unity materials, Unity LOD, Unity collision
   related-skills: export-pipeline, lod-pipeline, collision-proxy, asset-optimization, materials
 ---
 
 # Unity Export
 
-Unity-ready transforms, materials, LODs, and collision. Prefer GLB/GLTF for modern; FBX for legacy/animation.
+Unity-ready transforms, materials, LODs, and collision. FBX is the scripted default (`export_unity.py`, imported natively by Unity). GLB needs Unity's glTFast package.
 
 ## When to Use
 
@@ -30,11 +32,10 @@ Unity-ready transforms, materials, LODs, and collision. Prefer GLB/GLTF for mode
 
 ## Recommended Formats
 
-| Case | Format |
-|------|--------|
-| Static mesh modern | GLB |
-| Animated / humanoid | FBX |
-| Simple props | GLB or FBX |
+| Case | Format | How |
+|------|--------|-----|
+| Static, animated or humanoid | FBX | `export_unity.py` (scripted, read back in `verify`) |
+| Static mesh, project uses glTFast | GLB | `export-pipeline` skill → `export_asset.py` with a `.glb` `out_path` (the extension picks glTF, Y-up; `engine` only changes FBX presets) |
 
 ## Transform Defaults
 
@@ -47,7 +48,7 @@ Scale Factor: 1.0 (fix if model tiny/huge)
 ## Materials
 
 - Prefer single material slots matching Unity workflow
-- Metallic-Roughness for GLTF
+- Metallic-Roughness for GLB (glTFast)
 - Embed or provide textures beside FBX
 - Name materials `MAT_` consistently
 

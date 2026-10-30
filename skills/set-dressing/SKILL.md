@@ -1,12 +1,14 @@
 ---
 name: set-dressing
-description: Set dressing and environmental storytelling placement for interiors and exteriors using prop density, narrative clusters and readability rules via MCP. For scattering many small props (rocks, debris, foliage) over terrain, use the geometry-nodes skill's scatter_points.py script.
+description: "Set dressing: prop placement and environmental storytelling. Use when a scene feels empty or props should tell a story. Ships tested scripts. Mass terrain scatter goes to geometry-nodes."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: discipline
+  stage: model
   triggers: set dressing, dressing, storytelling props, interior dressing, clutter, narrative placement, set decals
   related-skills: prop-artist, scene-assembly, environment-artist, horror-style, qa-review
 ---
@@ -83,6 +85,8 @@ path of this installed script and their ARGS. Don't inline or rewrite the script
 import runpy
 result = runpy.run_path("<skill_dir>/scripts/scatter_props.py", init_globals={"ARGS": {"target": "SM_Crate", "count": 8, "kinds": ["box", "barrel", "pallet"]}})["result"]
 ```
+
+`max_dist` (default 3.5) is the maximum horizontal (XY) distance from the target's bbox centre to any prop origin, enforced per prop. If the requested count cannot fit inside it the script raises `RuntimeError` (raise `max_dist` or lower `count`).
 
 ## Reference Guide
 

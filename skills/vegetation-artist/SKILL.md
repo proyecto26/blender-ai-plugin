@@ -1,12 +1,14 @@
 ---
 name: vegetation-artist
-description: Vegetation and foliage authoring for Blender including trees, plants, grass cards, canopy LODs, and game-friendly leaf atlases via MCP.
+description: "Vegetation: trees, grass, bushes, ivy, leaf cards with LOD-friendly foliage. Use for 'make a tree' or a forest. Not for mass scatter (use geometry-nodes)."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: discipline
+  stage: model
   triggers: vegetation, foliage, tree, plant, grass, bush, leaf cards, canopy, ivy, forest
   related-skills: environment-artist, geometry-nodes, materials, lod-pipeline, procedural-modeling
 ---

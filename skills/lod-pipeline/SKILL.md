@@ -1,12 +1,14 @@
 ---
 name: lod-pipeline
-description: Dedicated LOD generation, naming, screen-size targets, and validation for game meshes in Blender via MCP.
+description: "LOD chains, tested scripts: LOD1..N copies, naming, screen-size switch distances. Use when distant meshes cost frame rate, LODs pop or an engine needs LODs; load even for advice. Not one-off cleanup (use asset-optimization)."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: delivery
+  stage: validate
   triggers: LOD, LODs, level of detail, decimate, LOD0, LOD1, impostor, screen size
   related-skills: asset-optimization, export-pipeline, unity-export, unreal-export, collision-proxy
 ---

@@ -1,12 +1,14 @@
 ---
 name: rendering
-description: Blender rendering with Cycles and Eevee including sampling, denoising, camera setup, render passes, color management, and render optimization. Use for final output and look validation via MCP.
+description: "Final render setup: Cycles/Eevee sampling, denoise, resolution, color management. Use for noisy or slow renders or a quick preview. Ships tested scripts. Not for bloom or grading (use compositing)."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: discipline
+  stage: light_camera
   triggers: render, Cycles, Eevee, sampling, denoise, camera, render pass, color management, output
   related-skills: lighting, materials, realistic-style, stylized-style
 ---

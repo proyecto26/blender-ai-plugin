@@ -10,7 +10,7 @@ plugin.json                      # Agent Plugins 1.0 manifest (portable)
 .codex-plugin/plugin.json        # OpenAI Codex manifest
 .agents/plugins/marketplace.json # Codex / Copilot catalog entry
 agents/blender-design-orchestrator.md
-skills/<skill>/SKILL.md          # 95 self-contained skills (+ references/, scripts/)
+skills/<skill>/SKILL.md          # self-contained skills (+ references/, scripts/)
 skills/blender-mcp-workflow/     # foundation: MCP rules, shared references, core scripts
 tests/blender/                   # live Blender smoke tests for every script
 evals/                           # `claude plugin eval` suite
@@ -36,6 +36,7 @@ docs/                            # setup guide, skills guide, demo video
 python3 scripts/validate_skills.py                 # frontmatter, links, deprecated APIs, script safety
 bash scripts/check-manifests.sh                    # manifest consistency + claude plugin validate + schema
 blender -b --factory-startup --python tests/blender/test_skill_scripts.py -- '{"out_dir": "/tmp/bst"}'
+blender -b --factory-startup --python tests/blender/run_recipes.py -- '{"out_dir": "/tmp/bst_recipes"}'   # recipe runner
 claude plugin eval --runs 1                        # pilot the eval suite (uses tokens)
 ```
 

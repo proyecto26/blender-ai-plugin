@@ -1,12 +1,14 @@
 ---
 name: export-pipeline
-description: Production export from Blender to FBX, GLTF, OBJ, USD, and Alembic with scale, pivot, rotation, normals, materials, animation, and collision verification via MCP.
+description: "Engine-agnostic export, tested scripts: FBX, GLB, OBJ, USD scale, axis, pivot, batch. Use for web/three.js, client deliveries, kits or no engine yet; load even for advice. One engine? Use unity-export, unreal-export, godot-export."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: delivery
+  stage: export
   triggers: export, FBX, GLTF, GLB, OBJ, USD, Alembic, Unity, Unreal, game engine import
   related-skills: asset-optimization, blender-modeler, materials
 ---
@@ -182,6 +184,8 @@ result = runpy.run_path("<skill_dir>/scripts/export_asset.py", init_globals={"AR
 ```
 
 ARGS: `objects`, `engine`, `out_path`, `animation`
+
+glTF/GLB exports use the active scene only and read the file back: check `verify.ok` after every export (`nodes`, `missing`, `leaked` explain a failure). `verify.checked: false` (FBX, USD, OBJ) means NOT_CHECKED, never a pass.
 
 ## Reference Guide
 

@@ -11,7 +11,8 @@ ARGS:
     ratios   (list[float])   decimate ratios for LOD1..N (default [0.5, 0.25, 0.12])
     apply    (bool) apply the Decimate modifier on copies (default True - engines need real geometry)
     rename_source (bool) rename source to <base>_LOD0 (default False)
-    offset_x (float) spacing between LODs for side-by-side review (default 0 = stacked)
+    offset_x (float) spacing between LODs for side-by-side review (default 0 = stacked; stacked
+                     copies get hide_render so renders show LOD0 only - exports are unaffected)
 """
 import json
 import sys
@@ -20,11 +21,18 @@ import bpy
 
 
 def _cli_args():
-    if "--" in sys.argv:
-        raw = sys.argv[sys.argv.index("--") + 1:]
-        if raw:
-            return json.loads(raw[0])
-    return {}
+    """ARGS after `--`: one JSON object, or `--args-file <path.json>` (quoting-proof on every shell)."""
+    raw = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
+    if not raw:
+        return {}
+    if raw[0] == "--args-file":
+        with open(raw[1], encoding="utf-8") as fh:
+            return json.load(fh)
+    try:
+        return json.loads(raw[0])
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"ARGS after '--' must be one JSON object, got {raw[0]!r}; "
+                         "cmd/PowerShell mangle JSON quotes, so pass --args-file <path.json> instead") from exc
 
 
 def _tris(obj):
@@ -61,6 +69,7 @@ def main(object, ratios=(0.5, 0.25, 0.12), apply=True, rename_source=False, offs
         lod.data = src.data.copy()
         lod.name = lod.data.name = name
         lod.location.x += offset_x * i
+        lod.hide_render = offset_x == 0  # stacked LODs export with LOD0 but must not render over it
         col.objects.link(lod)
         dec = lod.modifiers.new("LOD_Decimate", "DECIMATE")
         dec.decimate_type = "COLLAPSE"

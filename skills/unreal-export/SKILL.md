@@ -1,12 +1,14 @@
 ---
 name: unreal-export
-description: Unreal Engine-specific Blender export for FBX scale, LODs, UCX collision, sockets, materials, and skeletal mesh workflows via MCP.
+description: "Unreal/UE5 export, tested scripts: FBX scale, SM_/SK_ names, UCX collision, sockets. Use when an asset goes to Unreal, imports tiny, huge or without collision; load even for advice. Not Unity/Godot (use unity-export, godot-export)"
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: delivery
+  stage: export
   triggers: Unreal, UE5, UE4, Unreal export, UCX, Unreal LOD, skeletal mesh, Unreal FBX, socket
   related-skills: export-pipeline, lod-pipeline, collision-proxy, asset-optimization, materials
 ---

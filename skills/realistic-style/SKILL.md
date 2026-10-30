@@ -1,12 +1,14 @@
 ---
 name: realistic-style
-description: Photorealistic AAA art direction for Blender including photogrammetry cleanup, real-world scale, high-poly workflows, PBR accuracy, and scan optimization. Use for cinematic and AAA game realism.
+description: "Photoreal AAA assets: real-world scale, PBR values, scan cleanup, high-poly to low bake. Use for 'photoreal' or 'AAA'. Not interiors (archviz)."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: style
+  stage: brief
   triggers: realistic, photoreal, AAA, photogrammetry, scan cleanup, PBR accurate, high poly, cinematic
   related-skills: texture-workflow, rendering, materials, uv-workflow
 ---

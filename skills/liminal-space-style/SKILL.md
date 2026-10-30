@@ -1,12 +1,15 @@
 ---
 name: liminal-space-style
-description: Liminal space and Backrooms art direction for Blender with empty transitional architecture, wrong familiarity, and endless repetition.
+description: "Liminal spaces and Backrooms: empty malls, hallways, poolrooms. Use for 'Backrooms'. Not childhood weirdness (dream-weirdcore-style)."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: style
+  stage: brief
+  requires: "camera-cinematography, compositing, environment-artist, lighting, materials"
   triggers: liminal, liminal space, Backrooms, empty mall, empty school, poolrooms, transitional space
   related-skills: horror-style, environment-artist, lighting, materials, scene-assembly
 ---

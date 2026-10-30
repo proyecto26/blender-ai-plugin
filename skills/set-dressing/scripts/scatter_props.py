@@ -14,7 +14,8 @@ ARGS:
     kinds       (list)  any of box, box_small, barrel, pallet (default all)
     clusters    (int)   number of story clusters (default 3)
     min_dist    (float) min distance from target bbox, metres (default 0.4)
-    max_dist    (float) max cluster distance from target centre (default 3.5)
+    max_dist    (float) max horizontal (XY) distance from the target bbox centre to any prop origin, metres
+                        (default 3.5); enforced per prop, so no prop lands farther out
     ground      (str)   mesh to raycast onto (default: any visible mesh below)
     collection  (str)   default "COL_SetDressing"
     seed        (int)   default 0
@@ -38,11 +39,18 @@ KINDS = {
 
 
 def _cli_args():
-    if "--" in sys.argv:
-        raw = sys.argv[sys.argv.index("--") + 1:]
-        if raw:
-            return json.loads(raw[0])
-    return {}
+    """ARGS after `--`: one JSON object, or `--args-file <path.json>` (quoting-proof on every shell)."""
+    raw = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
+    if not raw:
+        return {}
+    if raw[0] == "--args-file":
+        with open(raw[1], encoding="utf-8") as fh:
+            return json.load(fh)
+    try:
+        return json.loads(raw[0])
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"ARGS after '--' must be one JSON object, got {raw[0]!r}; "
+                         "cmd/PowerShell mangle JSON quotes, so pass --args-file <path.json> instead") from exc
 
 
 def _mesh(kind):
@@ -114,29 +122,48 @@ def main(target, count=8, kinds=None, clusters=3, min_dist=0.4, max_dist=3.5, gr
     for c in range(clusters):
         ang = 2 * math.pi * c / clusters + rng.uniform(-0.4, 0.4)
         d = rng.uniform(keep_out + 0.8, max(keep_out + 0.9, max_dist))
+        reach = max(max_dist - 0.3, 0.0)  # cluster centres stay inside max_dist, leaving room for the spread
+        d = min(d, reach)
+        if keep_out <= reach:
+            d = max(d, keep_out)
         cluster_centres.append(Vector((centre.x + math.cos(ang) * d, centre.y + math.sin(ang) * d)))
 
     made = []
     attempts = 0
+    fails = [0] * clusters  # consecutive failures per cluster; many -> uniform annulus fallback
+    c2 = Vector((centre.x, centre.y))
     while len(made) < count:
         attempts += 1
-        if attempts > count * 200:
+        if attempts > count * 600:
             raise RuntimeError(f"could only place {len(made)}/{count} props; raise max_dist or lower count")
         ci = len(made) % clusters
         kind = kinds[(len(made) + ci) % len(kinds)]
         size = KINDS[kind][0]
         radius = math.hypot(size[0], size[1]) / 2
         cc = cluster_centres[ci]
-        spread = 0.6 + 0.15 * attempts / count
-        xy = Vector((cc.x + rng.uniform(-spread, spread), cc.y + rng.uniform(-spread, spread)))
+        spread = min(1.2, 0.6 + 0.15 * attempts / count)
+        if fails[ci] > 40:
+            # fallback: uniform sample over the annulus between the keep-out ring and max_dist
+            r_in, r_out = min(keep_out, max_dist), max_dist
+            rr = math.sqrt(rng.uniform(r_in * r_in, r_out * r_out))
+            th = rng.uniform(0, 2 * math.pi)
+            xy = Vector((centre.x + math.cos(th) * rr, centre.y + math.sin(th) * rr))
+        else:
+            xy = Vector((cc.x + rng.uniform(-spread, spread), cc.y + rng.uniform(-spread, spread)))
+        off = xy - c2
+        if off.length > max_dist:  # pull back radially instead of rejecting
+            xy = c2 + off.normalized() * max(max_dist - radius, 0.0)
         # outside the target bbox (expanded by prop radius + min_dist)
         if lo.x - radius - min_dist < xy.x < hi.x + radius + min_dist and \
            lo.y - radius - min_dist < xy.y < hi.y + radius + min_dist:
+            fails[ci] += 1
             continue
         if any((xy - p).length < radius + r + 0.05 for p, r in placed):
+            fails[ci] += 1
             continue
         z = _ground_z(xy, gnd, hi.z)
         if z is None:
+            fails[ci] += 1
             continue
         obj = bpy.data.objects.new(f"PROP_{'ABCDEFGH'[ci]}_{kind}_{len(made):02d}", _mesh(kind))
         obj["set_dressing"] = True
@@ -144,10 +171,11 @@ def main(target, count=8, kinds=None, clusters=3, min_dist=0.4, max_dist=3.5, gr
         obj.rotation_euler.z = rng.uniform(0, 2 * math.pi)
         col.objects.link(obj)
         placed.append((xy, radius))
+        fails[ci] = 0
         made.append({"name": obj.name, "kind": kind, "cluster": ci,
                      "loc": [round(v, 3) for v in obj.location]})
     return {"count": len(made), "collection": col.name, "props": made,
-            "shared_meshes": len({m["kind"] for m in made})}
+            "shared_meshes": len({m["kind"] for m in made}), "max_dist": max_dist}
 
 
 ARGS = globals().get("ARGS") or _cli_args()

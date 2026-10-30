@@ -1,12 +1,15 @@
 ---
 name: dream-weirdcore-style
-description: Dreamcore, weirdcore, and traumacore-inspired art direction for Blender with nostalgic wrongness, liminal nostalgia, and surreal childhood spaces.
+description: "Weirdcore/dreamcore nostalgic wrongness. Use for traumacore, wrong childhood rooms. Not empty offices or malls (liminal-space-style)."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: style
+  stage: brief
+  requires: "blender-mcp-workflow, camera-cinematography, compositing, lighting, lowpoly-style"
   triggers: dreamcore, weirdcore, traumacore, dream horror, nostalgic horror, surreal childhood, weirdcore edit
   related-skills: liminal-space-style, dream-surreal-mood, horror-style, compositing, lighting
 ---

@@ -1,12 +1,14 @@
 ---
 name: godot-export
-description: Godot-specific Blender export favoring GLTF/GLB with correct scale, materials, animation clips, and collision shapes via MCP.
+description: "Godot 4 export, tested scripts: GLB scale, PBR, clips, -col collision. Use when an asset goes to Godot, looks grey, merges clips or needs import collision; load even for advice. Not Unity/Unreal (use unity-export, unreal-export)."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: delivery
+  stage: export
   triggers: Godot, Godot export, Godot GLTF, Godot GLB, Godot materials, Godot animation
   related-skills: export-pipeline, lod-pipeline, collision-proxy, asset-optimization, materials
 ---
@@ -47,7 +49,7 @@ Animation: include when needed
 
 - Root empty or object named for scene root
 - Avoid deep useless empties
-- Keep collision meshes clearly named `COL_` / `UCX_` style
+- Name collision with Godot's import suffixes (`-col`, `-colonly`, `-convcolonly`); Godot ignores `COL_` / `UCX_` names
 
 ## Materials
 
@@ -67,6 +69,13 @@ Animation: include when needed
 - [ ] Import materials
 - [ ] Animation libraries
 - [ ] Collision shapes
+
+## Compare the Godot World to Your Refs
+
+Screenshots from the Godot world (captured through a Godot MCP, outside this plugin) can be scored against a
+reference folder with the `blender-mcp-workflow` skill: run its ref_board script once, then its
+compare_to_refs script on the screenshots. The loop and drift fixes are in that skill's
+reference-folder-workflow reference.
 
 ## Constraints
 
@@ -96,6 +105,8 @@ result = runpy.run_path("<skill_dir>/scripts/export_godot.py", init_globals={"AR
 ```
 
 ARGS: `objects`, `out_path`, `animation`
+
+The export uses the active scene only and reads the file back: check `verify.ok` after export (`missing` and `leaked` list mismatches). `verify.checked: false` means NOT_CHECKED, never a pass.
 
 ## Reference Guide
 
