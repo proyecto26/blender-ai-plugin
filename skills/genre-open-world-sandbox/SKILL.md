@@ -1,12 +1,14 @@
 ---
 name: genre-open-world-sandbox
-description: "Art direction for open world and sandbox games in Blender with biome landmarks, traversable scale and discovery props. Use when the user asks for an open-world map, exploration landmarks, or sandbox-game environments that guide the player visually."
+description: "Open world and sandbox maps. Use for exploration landmarks and environments that guide players visually."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: genre
+  stage: brief
   triggers: open world, sandbox, open-world, exploration, traversable world, sandbox game
   related-skills: biome-worlds, environment-artist, vegetation-artist, scene-assembly, lod-pipeline
 ---

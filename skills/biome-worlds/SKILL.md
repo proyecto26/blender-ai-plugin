@@ -1,12 +1,14 @@
 ---
 name: biome-worlds
-description: "Biome and setting art direction for Blender covering underwater, desert, arctic, jungle, underground/cave and floating-island environments. Use when the user asks for a specific climate or biome ('underwater level', 'snowy tundra', 'jungle ruins', 'cave system', 'floating islands') and needs palette, props and landmark language."
+description: "Biome settings: underwater, desert, arctic, jungle, cave, floating islands. Use for 'snowy tundra' or 'jungle ruins' palette and props."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: world
+  stage: brief
   triggers: underwater, desert, arctic, jungle, underground, cave, floating islands, biome, climate setting
   related-skills: environment-artist, vegetation-artist, lighting, materials, scene-assembly
 ---

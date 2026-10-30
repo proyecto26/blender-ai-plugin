@@ -1,12 +1,14 @@
 ---
 name: brutalist-mood
-description: "Brutalist and concrete-monument mood direction for Blender architecture and scenes: raw concrete, monumental scale and austere composition. Use when the user wants 'brutalist', 'massive concrete' or 'cold monumental architecture' looks, or an oppressive, stark building atmosphere."
+description: "Brutalist concrete monument mood. Use for 'brutalist', raw concrete, cold monumental or oppressive buildings."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: mood
+  stage: brief
   triggers: brutalist, brutalism, raw concrete, monumental concrete, austere architecture
   related-skills: archviz, environment-artist, materials, camera-cinematography, minimalist-style
 ---

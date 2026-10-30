@@ -1,12 +1,14 @@
 ---
 name: compositing
-description: "Blender compositor workflows for beauty stacks, render passes, color grade, glare, bloom/glow and delivery outputs via MCP. Use whenever adding bloom or glow (EEVEE's built-in bloom was removed in 4.2), grading a render, or writing compositor Python for Blender 5.x (the compositor now lives in scene.compositing_node_group). Ships tested scripts: comp_grade.py (compositor grade with presets, vignette, warmth and posterize)."
+description: "Compositor work: bloom and glow, color grade, render passes, vignette. Use when adding glow, grading a render or writing compositor Python for Blender 5.x. Ships tested scripts. Not for sampling or output settings (use rendering)."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: discipline
+  stage: light_camera
   triggers: compositor, compositing, grade, beauty pass, render passes, cryptomatte, glare, vignette, color correction, post
   related-skills: rendering, lighting, lookdev, camera-cinematography, vfx-fx
 ---

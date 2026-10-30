@@ -256,6 +256,72 @@ def check_script(path):
     return errors, warnings
 
 
+CATEGORIES = {"core", "production", "discipline", "delivery", "style", "mood", "world", "genre"}
+STAGES = {"inspect", "brief", "model", "look_dev", "light_camera", "animate", "film", "handoff", "validate", "export", "any"}
+# Claude Code shows skills in a listing with a fixed character budget (30,000 in claude 2.1.312, shared with
+# built-in and other plugins' skills); past it, descriptions are dropped and only names remain. Keep this
+# plugin's names + descriptions under LISTING_BUDGET and each description under its tier cap.
+LISTING_BUDGET = 21000
+TIER_CAP = {"core": 400, "production": 230, "discipline": 230, "delivery": 230,
+            "style": 150, "mood": 150, "world": 150, "genre": 150}
+SIMILAR = 0.30  # TF-IDF cosine above which two descriptions must name each other ("Not for ... (use X)")
+STOP = set("a an the and or of for to in on with via use when user wants asks blender mcp ships tested scripts "
+           "game is it as by from that this any into your their be are not".split())
+
+
+def _tfidf(descs):
+    import collections
+    import math
+    bags = {n: collections.Counter(w for w in re.findall(r"[a-z0-9]+", d.lower()) if w not in STOP and len(w) > 2)
+            for n, d in descs.items()}
+    df = collections.Counter(w for b in bags.values() for w in b)
+    vec = {n: {w: c * math.log(len(bags) / df[w]) for w, c in b.items()} for n, b in bags.items()}
+
+    def cos(a, b):
+        num = sum(a[w] * b.get(w, 0) for w in a)
+        den = math.sqrt(sum(x * x for x in a.values())) * math.sqrt(sum(x * x for x in b.values()))
+        return num / den if den else 0.0
+    return vec, cos
+
+
+def routing_checks(skills):
+    errors, warnings = [], []
+    descs, total = {}, 0
+    for skill in skills:
+        md = skill / "SKILL.md"
+        if not md.exists():
+            continue
+        fm, _ = parse_frontmatter(md.read_text(encoding="utf-8"))
+        if not fm:
+            continue
+        meta = fm.get("metadata") or {}
+        cat, stage = meta.get("category"), meta.get("stage")
+        if cat not in CATEGORIES:
+            errors.append(f"{skill.name}: metadata.category {cat!r} not in {sorted(CATEGORIES)}")
+        if stage not in STAGES:
+            errors.append(f"{skill.name}: metadata.stage {stage!r} not in {sorted(STAGES)}")
+        desc = fm.get("description") or ""
+        descs[skill.name] = desc
+        total += len(skill.name) + len(desc)
+        cap = TIER_CAP.get(cat)
+        if cap and len(desc) > cap:
+            errors.append(f"{skill.name}: description {len(desc)} chars > {cap} cap for category {cat}")
+    if total > LISTING_BUDGET:
+        errors.append(f"skill listing {total} chars (names + descriptions) > budget {LISTING_BUDGET}")
+    vec, cos = _tfidf({n: d.split("Ships tested scripts")[0] for n, d in descs.items()})
+    names = sorted(descs)
+    for i, a in enumerate(names):
+        for b in names[i + 1:]:
+            if cos(vec[a], vec[b]) >= SIMILAR and b not in descs[a] and a not in descs[b]:
+                warnings.append(f"{a} ~ {b}: similar descriptions; add 'Not for ... (use {b})' or vice versa")
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import build_catalog  # sibling maintainer script
+    if not build_catalog.OUT.exists() or \
+            build_catalog.OUT.read_text(encoding="utf-8") != build_catalog.render(build_catalog.rows()):
+        errors.append("skill-catalog.md is stale: run python scripts/build_catalog.py")
+    return errors, warnings
+
+
 def main():
     if "--self-test" in sys.argv:
         return self_test()
@@ -315,6 +381,10 @@ def main():
         report[skill.name] = {"errors": errors, "warnings": warnings}
         total_errors += len(errors)
         total_warnings += len(warnings)
+    routing_errors, routing_warnings = routing_checks(skills)
+    report["(routing)"] = {"errors": routing_errors, "warnings": routing_warnings}
+    total_errors += len(routing_errors)
+    total_warnings += len(routing_warnings)
     summary = {"skills": len(skills), "scripts": len(list(SKILLS.glob("*/scripts/*.py"))),
                "errors": total_errors, "warnings": total_warnings}
     if as_json:

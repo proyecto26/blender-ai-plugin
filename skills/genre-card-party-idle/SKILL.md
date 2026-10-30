@@ -1,12 +1,14 @@
 ---
 name: genre-card-party-idle
-description: "Art direction for card games, deck builders, party games, idle/incremental, educational and rhythm game presentational spaces in Blender. Use when the user is building a card game table, idle-game scene, party game stage or rhythm game environment and needs UI-friendly staging."
+description: "Card, party, idle and rhythm game staging. Use for a card table, idle scene or party stage with UI room."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: genre
+  stage: brief
   triggers: card game, deck builder, party game, idle, incremental, educational, rhythm game, UI stage
   related-skills: prop-artist, camera-cinematography, materials, lookdev, minimalist-style
 ---

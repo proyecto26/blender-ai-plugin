@@ -1,12 +1,14 @@
 ---
 name: painterly-style
-description: "Painterly art direction spanning watercolor and oil-painting looks for Blender using soft edges, pigment texture and illustrative lighting. Use when the user wants the whole render to look like a 'watercolor', 'oil painting', gouache or impressionist illustration (for painted textures on game assets use hand-painted-style)."
+description: "Whole-render watercolor or oil painting looks. Use for gouache or impressionist illustration. Not painted textures (hand-painted-style)."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: style
+  stage: brief
   triggers: painterly, watercolor, oil painting, impressionist, illustrative paint, gouache
   related-skills: hand-painted-style, stylized-style, materials, compositing, rendering
 ---

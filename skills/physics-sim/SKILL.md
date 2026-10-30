@@ -1,12 +1,14 @@
 ---
 name: physics-sim
-description: "Rigid body, soft body and destruction setups in Blender including constraints, cell fracture debris and baked caches via MCP. Use when objects should fall, collide, stack or break apart, or a simulation explodes or never settles. Ships tested scripts: rigid_body_setup.py (rigid body world, ACTIVE or PASSIVE bodies, mass and collision shapes, optional bake)."
+description: "Rigid body, soft body and destruction sims with bakes. Use when objects should fall, stack, collide or break apart, or a sim explodes. Ships tested scripts. Not for cloth (cloth-sim) or colliders (collision-proxy)."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: discipline
+  stage: animate
   triggers: physics, rigid body, soft body, destruction, fracture, debris, constraint, simulation bake, collapse
   related-skills: vfx-fx, cloth-sim, animation, export-pipeline, collision-proxy
 ---

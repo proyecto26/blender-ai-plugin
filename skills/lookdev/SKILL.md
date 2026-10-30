@@ -1,12 +1,14 @@
 ---
 name: lookdev
-description: "Look development loop for Blender assets combining materials, lighting, camera and screenshot comparison until shading reads correctly via MCP. Use when the user says 'my asset looks flat/wrong', 'review the shading', 'set up a turntable', or wants an asset presentation render checked against a reference."
+description: "Look-dev loop: iterate material, light and camera against a reference until shading reads right. Use for 'my asset looks flat/wrong' or turntable review. Not for one material (use materials) or a light rig (use lighting)."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: discipline
+  stage: look_dev
   triggers: lookdev, look development, shading review, material lighting loop, turntable, asset presentation
   related-skills: materials, lighting, rendering, camera-cinematography, compositing, qa-review
 ---
@@ -26,7 +28,7 @@ Material + light + camera loop. Screenshot compare. Stop when it reads.
 
 ```
 Clay/grey pass → Base materials → Neutral light rig
-  → Beauty light → Screenshot → Gap list → Iterate (≤3–5)
+  → Beauty light → Screenshot → Gap list → Iterate (stop after 2 rounds with no visible gain)
   → Optional grade → QA
 ```
 

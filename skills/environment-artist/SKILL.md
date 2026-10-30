@@ -1,12 +1,14 @@
 ---
 name: environment-artist
-description: "AAA environment art for modular kits, buildings, terrain, vegetation, architecture and scene composition via MCP. Use when the user wants a greybox or blockout, a level layout, cover, rooms, stairs or modular pieces before final art. Ships tested scripts: blockout.py (floor-pivoted primitives such as box, cylinder, rock, ramp, stairs in rows, rings or grids; idempotent re-runs)."
+description: "Environment art: greybox/blockout, level layout, modular kits, terrain and buildings. Use for rooms, stairs, cover or a blockout before final art. Ships tested scripts. Not for filling a room with props (use set-dressing)."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: discipline
+  stage: model
   triggers: environment, modular kit, building, terrain, vegetation, architecture, interior, exterior, level art, scene composition
   related-skills: geometry-nodes, procedural-modeling, materials, lighting
 ---

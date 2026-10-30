@@ -1,12 +1,14 @@
 ---
 name: blender-modeler
-description: "Core Blender modeling specialist for Edit Mode, modifiers, collections, precision modeling, shading (smooth/flat, auto smooth via Smooth by Angle, weighted normals) and scene organization. Use when the user says 'model this', 'block out a shape', 'clean up the mesh', 'why does my mesh look faceted/shaded wrong', or needs non-destructive modifier workflows and scene structure via MCP, including any bpy code that shades meshes smooth."
+description: "Core mesh modeling: blockouts, Edit Mode, modifiers, smooth/flat shading. Use for 'model this', 'clean up the mesh' or 'why does my mesh look faceted'. Not for characters (use character-artist) or props (use prop-artist)."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: discipline
+  stage: model
   triggers: model, blockout, edit mode, modifier, collection, mesh, primitive, snap, pivot, scene organization
   related-skills: hard-surface, environment-artist, asset-optimization, uv-workflow
 ---

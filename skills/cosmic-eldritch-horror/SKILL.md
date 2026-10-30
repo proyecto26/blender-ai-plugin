@@ -1,12 +1,14 @@
 ---
 name: cosmic-eldritch-horror
-description: "Cosmic, eldritch and Lovecraftian horror art direction for Blender with non-Euclidean cues, impossible scale and incomprehensible forms. Use when the user asks for 'Lovecraftian', 'eldritch', 'cosmic horror', a void-entity scene, or architecture that feels geometrically wrong and vast."
+description: "Lovecraftian cosmic horror: impossible scale, non-Euclidean forms. Use for 'eldritch', void entities, wrong vast architecture."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: mood
+  stage: brief
   triggers: cosmic horror, eldritch, Lovecraftian, Lovecraft, non-Euclidean, unknowable, void horror
   related-skills: horror-style, creature-artist, lighting, vfx-fx, compositing
 ---

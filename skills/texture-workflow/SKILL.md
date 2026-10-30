@@ -1,12 +1,14 @@
 ---
 name: texture-workflow
-description: "Production texture workflow for atlases, baking AO/curvature/normal/roughness maps, decals and texture memory optimization via MCP. Use when the user wants baked maps from a high-poly mesh, a texture atlas, or lower texture memory. Ships tested scripts: bake_maps.py (Cycles high-to-low bakes of normal, AO, roughness and color)."
+description: "Texture baking and atlases: AO, curvature, normal and roughness maps from high-poly, decals, texture memory. Use for baked maps or an atlas. Ships tested scripts. Not for UVs (use uv-workflow)."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: discipline
+  stage: look_dev
   triggers: texture, bake, normal map, AO, curvature, roughness, metallic, height, atlas, decal, emission
   related-skills: uv-workflow, materials, asset-optimization
 ---

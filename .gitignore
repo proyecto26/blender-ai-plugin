@@ -48,3 +48,6 @@ docs/video/build/
 
 # skill-creator evals (local benchmark runs)
 evals/skill-creator-workspace/
+evals-routing/results/
+evals-routing-heldout/results/
+evals-orchestrator/results/

@@ -1,12 +1,14 @@
 ---
 name: collision-proxy
-description: "Collision proxy authoring for games: UCX/UHX naming, convex hulls, capsules and simple collider meshes in Blender via MCP. Use when a mesh needs a collider for Unreal, Unity or Godot, or collision shapes are missing, mis-named or too dense. Ships tested scripts: make_collision.py (box or convex-hull proxies named per engine, tagged collision_proxy so re-runs replace their own proxies; replace false stacks extra hulls)."
+description: "Collision proxies: UCX/UHX hulls, boxes and capsules for games. Use when a mesh needs a collider, or shapes are missing, misnamed or too dense. Ships tested scripts. Not for simulation (use physics-sim)."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: delivery
+  stage: validate
   triggers: collision, collider, UCX, UHX, convex hull, physics proxy, hitbox, blocking volume
   related-skills: lod-pipeline, unity-export, unreal-export, asset-optimization, physics-sim
 ---

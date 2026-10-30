@@ -12,7 +12,8 @@ The first call creates the file (with `brief`); with no `stage` it only creates 
 ARGS:
     out_dir         (str, required) run folder; every path written or read stays inside it
     brief           (dict|str) production brief, stored when the manifest is created (or still empty)
-    stage           (str) inspect | brief | model | look_dev | light_camera | validate | export | verify
+    stage           (str) inspect | brief | model | look_dev | light_camera | animate | film | handoff |
+                    validate | export | verify  (animate, film, handoff are optional: N/A unless recorded)
     skill, script   (str) what produced the evidence
     args            (dict) the ARGS passed to that script
     result_summary  (dict|str) the few numbers/verdicts that matter, not the whole result
@@ -35,18 +36,27 @@ import json
 import os
 import sys
 
-STAGES = ["inspect", "brief", "model", "look_dev", "light_camera", "validate", "export", "verify"]
+STAGES = ["inspect", "brief", "model", "look_dev", "light_camera", "animate", "film", "handoff",
+          "validate", "export", "verify"]
+OPTIONAL = {"animate", "film", "handoff"}  # tracks most asset runs never enter; N/A until a verdict is recorded
 VERDICTS = ["PASS", "FAIL", "NOT_CHECKED", "N/A"]
 CAUSES = ["geometry", "materials", "lighting", "camera", "export", "tool-error"]
 NAME = "run_manifest.json"
 
 
 def _cli_args():
-    if "--" in sys.argv:
-        raw = sys.argv[sys.argv.index("--") + 1:]
-        if raw:
-            return json.loads(raw[0])
-    return {}
+    """ARGS after `--`: one JSON object, or `--args-file <path.json>` (quoting-proof on every shell)."""
+    raw = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
+    if not raw:
+        return {}
+    if raw[0] == "--args-file":
+        with open(raw[1], encoding="utf-8") as fh:
+            return json.load(fh)
+    try:
+        return json.loads(raw[0])
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"ARGS after '--' must be one JSON object, got {raw[0]!r}; "
+                         "cmd/PowerShell mangle JSON quotes, so pass --args-file <path.json> instead") from exc
 
 
 def _now():
@@ -74,7 +84,7 @@ def _gates(events):
     latest = {}
     for e in events:
         latest[e["stage"]] = e["verdict"]
-    return {s: latest.get(s, "NOT_CHECKED") for s in STAGES}
+    return {s: latest.get(s, "N/A" if s in OPTIONAL else "NOT_CHECKED") for s in STAGES}
 
 
 def _blocked_by(events, stage):

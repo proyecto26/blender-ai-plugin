@@ -1,12 +1,14 @@
 ---
 name: genre-shooter
-description: "Art direction for FPS, TPS, shooter, battle royale and extraction-shooter maps and props in Blender, with sightline, cover and landmark language. Use when the user wants an FPS or TPS arena, a cover layout, sightlines and lanes, a 'make a shooter map' blockout, or a player-eye (first-person) camera check."
+description: "Shooter maps and props. Use for FPS/TPS arenas, cover layout, sightlines or a first-person camera check."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: genre
+  stage: brief
   triggers: shooter, FPS, TPS, battle royale, extraction shooter, cover shooter, gun game art
   related-skills: environment-artist, hard-surface, prop-artist, collision-proxy, scene-assembly
 ---

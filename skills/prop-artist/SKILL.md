@@ -1,12 +1,14 @@
 ---
 name: prop-artist
-description: "Everyday and hero prop modeling for furniture, tools, household objects, kitbash parts and readable game props. Use when the user says 'model a chair/bottle/tool' or needs set-dressing objects, and hard-surface is too sci-fi/mechanical because the asset is a grounded prop."
+description: "Prop modeling: furniture, tools, bottles, household objects, kitbash parts. Use for 'model a chair/bottle/tool'. Not for sci-fi machinery (use hard-surface)."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: discipline
+  stage: model
   triggers: prop, props, furniture, chair, table, bottle, tool, kitbash, household, everyday object, hero prop, set prop
   related-skills: blender-modeler, hard-surface, materials, uv-workflow, asset-optimization, set-dressing
 ---

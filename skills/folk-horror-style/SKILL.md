@@ -1,12 +1,14 @@
 ---
 name: folk-horror-style
-description: "Folk horror art direction for Blender with rural ritual uncanny, pastoral daylight dread and community-wrongness storytelling. Use when the user asks for 'folk horror', 'Wicker Man' pagan villages, ritual props, or sunny countryside scenes that feel quietly menacing."
+description: "Folk horror: rural ritual dread, pagan villages. Use for 'Wicker Man' or sunny countryside that feels menacing."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: style
+  stage: brief
   triggers: folk horror, rural horror, ritual, pagan, pastoral dread, village horror, Wicker Man
   related-skills: horror-style, environment-artist, set-dressing, vegetation-artist, materials
 ---

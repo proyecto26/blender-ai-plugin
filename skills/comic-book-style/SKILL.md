@@ -1,12 +1,14 @@
 ---
 name: comic-book-style
-description: "Comic book and graphic-novel art direction for Blender with ink-line emphasis, halftone cues and high-contrast framing. Use when the user wants a 'comic book look', 'ink outlines', 'Ben-Day dots/halftone' or a superhero-comic render (for Japanese black-and-white comics use manga-style)."
+description: "Western comic look: ink lines, halftone, high contrast. Use for 'comic book' or Ben-Day dots. Not manga (manga-style)."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: style
+  stage: brief
   triggers: comic book, comics, graphic novel, ink lines, halftone, Ben Day, superhero comic
   related-skills: stylized-style, materials, rendering, compositing, camera-cinematography
 ---

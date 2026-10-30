@@ -1,12 +1,14 @@
 ---
 name: lod-pipeline
-description: "Dedicated LOD generation, naming, screen-size targets and validation for game meshes in Blender via MCP. Use when a mesh needs LOD1..N, a lower-poly distant version, or LOD naming for Unreal, Unity or Godot. Ships tested scripts: generate_lods.py (Decimate-based LOD copies in COL_LODs; stacked copies get hide_render so renders show LOD0 only)."
+description: "LOD generation: LOD1..N copies, naming and screen-size targets. Use when a mesh needs lower-poly distant versions for Unreal, Unity or Godot. Ships tested scripts. Not for one-off cleanup (use asset-optimization)."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: delivery
+  stage: validate
   triggers: LOD, LODs, level of detail, decimate, LOD0, LOD1, impostor, screen size
   related-skills: asset-optimization, export-pipeline, unity-export, unreal-export, collision-proxy
 ---

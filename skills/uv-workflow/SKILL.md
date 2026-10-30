@@ -1,12 +1,14 @@
 ---
 name: uv-workflow
-description: "Production UV unwrapping for seam placement, UV packing, texel density, UDIM, lightmap UVs and modular UV layouts via MCP. Use when preparing meshes for texturing or engine export, or textures look stretched, blurry or inconsistent in density. Ships tested scripts: uv_unwrap_check.py (unwrap plus texel density, UV-space usage, out-of-range checks and an optional lightmap channel)."
+description: "Unwrap UVs: seams, packing, texel density, UDIM, lightmap UVs. Use when textures look stretched or blurry, or before texturing and export. Ships tested scripts. Not for baking (use texture-workflow)."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: discipline
+  stage: look_dev
   triggers: UV, unwrap, seam, texel density, UV pack, UDIM, lightmap UV, UV layout
   related-skills: texture-workflow, materials, export-pipeline
 ---

@@ -1,12 +1,14 @@
 ---
 name: character-archetypes
-description: "Character archetype art direction for Blender covering fantasy races, horror creatures, roles (knight, assassin, detective) and body types (mecha, android, chibi and more). Use when the user names a character type ('design an elf', 'make a vampire', 'a knight vs an assassin') and needs silhouette, costume and prop language before modeling."
+description: "Character archetype looks: elf, vampire, knight, assassin, mecha. Use for 'design an elf' silhouette and costume before modeling."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: world
+  stage: brief
   triggers: archetype, elf, dwarf, orc, goblin, vampire, werewolf, zombie, alien, mecha, android, knight, assassin, superhero, villain, witch, wizard, cowboy, soldier
   related-skills: character-artist, creature-artist, anime-style, realistic-style, materials
 ---

@@ -1,12 +1,14 @@
 ---
 name: hand-painted-style
-description: "Hand-painted texture art direction for Blender with brushwork albedo, soft value transitions and stylized PBR restraint. Use when the user wants a 'hand-painted' look like WoW or stylized MMO textures, painted-in lighting, or brushy albedo without photoreal detail (for whole-image watercolor/oil looks use painterly-style)."
+description: "Hand-painted game textures, WoW-style brushwork. Use for painted-in lighting. Not whole-image watercolor (painterly-style)."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: style
+  stage: brief
   triggers: hand painted, hand-painted, painted texture, brushwork, stylized painted
   related-skills: stylized-style, texture-workflow, materials, lookdev
 ---

@@ -1,12 +1,14 @@
 ---
 name: scene-assembly
-description: "Large scene layout in Blender with collections, linking, library overrides, streaming-friendly organization and set assembly via MCP. Use when the user says 'assemble the scene', 'my outliner is a mess', or needs collection instances, linked libraries or a level layout organized."
+description: "Scene assembly: collections, linking, library overrides, collection instances. Use for 'assemble the scene' or a messy outliner. Not for decorating (use set-dressing)."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: discipline
+  stage: model
   triggers: scene assembly, layout, linking, library override, collection instance, level layout, set assembly, outliner organization
   related-skills: environment-artist, set-dressing, blender-modeler, lighting, qa-review
 ---

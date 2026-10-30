@@ -1,12 +1,14 @@
 ---
 name: apocalypse-worlds
-description: "Apocalyptic and dystopian world art direction for Blender: post-apocalyptic wastelands, zombie apocalypse, alien invasion, post-human, and dystopian vs utopian contrast sets. Use when the user asks for a 'wasteland', 'ruined city', 'end of the world' scene, a zombie-outbreak setting, or a dystopia/utopia pair of environments."
+description: "Apocalypse and dystopia settings. Use for wasteland, ruined city, zombie outbreak or a dystopia vs utopia pair."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: world
+  stage: brief
   triggers: post-apocalyptic, post-apoc, zombie apocalypse, alien invasion, dystopian, utopian, post-human, wasteland
   related-skills: environment-artist, prop-artist, materials, set-dressing, vehicle-artist
 ---

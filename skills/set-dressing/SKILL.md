@@ -1,12 +1,14 @@
 ---
 name: set-dressing
-description: "Set dressing and environmental storytelling placement for interiors and exteriors using prop density, narrative clusters and readability rules via MCP. Use when a scene feels empty, props should tell a story, or small props need placing around an object. For scattering many small props over terrain use the geometry-nodes skill's scatter_points.py. Ships tested scripts: scatter_props.py (exact-count clusters on the ground; max_dist is the max XY distance of any prop origin from the target bbox centre)."
+description: "Set dressing: prop placement and environmental storytelling. Use when a scene feels empty or props should tell a story. Ships tested scripts. Mass terrain scatter goes to geometry-nodes."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: discipline
+  stage: model
   triggers: set dressing, dressing, storytelling props, interior dressing, clutter, narrative placement, set decals
   related-skills: prop-artist, scene-assembly, environment-artist, horror-style, qa-review
 ---

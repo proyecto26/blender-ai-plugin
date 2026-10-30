@@ -434,10 +434,11 @@ def build_cases(out_dir):
          lambda r: r["bytes"] > 500 and _glb_check(r, {"SM_Crate_01"}) and set(glb_nodes(r["path"])) == {"SM_Crate_01"}),
         ("unreal-export.export_unreal", lambda: run("unreal-export", "export_unreal.py", {
             "mesh": "SM_Sphere_01", "out_dir": out_dir, "strict": False}),
-         lambda r: r["exported"] and r["collision"] and r["checks"]["prefix"] == "PASS"),
+         lambda r: r["exported"] and r["collision"] and r["checks"]["prefix"] == "PASS"
+         and r["verify"]["ok"] and {"SM_Sphere_01", *r["collision"]} <= set(r["verify"]["nodes"])),
         ("unity-export.export_unity", lambda: run("unity-export", "export_unity.py", {
             "objects": ["SM_Crate_01"], "out_path": os.path.join(out_dir, "unity", "SM_Crate_01.fbx")}),
-         lambda r: r["exported"]),
+         lambda r: r["exported"] and r["verify"]["ok"] and r["verify"]["nodes"] == ["SM_Crate_01"]),
         ("godot-export.export_godot", lambda: run("godot-export", "export_godot.py", {
             "objects": ["SM_Crate_01", "SM_Crate_01-colonly"], "out_path": os.path.join(out_dir, "godot", "crate.glb")}),
          lambda r: r["exported"] and r["import_hints"].get("SM_Crate_01-colonly") == "-colonly"
@@ -480,6 +481,10 @@ def build_cases(out_dir):
         ("export-pipeline.glb_skinned", lambda: run("export-pipeline", "export_asset.py", {
             "objects": ["SK_Arm", "ARM_Test"], "engine": "web", "out_path": os.path.join(out_dir, "skinned.glb")}),
          lambda r: _glb_check(r, {"SK_Arm", "ARM_Test"}) and {"spine", "arm.L", "arm.R"} <= set(glb_nodes(r["path"]))),
+        ("unity-export.fbx_skinned_verify", lambda: run("unity-export", "export_unity.py", {
+            "objects": ["SK_Arm", "ARM_Test"], "out_path": os.path.join(out_dir, "unity", "skinned.fbx"), "strict": False}),
+         lambda r: r["verify"]["ok"] and {"SK_Arm", "ARM_Test"} <= set(r["verify"]["nodes"])
+         and r["verify"]["leaked"] == [] and r["verify"]["missing"] == []),
         ("export-pipeline.glb_other_scene_excluded", lambda: run("export-pipeline", "export_asset.py", {
             "objects": ["SM_Sphere_01"], "engine": "web", "out_path": os.path.join(out_dir, "sphere.glb")}),
          lambda r: _glb_check(r, {"SM_Sphere_01"}) and "SM_Crate_01" not in glb_nodes(r["path"])),

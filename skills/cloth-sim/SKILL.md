@@ -1,12 +1,14 @@
 ---
 name: cloth-sim
-description: "Garment blockout, cloth simulation, pin groups and bake to shape keys or caches for characters and props in Blender via MCP. Use when the user wants a cape, flag, curtain, banner or clothing to drape or flutter, or cloth that explodes, clips or jitters. Ships tested scripts: cloth_setup.py (cloth modifier with a fabric preset, optional pin group, collision on the body)."
+description: "Cloth simulation and baking for capes, flags, curtains and garments. Use when cloth must drape or flutter, or clips through legs, explodes or jitters. Ships tested scripts. Not for rigid bodies (use physics-sim)."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: discipline
+  stage: animate
   triggers: cloth, garment, clothing sim, fabric sim, pin group, shape key bake, cloth bake, dress, cape, soft clothing
   related-skills: character-artist, physics-sim, materials, animation, export-pipeline
 ---

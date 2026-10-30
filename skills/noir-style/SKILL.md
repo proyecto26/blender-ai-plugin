@@ -1,12 +1,14 @@
 ---
 name: noir-style
-description: "Noir art direction for Blender with high-contrast lighting, wet streets, silhouettes and monochrome or limited-color grading. Use when the user asks for 'film noir', 'neo-noir', a detective scene, venetian-blind shadows or a black-and-white moody city."
+description: "Film noir: high contrast, wet streets, venetian-blind shadows. Use for 'neo-noir' or detective scenes."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: style
+  stage: brief
   triggers: noir, neo-noir, hardboiled, detective noir, high contrast black and white
   related-skills: camera-cinematography, lighting, compositing, materials, lookdev
 ---

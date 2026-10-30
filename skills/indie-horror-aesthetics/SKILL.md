@@ -1,12 +1,14 @@
 ---
 name: indie-horror-aesthetics
-description: "Indie horror aesthetic pack for Blender covering Silent Hill, Fear to Fathom, Puppet Combo, corporate horror, cabin/forest/hospital horror and related looks. Use when the user names an indie-horror reference or setting like 'abandoned hospital', 'cabin in the woods' or 'corporate horror office'."
+description: "Indie horror lanes: abandoned hospital, cabin, corporate horror, Puppet Combo. Use to pick a horror reference. Not generic scary (horror-style)."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: world
+  stage: brief
   triggers: Silent Hill, Fear to Fathom, Puppet Combo, indie horror, corporate horror, cabin horror, hospital horror, forest horror, urban decay horror
   related-skills: horror-style, psx-horror-style, liminal-space-style, environment-artist, lighting
 ---

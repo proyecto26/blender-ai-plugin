@@ -1,12 +1,14 @@
 ---
 name: archviz
-description: "Architectural visualization in Blender for interiors and exteriors with real-world scale, camera composition, PBR materials and still/animation delivery via MCP. Use when the user wants an 'interior render', 'exterior render', 'real estate visualization', a room or building shown photoreal, or architectural walkthrough stills."
+description: "Architectural visualization: photoreal interior and exterior renders at real-world scale. Use for 'interior render', real estate stills or a building walkthrough. Not for game kits (use environment-artist)."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: discipline
+  stage: model
   triggers: archviz, architectural visualization, interior render, exterior render, real estate render, architecture viz
   related-skills: environment-artist, materials, lighting, camera-cinematography, rendering, compositing, lookdev
 ---

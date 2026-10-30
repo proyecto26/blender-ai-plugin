@@ -1,12 +1,14 @@
 ---
 name: genre-stealth
-description: "Art direction for stealth-game spaces in Blender with shadow volumes, patrol-friendly layouts and concealment materials. Use when the user is designing a stealth level, infiltration map, or asks where shadows, cover and patrol routes should go."
+description: "Stealth level spaces. Use for infiltration maps, shadow volumes, patrol routes and cover."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: genre
+  stage: brief
   triggers: stealth, stealth game, shadow play, infiltration, stealth level art
   related-skills: environment-artist, lighting, materials, scene-assembly
 ---

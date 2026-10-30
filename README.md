@@ -126,11 +126,13 @@ Every script takes JSON args, returns a JSON-safe dict, never deletes user data,
 | Area | Scripts |
 |------|---------|
 | Scene & QA | `scene_audit`, `setup_collections`, `validate_asset`, `capture_views`, `topology_report`, `rig_check` |
+| References | `ref_board` (style bible from a folder of refs), `compare_to_refs` (drift of renders or engine screenshots) |
 | Modeling | `bevel_stack`, `scatter_points` (Geometry Nodes), `voxelize`, `optimize_mesh` |
 | Surfacing | `pbr_material`, `toon_material`, `uv_unwrap_check`, `bake_maps`, `ps1_look` |
 | Look | `light_rig` (6 presets), `camera_rig`, `iso_camera`, `render_preset`, `comp_grade` (5 grades), `turntable` |
 | Simulation | `rigid_body_setup`, `cloth_setup` |
 | Game pipeline | `generate_lods`, `make_collision`, `export_asset`, `export_unreal`, `export_unity`, `export_godot` |
+| Film & AI video | `shot_list`, `preview_frames`, `assemble_edit` (EEVEE film + licensed audio to mp4), `render_handoff` (Seam / ComfyUI) |
 
 ### Blender 5.x-correct
 
@@ -169,7 +171,35 @@ real concern because MCP code runs with your user permissions.
 # Style pass
 "Make this scene look like a PS1 survival-horror game"
 → psx-horror-style → lowpoly-style (ps1_look.py) → lighting (horror_practical) → compositing (horror_vhs)
+
+# Game world from a folder of references
+"Read game/ref first, model the gate, market stalls and fountain in that style, then I'll build the town in Godot"
+→ blender-mcp-workflow (ref_board.py) → prop-artist → godot-export → compare_to_refs.py on engine screenshots
+
+# Animated short, rendered headless
+"Make a one-minute animated short of our fox mascot, check previews before the final render"
+→ film-production (shot_list → preview_frames → fix → EEVEE render → assemble_edit with your licensed audio)
+
+# Blender for precision, AI for backgrounds and motion
+"Render my three robot shots and hand them to Seam for AI transitions"
+→ camera-cinematography → lighting → ai-video-handoff (stills/clips + seam_sequence.json, or ComfyUI mask + depth)
 ```
+
+### How the right skill gets picked
+
+Many skills only help if the agent picks the right one. Three layers make that reliable:
+
+1. **Short, distinct descriptions.** Every description starts with the job in user words, has a "Use when"
+   trigger and a "Not for ... (use X)" clause for its look-alikes. `validate_skills.py` caps them per category
+   and keeps the whole listing under Claude Code's skill-listing budget, so no description gets dropped.
+2. **An explicit catalog.** `blender-director` ships `references/skill-catalog.md`, generated from each skill's
+   `metadata.category` / `metadata.stage`, with every skill's job and scripts. The validator fails if it is stale.
+3. **The orchestrator does not guess.** `blender-design-orchestrator` preloads `blender-director` and
+   `blender-mcp-workflow`, reads the catalog, and follows a stage → skill table; it writes the chosen skills
+   into the brief before changing anything.
+
+Routing is measured, not assumed: `evals-routing/` (tuning set) and the frozen `evals-routing-heldout/` check that
+each prompt loads the expected skill and never a forbidden sibling (`tests/routing/score_routing.py`).
 
 ### 🎨 Skill Categories
 
@@ -186,6 +216,7 @@ real concern because MCP code runs with your user permissions.
 | **Worlds / moods** | fantasy, sci-fi-punk, historical, apocalypse, biome, cozy-wholesome, dark-gritty, dream-surreal, neon-retrofuturism, brutalist |
 | **Genre direction** | action-combat, shooter, rpg, survival, stealth, puzzle-platformer, metroidvania-roguelike, soulslike, strategy-sim, racing-sports, narrative-vn, card-party-idle, open-world-sandbox |
 | **Eras** | visual-console-eras |
+| **Film & AI video** | film-production, ai-video-handoff |
 
 Decision trees and workflow combinations: **[docs/SKILLS_GUIDE.md](docs/SKILLS_GUIDE.md)**.
 
@@ -227,6 +258,7 @@ flowchart LR
     M --> B[(Blender 5.2+)]
     B -- screenshots · summaries --> O
     S --> E[FBX / glTF + LODs + collision<br/>Unreal · Unity · Godot]
+    S --> V[Film mp4 · Seam / ComfyUI handoff<br/>stills · clips · mask · depth]
 ```
 
 ---
@@ -237,7 +269,9 @@ flowchart LR
 python3 scripts/validate_skills.py          # frontmatter, links, self-containment, 5.x APIs, script safety
 bash scripts/check-manifests.sh             # manifests agree + claude plugin validate + schema
 blender -b --factory-startup --python tests/blender/test_skill_scripts.py   # every script, headless
+python3 scripts/build_catalog.py --check    # director skill catalog matches the frontmatter
 claude plugin eval --runs 1                 # behavioral evals (uses tokens, results vary)
+claude plugin eval . --eval-dir evals-routing-heldout --ablation none --json r.json   && python3 tests/routing/score_routing.py r.json --cases evals-routing-heldout   # skill routing accuracy
 ```
 
 ## Known Limitations
@@ -249,6 +283,8 @@ claude plugin eval --runs 1                 # behavioral evals (uses tokens, res
 - **Vision-dependent steps** such as reference matching and look development depend on your model's
   image understanding. The scripts make the results repeatable, but taste is still your call.
 - **Engine import settings** (Unreal/Unity/Godot) are documented, not automated inside the engines.
+- **AI video is a handoff.** `ai-video-handoff` writes files and a manifest; Seam or ComfyUI runs the paid or
+  cloud step through their own tools, with your consent. Music and SFX for films are files you supply and license.
 
 ---
 

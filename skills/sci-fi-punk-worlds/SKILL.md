@@ -1,12 +1,14 @@
 ---
 name: sci-fi-punk-worlds
-description: "Sci-fi and punk world art direction for Blender including hard sci-fi, space, cyberpunk, steampunk, dieselpunk, atompunk, solarpunk, biopunk and clockpunk. Use when the user asks for a futuristic or '-punk' setting such as 'cyberpunk city', 'steampunk workshop' or 'space station'."
+description: "Sci-fi and -punk settings: cyberpunk, steampunk, space station, solarpunk. Use for 'cyberpunk city' or 'steampunk workshop'."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: world
+  stage: brief
   triggers: sci-fi, hard sci-fi, space, cyberpunk, steampunk, dieselpunk, atompunk, solarpunk, biopunk, clockpunk, retrofuturism
   related-skills: hard-surface, environment-artist, vehicle-artist, materials, vfx-fx, neon-retrofuturism
 ---

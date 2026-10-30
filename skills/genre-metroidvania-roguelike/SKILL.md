@@ -1,12 +1,14 @@
 ---
 name: genre-metroidvania-roguelike
-description: "Art direction for metroidvania, roguelike and roguelite games in Blender with biome gates, room modules and run-readable props. Use when the user asks for modular rooms, ability-gated areas, a 'roguelike dungeon kit' or biome-themed room sets."
+description: "Metroidvania and roguelike room kits. Use for modular rooms, ability gates or a roguelike dungeon kit."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: genre
+  stage: brief
   triggers: metroidvania, roguelike, roguelite, room modules, procedural rooms, ability gate
   related-skills: environment-artist, scene-assembly, materials, biome-worlds
 ---

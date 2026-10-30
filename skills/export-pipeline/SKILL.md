@@ -1,12 +1,14 @@
 ---
 name: export-pipeline
-description: "Production export from Blender to FBX, glTF, OBJ, USD and Alembic with scale, pivot, rotation, normals, materials, animation and collision verification via MCP. Use when the user asks to export, ship or hand off an asset to an engine, or an export has the wrong scale, missing objects or extra objects. Ships tested scripts: export_asset.py (engine presets for FBX/glTF/USD/OBJ; glTF uses the active scene only and returns verify, where checked false means NOT_CHECKED)."
+description: "Engine-agnostic export to FBX, glTF/GLB, OBJ, USD with verified scale, axis, pivots, batches. Use when unsure which engine or exports look wrong. Ships tested scripts. One engine? Use unity-, unreal- or godot-export."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: delivery
+  stage: export
   triggers: export, FBX, GLTF, GLB, OBJ, USD, Alembic, Unity, Unreal, game engine import
   related-skills: asset-optimization, blender-modeler, materials
 ---

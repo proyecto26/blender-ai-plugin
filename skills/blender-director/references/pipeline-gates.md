@@ -31,7 +31,8 @@ A `validate_asset.py` WARN passes only with a recorded reason (`warn: true` + `r
 ## Recording
 
 Append one event per gate with `scripts/run_manifest.py` (stage ids: inspect, brief, model, look_dev,
-light_camera, validate, export, verify). The script refuses a PASS after an earlier FAIL, hashes
+light_camera, animate, film, handoff, validate, export, verify; animate, film and handoff are optional
+and stay N/A until a verdict is recorded). The script refuses a PASS after an earlier FAIL, hashes
 exported files, and keeps every path inside `out_dir`.
 
 ## Repeat-failure stop

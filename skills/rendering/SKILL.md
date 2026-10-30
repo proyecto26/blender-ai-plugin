@@ -1,12 +1,14 @@
 ---
 name: rendering
-description: "Blender rendering with Cycles and Eevee: sampling, denoising, camera setup, render passes, color management and render optimization via MCP. Use when the user wants a final render, noisy or slow renders, a quick preview, or consistent output settings. Ships tested scripts: render_preset.py (engine, samples, denoise, resolution and color-management presets)."
+description: "Final render setup: Cycles/Eevee sampling, denoise, resolution, color management. Use for noisy or slow renders or a quick preview. Ships tested scripts. Not for bloom or grading (use compositing)."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: discipline
+  stage: light_camera
   triggers: render, Cycles, Eevee, sampling, denoise, camera, render pass, color management, output
   related-skills: lighting, materials, realistic-style, stylized-style
 ---

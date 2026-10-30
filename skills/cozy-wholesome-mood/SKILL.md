@@ -1,12 +1,14 @@
 ---
 name: cozy-wholesome-mood
-description: "Cozy, cute, wholesome, relaxing and peaceful mood direction for Blender assets and scenes. Use when the user wants a 'cozy' room, 'hygge' warm lighting, a calm wholesome game scene, or says the scene feels cold or harsh and should feel comforting."
+description: "Cozy wholesome mood. Use for hygge warm lighting, a calm game room, or a scene that feels cold and should comfort."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: mood
+  stage: brief
   triggers: cozy, cute, wholesome, relaxing, peaceful, hygge, warm lighting cozy
   related-skills: stylized-style, lighting, set-dressing, materials, camera-cinematography
 ---

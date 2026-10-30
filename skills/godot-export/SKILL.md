@@ -1,12 +1,14 @@
 ---
 name: godot-export
-description: "Godot-specific Blender export favoring glTF/GLB with correct scale, materials, animation clips and collision shapes via MCP. Use when an asset is headed for Godot 4, or collision hints such as -col and -colonly or the .glb contents look wrong. Ships tested scripts: export_godot.py (GLB export from the active scene with import-hint naming checks and a read-back verify; checked false means NOT_CHECKED)."
+description: "Godot 4 export via glTF/GLB with right scale, materials, clips and -col shapes. Use when an asset is headed for Godot. Ships tested scripts. Not for Unity or Unreal (use unity-export, unreal-export)."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: delivery
+  stage: export
   triggers: Godot, Godot export, Godot GLTF, Godot GLB, Godot materials, Godot animation
   related-skills: export-pipeline, lod-pipeline, collision-proxy, asset-optimization, materials
 ---
@@ -47,7 +49,7 @@ Animation: include when needed
 
 - Root empty or object named for scene root
 - Avoid deep useless empties
-- Keep collision meshes clearly named `COL_` / `UCX_` style
+- Name collision with Godot's import suffixes (`-col`, `-colonly`, `-convcolonly`); Godot ignores `COL_` / `UCX_` names
 
 ## Materials
 
@@ -67,6 +69,13 @@ Animation: include when needed
 - [ ] Import materials
 - [ ] Animation libraries
 - [ ] Collision shapes
+
+## Compare the Godot World to Your Refs
+
+Screenshots from the Godot world (captured through a Godot MCP, outside this plugin) can be scored against a
+reference folder with the `blender-mcp-workflow` skill: run its ref_board script once, then its
+compare_to_refs script on the screenshots. The loop and drift fixes are in that skill's
+reference-folder-workflow reference.
 
 ## Constraints
 

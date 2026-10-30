@@ -1,12 +1,14 @@
 ---
 name: geometry-nodes
-description: "Blender Geometry Nodes for procedural modeling, scatter systems, vegetation, buildings, pipes, cables and reusable node groups. Use whenever the user wants to scatter, distribute or instance objects (rocks, trees, grass, debris) across a surface: run the tested scripts/scatter_points.py with its ARGS instead of hand-building a node tree or particle system. Also use whenever Python code builds node groups or reads/sets Geometry Nodes modifier inputs (Blender 5.2 changed that API). Ships tested scripts: scatter_points.py (Distribute Points on Faces plus Instance on Points, reusable node group)."
+description: "Geometry Nodes systems: scatter and instance rocks, trees, grass; parametric node groups; curve to mesh. Use for 'scatter/distribute' or GN Python. Ships tested scripts. Not for one swept profile (use procedural-modeling)."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: discipline
+  stage: model
   triggers: geometry nodes, procedural, scatter, node group, GN_, instancing, parametric
   related-skills: procedural-modeling, environment-artist, blender-modeler
 ---

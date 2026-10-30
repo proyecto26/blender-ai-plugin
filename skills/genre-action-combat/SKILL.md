@@ -1,12 +1,14 @@
 ---
 name: genre-action-combat
-description: "Art direction for action, hack-and-slash, beat 'em up and fighting-game readable combat spaces and prop language in Blender. Use when the user is making an action game, brawler or combat arena and asks 'design a fighting arena' or 'make the combat space readable'."
+description: "Action, brawler and fighting-game spaces. Use for 'design a fighting arena' or a readable combat space."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: genre
+  stage: brief
   triggers: action game, hack and slash, beat em up, brawler, fighting game, combat arena, action adventure
   related-skills: environment-artist, prop-artist, camera-cinematography, vfx-fx
 ---

@@ -1,12 +1,14 @@
 ---
 name: horror-style
-description: "Psychological horror art direction for Blender assets inspired by Silent Hill, Resident Evil, Chilla's Art, Fear to Fathom and Iron Lung. Use when the user says 'make it scary/unsettling', wants sparse industrial environments, analog aesthetics, or tension-driven lighting (pick psx-horror-style for PS1 crunch, folk-horror-style for rural dread)."
+description: "Psychological horror, Silent Hill vein: dread, decay. Use for 'make it unsettling'. Not PS1 (psx-horror-style) or VHS (analog-found-footage-horror)"
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: style
+  stage: brief
   triggers: horror, psychological horror, scary, Silent Hill, Resident Evil, Chilla's Art, Fear to Fathom, Iron Lung, creepy, unsettling
   related-skills: lighting, environment-artist, lowpoly-style, materials
 ---
@@ -19,7 +21,7 @@ Psychological tension over jump scares. Environmental storytelling. Sparse detai
 
 - Horror game environments and props
 - Psychological tension scenes
-- Analog/liminal aesthetic assets
+- Analog/liminal set-ups only as a base (full VHS look: analog-found-footage-horror; empty spaces: liminal-space-style)
 - Industrial decay settings
 - Limited visibility compositions
 

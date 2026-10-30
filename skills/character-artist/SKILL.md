@@ -1,12 +1,14 @@
 ---
 name: character-artist
-description: "AAA character modeling for human anatomy, stylization, facial topology, clothing, hair and animation-ready meshes. Use when the user says 'model a character', 'my face topology deforms badly', 'sculpt a portrait', needs clothing or edge loops for expressions, or production character assets in Blender via MCP."
+description: "Human character modeling: anatomy, face topology, clothing, animation-ready meshes. Use for 'model a character', faces that deform badly, or edge loops for expressions. Not for monsters (use creature-artist)."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: discipline
+  stage: model
   triggers: character, human, anatomy, face, facial, clothing, hair, body, edge loop, expression, portrait
   related-skills: sculpting, retopology, rigging, uv-workflow, materials
 ---

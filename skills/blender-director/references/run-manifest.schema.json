@@ -14,7 +14,7 @@
         "type": "object",
         "required": ["stage", "skill", "script", "args", "result_summary", "verdict", "reason", "capture", "time"],
         "properties": {
-          "stage": {"enum": ["inspect", "brief", "model", "look_dev", "light_camera", "validate", "export", "verify"]},
+          "stage": {"enum": ["inspect", "brief", "model", "look_dev", "light_camera", "animate", "film", "handoff", "validate", "export", "verify"]},
           "skill": {"type": "string"},
           "script": {"type": "string"},
           "args": {"type": "object"},

@@ -882,6 +882,41 @@
    "file": "voxel-style/SKILL.md",
    "block": 0,
    "reason": "template: ARGS is a {...} placeholder, not a runnable call"
+  },
+  {
+   "file": "ai-video-handoff/SKILL.md",
+   "block": 0,
+   "reason": "example call on user files (<project> paths, renders or reads images); the script is covered by tests/blender/test_handoff.py"
+  },
+  {
+   "file": "ai-video-handoff/SKILL.md",
+   "block": 1,
+   "reason": "example call on user files (<project> paths, renders or reads images); the script is covered by tests/blender/test_handoff.py"
+  },
+  {
+   "file": "blender-mcp-workflow/references/reference-folder-workflow.md",
+   "block": 0,
+   "reason": "example call on user files (<project> paths, renders or reads images); the script is covered by tests/blender/test_refs.py"
+  },
+  {
+   "file": "blender-mcp-workflow/references/reference-folder-workflow.md",
+   "block": 1,
+   "reason": "example call on user files (<project> paths, renders or reads images); the script is covered by tests/blender/test_refs.py"
+  },
+  {
+   "file": "film-production/SKILL.md",
+   "block": 0,
+   "reason": "example call on user files (<project> paths, renders or reads images); the script is covered by tests/blender/test_film.py"
+  },
+  {
+   "file": "film-production/SKILL.md",
+   "block": 1,
+   "reason": "example call on user files (<project> paths, renders or reads images); the script is covered by tests/blender/test_film.py"
+  },
+  {
+   "file": "film-production/SKILL.md",
+   "block": 2,
+   "reason": "example call on user files (<project> paths, renders or reads images); the script is covered by tests/blender/test_film.py"
   }
  ]
 }

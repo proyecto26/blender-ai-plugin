@@ -1,12 +1,14 @@
 ---
 name: pixel-art-style
-description: "Pixel-art and texel-constrained art direction for Blender assets destined for pixel rendering, low-res textures or HD-2D-adjacent pixel reads. Use when the user asks for 'pixel art from 3D', pixelated low-res textures, or sprite-like renders (for strict console palettes use retro-8bit-style or retro-16bit-style)."
+description: "Pixel-art look from 3D: low-res, texel-constrained. Use for 'pixelated' renders. Not NES/SNES (retro-8bit-style, retro-16bit-style) or hd-2d-style."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: style
+  stage: brief
   triggers: pixel art, pixel, texel, low res texture, sprite-like, pixelated
   related-skills: lowpoly-style, retro-8bit-style, retro-16bit-style, hd-2d-style, materials
 ---
@@ -33,8 +35,8 @@ Target 320x180 internal render (16 px tiles), dimetric 2:1 camera, a 16-32 color
 
 1. Camera: `iso_camera.py` `projection` "dimetric_2_1" with `pixel_tile` 16 (2:1 pixel-art tile ratio, crisp resolution multiple).
 2. Shading: `toon_material.py` with `bands` 3, `rim` 0, `outline` 0 for flat palette-friendly bands.
-3. Render settings: `ps1_look.py` with `snap` 0, `resolution` [320, 180], `flat` True, `fog` False (low-res, Nearest texture filtering, 32 px textures).
-4. Render preset: `render_preset.py` `stylized_flat` (Standard view transform keeps palette colors exact). Run it before `ps1_look.py`, since presets reset resolution.
+3. Render preset: `render_preset.py` `stylized_flat` (Standard view transform keeps palette colors exact). Run it before `ps1_look.py`, since presets reset resolution.
+4. Render settings: `ps1_look.py` with `snap` 0, `resolution` [320, 180], `flat` True, `fog` False (low-res, Nearest texture filtering, 32 px textures).
 5. Palette reduction is not scripted: quantize afterwards in an image tool, or use a ColorRamp with constant interpolation in the compositor.
 
 ```python

@@ -1,12 +1,14 @@
 ---
 name: retopology
-description: "Production retopology for animation-ready, low-poly, quad-dominant meshes with proper edge loops and efficient polygon flow via MCP. Use after sculpting or high-poly modeling, before rigging and UV work, or when a mesh has n-gons, poles or messy topology. Ships tested scripts: topology_report.py (read-only quad/tri/n-gon ratios and pole counts)."
+description: "Retopology: clean quad-dominant, animation-ready topology from sculpts or messy meshes. Use for n-gons, poles or bad edge flow before rigging. Ships tested scripts."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: discipline
+  stage: model
   triggers: retopo, retopology, edge loop, quad, topology, animation ready, poly reduction, remesh
   related-skills: character-artist, creature-artist, sculpting, uv-workflow
 ---

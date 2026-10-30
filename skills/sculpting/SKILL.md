@@ -1,12 +1,14 @@
 ---
 name: sculpting
-description: "Blender sculpting for organic and hard surface detail using Dyntopo, multiresolution, brushes, alpha workflow, wrinkles and damage. Use when the user says 'sculpt this', 'add wrinkles/damage/surface detail' or needs high-frequency detail before retopology in Blender via MCP."
+description: "Sculpting: Dyntopo, multires, brushes, wrinkles and damage detail. Use for 'sculpt this' or high-frequency detail before retopology. Not for clean topology (use retopology)."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: discipline
+  stage: model
   triggers: sculpt, dyntopo, multires, brush, wrinkle, damage, organic detail, surface detail, alpha
   related-skills: retopology, character-artist, creature-artist, blender-modeler
 ---

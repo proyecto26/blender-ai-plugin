@@ -1,12 +1,14 @@
 ---
 name: stylized-style
-description: "Stylized art direction for Blender: shape language, exaggeration, color harmony, NPR rendering and hand-painted asset workflows. Use when the user wants a toon, cel-shaded or non-photorealistic look. Ships tested scripts: toon_material.py (cel material with a constant ColorRamp for banded shading, optional rim and inverted-hull outline)."
+description: "Stylized NPR: shape language, toon materials. Use for non-photoreal looks. Ships tested scripts. Not hand-painted texturing (hand-painted-style)."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: style
+  stage: brief
   triggers: stylized, NPR, hand-painted, toon, cartoon, exaggerated, shape language, cel shading
   related-skills: materials, rendering, lowpoly-style, environment-artist
 ---
@@ -18,7 +20,7 @@ Deliberate shape language. Exaggerated proportions. Color harmony. NPR rendering
 ## When to Use
 
 - Non-photorealistic games
-- Hand-painted texture workflows
+- Painted accents on toon materials (a full hand-painted texture pipeline: hand-painted-style)
 - Animated/stylized characters
 - Fantasy environments with art direction
 - Toon/cel-shaded rendering

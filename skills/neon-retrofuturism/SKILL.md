@@ -1,12 +1,14 @@
 ---
 name: neon-retrofuturism
-description: "Neon, vaporwave, synthwave and retrofuturistic mood/art direction for Blender with grid horizons, chrome and dusk palettes. Use when the user asks for 'synthwave', 'vaporwave', 'outrun/retrowave', 'neon nights' or an 80s grid-sunset look (for glossy bright 2000s aqua use frutiger-aero-style)."
+description: "Synthwave/vaporwave neon: grid horizons, chrome, dusk. Use for outrun or 80s sunset. Not glossy aqua (frutiger-aero-style)."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: mood
+  stage: brief
   triggers: neon, vaporwave, synthwave, retrofuturistic, outrun, retrowave, neon nights
   related-skills: sci-fi-punk-worlds, lighting, materials, compositing, environment-artist
 ---

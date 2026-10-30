@@ -1,12 +1,14 @@
 ---
 name: genre-strategy-sim
-description: "Art direction for strategy, RTS, turn-based strategy, tower defense, MOBA, city builder, colony sim and simulation games in Blender. Use when the user needs readable top-down or isometric-friendly units, buildings and tiles for RTS, tower defense, city builder or farming/life sim."
+description: "Strategy, tower defense, city builder and sim art. Use for RTS units, top-down tiles and buildings."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: genre
+  stage: brief
   triggers: strategy, RTS, turn-based strategy, tower defense, MOBA, city builder, colony sim, simulation, life sim, farming sim
   related-skills: isometric-style, environment-artist, prop-artist, scene-assembly, vegetation-artist
 ---

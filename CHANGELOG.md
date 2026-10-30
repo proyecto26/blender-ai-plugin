@@ -8,6 +8,45 @@ Format: [Semantic Versioning](https://semver.org/) — `Major.Minor.Patch`
 
 ## [Unreleased]
 
+Iteration 7: routing that holds up with many skills, film and AI-video pipelines, refs-first worlds.
+
+### Changed
+- Rewrote every skill description to lead with the job in user words, add a "Use when" trigger and a
+  "Not for ... (use X)" clause for look-alikes. The plugin's names and descriptions dropped from 32,808 to
+  about 16,000 characters, so Claude Code's skill listing no longer drops the descriptions of 37 skills
+- `blender-design-orchestrator` now preloads `blender-director` and `blender-mcp-workflow`, reads the skill
+  catalog, follows an explicit stage-to-skill table and describes its triggers in prose ("When to invoke")
+- Every script's command line accepts `--args-file <path.json>` (portable to cmd and PowerShell) and reports
+  malformed JSON with a clear `ValueError`
+- Script paths in `runpy` calls are written with forward slashes on every OS; example paths use `<project>`
+
+### Added
+- `film-production`: shot list, preview frames and contact sheet, fix loop, EEVEE render, edit with
+  user-supplied, licensed audio to mp4 (`shot_list.py`, `preview_frames.py`, `assemble_edit.py`)
+- `ai-video-handoff`: renders stills, clips, masks and depth with a manifest for Seam (`seam_sequence.json`,
+  the `create_sequence` arguments) or ComfyUI (`handoff.json`); it never submits or pays for anything
+- Reference-folder-first workflow: `ref_board.py` (style bible from a folder of refs) and
+  `compare_to_refs.py` (plain-language drift of renders or engine screenshots against the refs)
+- `metadata.category` / `metadata.stage` on every skill; `scripts/build_catalog.py` generates
+  `blender-director/references/skill-catalog.md`
+- Validator checks: per-category description caps, total listing budget, look-alike descriptions without a
+  "Not for" clause, stale catalog
+- Routing evals: `evals-routing/` (tuning), frozen `evals-routing-heldout/`, `evals-orchestrator/`, scored by
+  `tests/routing/score_routing.py`; headless tests `test_film.py`, `test_handoff.py`, `test_refs.py`
+- macOS and Linux headless commands in `docs/BLENDER_MCP_SETUP.md`
+
+### Fixed
+- Unreal and Unity FBX exports now read the file back (`verify`: missing, leaked, `ok`), so the pipeline's
+  verify gate can pass for FBX targets; skinned exports count the armature and ignore bone names
+- `run_manifest.py` knows the optional `animate`, `film` and `handoff` stages (N/A until recorded); the schema
+  and `pipeline-gates.md` match
+- `assemble_edit.py` refuses to rebuild an edit scene it did not create; `shot_list.py` merges no longer
+  duplicate the markers of kept shots
+- `blender-director` routes film, AI handoff and reference folders; the orchestrator loads every stage's
+  skill and returns a stage table with a skill per stage
+- Description and body contradictions: geometry-nodes vs procedural-modeling, lighting vs lookdev,
+  horror-style, lowpoly-style, stylized-style, qa-review; Godot collision naming; pixel-art step order
+
 Iteration 6: fixes from the skill review, verified in headless Blender 5.2.
 
 ### Fixed

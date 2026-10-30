@@ -1,0 +1,1 @@
+{"expected": "blender-director", "cluster": "orchestrator", "also_ok": [], "forbidden": [], "required": ["unreal-export", "lod-pipeline", "collision-proxy"], "agent": true}

@@ -1,12 +1,14 @@
 ---
 name: vfx-fx
-description: "Cinematic and game VFX in Blender: smoke, fire, particles, trails and Geometry Nodes FX setups via MCP. Use when the user wants smoke, fire, steam or other gas effects from an emitter. Ships tested scripts: smoke_domain.py (Mantaflow gas domain around an emitter plus a flow, idempotent; domains are ignored by camera occlusion checks)."
+description: "VFX: smoke, fire, steam, particles, trails. Use for gas effects from an emitter, sparks or muzzle flash. Ships tested scripts."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: discipline
+  stage: animate
   triggers: VFX, FX, smoke, fire, explosion, particles, sparks, trails, muzzle flash, magic effect, geometry nodes FX
   related-skills: geometry-nodes, physics-sim, materials, lighting, rendering, compositing
 ---

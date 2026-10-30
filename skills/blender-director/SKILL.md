@@ -1,12 +1,14 @@
 ---
 name: blender-director
-description: "Orchestrates a Blender production from brief to verified export: inspect, brief, model, look-dev, light and camera, validate, export, post-export check, each stage behind a gate. Use when starting any Blender asset task, planning a pipeline, coordinating several disciplines, matching a reference photo or concept art, or when a result looks wrong, does not match the reference, or must be made game-ready. Ships tested scripts: run_manifest.py (records stage verdicts PASS/FAIL/NOT_CHECKED, captures and export hashes in run_manifest.json, blocks later stages after a failed gate)."
+description: "Plans and runs any multi-step Blender production from brief to verified export: model, look, light, camera, validate, export. Use for 'plan this asset/scene/film', matching a reference, or a game-ready pipeline. Holds the skill catalog mapping every skill name to its job. Ships tested scripts. Not for one-off bpy code (use blender-mcp-workflow)."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: orchestrator
+  category: core
+  stage: any
   triggers: Blender, 3D asset, game-ready, pipeline, workflow, plan, coordinate, technical artist
   related-skills: blender-mcp-workflow, blender-modeler, hard-surface, prop-artist, vehicle-artist, environment-artist, character-artist, asset-optimization, export-pipeline, qa-review
 ---
@@ -178,7 +180,10 @@ Before any work, determine:
 | Open world / sandbox | genre-open-world-sandbox | biome-worlds, environment-artist, lod-pipeline |
 | Exaggerated, NPR, hand-painted broad | stylized-style | materials, rendering, anime-style |
 | Photoreal, scan cleanup, AAA PBR | realistic-style | texture-workflow, rendering, lookdev |
-| **Reference photo / concept art attached** | **reference-image-match** | blender-director → discipline skill → style → materials → lighting → rendering |
+| **Reference photo / concept art attached** | blender-mcp-workflow (`references/reference-image-match.md`) | blender-director → discipline skill → style → materials → lighting → rendering |
+| **Folder of reference images (game world, prop set)** | blender-mcp-workflow (`ref_board.py`, `compare_to_refs.py`) | discipline skills → engine export; engine screenshots back through `compare_to_refs.py` |
+| **Animated short, trailer, multi-shot film** | film-production | character-artist, rigging, animation, camera-cinematography, lighting |
+| **Send shots to Seam / ComfyUI (AI background or motion)** | ai-video-handoff | camera-cinematography, lighting, compositing |
 
 ## Reference Image Workflow (Mandatory)
 
@@ -192,7 +197,7 @@ When user provides a photo or render to match:
 5. MATERIALS           → palette from reference; per-object emissive lights only
 6. LIGHTING + WORLD    → key direction, rim, space/env mood
 7. GRADING             → AgX exposure/look; EEVEE for animation preview
-8. COMPARE LOOP        → screenshot → gap list → fix (×3 max)
+8. COMPARE LOOP        → screenshot → gap list → fix (stop after 2 rounds with no gain)
 9. VALIDATE            → visual-match-checklist.md
 ```
 

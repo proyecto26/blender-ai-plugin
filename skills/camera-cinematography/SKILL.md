@@ -1,12 +1,14 @@
 ---
 name: camera-cinematography
-description: "Cinematic camera work in Blender: framing, lenses, composition, camera animation and shot language beyond basic render setup, via MCP. Use when the user wants a hero shot, first-person or eye-level view, a camera that frames a subject, depth of field, or a shot where something blocks the view. Ships tested scripts: camera_rig.py (frames a target by lens and fill, eye_height and distance clamps, DOF, Track To focus, aspect, and an occlusion check returning occluded_by and visible_fraction)."
+description: "Camera work: framing, lenses, depth of field, hero shots and camera moves. Use for 'frame the subject', eye-level first-person views, or a subject blocked from view. Ships tested scripts. Not for render settings (use rendering)."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: discipline
+  stage: light_camera
   triggers: camera, cinematography, lens, framing, composition, shot, dolly, orbit, focal length, depth of field, camera animation
   related-skills: rendering, lighting, animation, compositing, lookdev
 ---

@@ -1,0 +1,1 @@
+{"expected": "blender-director", "cluster": "orchestrator", "also_ok": [], "forbidden": [], "required": ["ai-video-handoff"], "agent": true}

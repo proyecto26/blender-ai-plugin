@@ -1,12 +1,14 @@
 ---
 name: manga-style
-description: "Manga-inspired art direction for Blender emphasizing monochrome value design, speed lines, screentone feel and manga panel staging. Use when the user wants a 'manga panel', a black-and-white screentone render, or shonen/seinen speed lines (for colored cel-shaded anime use anime-style)."
+description: "Manga: monochrome values, speed lines, screentone. Use for 'manga panel'. Not colored anime (anime-style)."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: style
+  stage: brief
   triggers: manga, seinen, shonen, shojo, screentone, manga panel, Japanese comic
   related-skills: anime-style, comic-book-style, compositing, camera-cinematography
 ---

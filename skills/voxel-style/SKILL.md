@@ -1,12 +1,14 @@
 ---
 name: voxel-style
-description: "Voxel and Minecraft-adjacent art direction for Blender with block-grid modeling, limited palettes and chunk-friendly assets. Use when the user wants a blocky, Minecraft-like or voxel look from a mesh. Ships tested scripts: voxelize.py (non-destructive Remesh modifier in Blocks mode with flat shading)."
+description: "Voxel/Minecraft block look. Use for blocky cube-world meshes. Ships tested scripts."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: style
+  stage: brief
   triggers: voxel, Minecraft, blocky, cube world, pixel voxel, grid block, chunk
   related-skills: lowpoly-style, environment-artist, materials, geometry-nodes
 ---

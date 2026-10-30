@@ -1,12 +1,14 @@
 ---
 name: genre-rpg
-description: "Art direction for RPG, JRPG, CRPG, ARPG and MMORPG worlds in Blender including loot rarity reads and region identity. Use when the user asks for an RPG town, quest hub, region identity, or items whose rarity should be readable at a glance."
+description: "RPG worlds. Use for an RPG town, quest hub, region identity or items whose rarity must read."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: genre
+  stage: brief
   triggers: RPG, JRPG, CRPG, ARPG, MMORPG, loot, quest hub, RPG environment
   related-skills: fantasy-worlds, environment-artist, prop-artist, character-artist, materials
 ---

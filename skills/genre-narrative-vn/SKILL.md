@@ -1,12 +1,14 @@
 ---
 name: genre-narrative-vn
-description: "Art direction for visual novel, interactive movie, walking simulator and story-driven presentation spaces in Blender. Use when the user needs a 'visual novel background', a narrative game scene, or story-focused environments with clear character staging."
+description: "Visual novel and narrative game spaces. Use for a VN background or story scene with clear character staging."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: genre
+  stage: brief
   triggers: visual novel, interactive movie, walking simulator, narrative game, story scene, VN background
   related-skills: camera-cinematography, lighting, set-dressing, archviz, compositing
 ---

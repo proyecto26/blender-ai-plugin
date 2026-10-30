@@ -1,12 +1,14 @@
 ---
 name: vehicle-artist
-description: "Dedicated vehicle modeling for cars, trucks, aircraft, ships, boats, mechs and transit assets with proportion, panel flow and game LOD awareness in Blender via MCP. Use when the user asks to 'model a car/plane/ship/tank' or needs vehicle bodywork and panel lines."
+description: "Vehicle modeling: cars, planes, ships, tanks, mechs with panel flow and LODs. Use for 'model a car/plane/ship'. Not for generic hard-surface (use hard-surface)."
 license: MIT
 metadata:
   author: https://github.com/arjun988
   version: "1.0.0"
   domain: blender
   role: specialist
+  category: discipline
+  stage: model
   triggers: vehicle, car, truck, aircraft, plane, ship, boat, mech, tank, motorcycle, transit, chassis, bodywork
   related-skills: hard-surface, blender-modeler, materials, lod-pipeline, collision-proxy, export-pipeline
 ---
