@@ -16,6 +16,8 @@ ARGS:
     cols             (int|None) contact sheet columns (default: auto from the tile aspect)
 Returns file paths, the sheet layout (cols, rows, tile size, tile -> shot/frame) and the active camera per
 shot. Restores frame, camera, resolution, engine, samples, filepath, file format and colour mode in `finally`.
+Timeline markers bound to cameras would switch the camera at render time, so their bindings are lifted while
+rendering and put back afterwards: each preview shows the shot's own camera.
 """
 import json
 import math
@@ -109,7 +111,10 @@ def main(out_dir=None, shots=None, frames_per_shot=3, resolution=(480, 270), eng
              "media": im.media_type, "fmt": im.file_format, "color_mode": im.color_mode,
              "samples": scene.eevee.taa_render_samples, "ext": r.use_file_extension}
     files, tiles, per_shot = [], [], {}
+    bound = [(m, m.camera) for m in scene.timeline_markers if m.camera]
     try:
+        for m, _ in bound:
+            m.camera = None
         r.engine = engine
         if engine == "BLENDER_EEVEE":
             scene.eevee.taa_render_samples = int(samples)
@@ -123,7 +128,7 @@ def main(out_dir=None, shots=None, frames_per_shot=3, resolution=(480, 270), eng
             per_shot[t["id"]] = {"camera": cam.name, "frames": []}
             for frame in _pick_frames(t["start"], t["end"], int(frames_per_shot)):
                 scene.frame_set(frame)
-                scene.camera = cam  # set after frame_set: camera markers rebind the camera on frame change
+                scene.camera = cam
                 base = os.path.join(out_dir, f"{t['id']}_{frame}")
                 r.filepath = base
                 bpy.ops.render.render(write_still=True)
@@ -141,6 +146,8 @@ def main(out_dir=None, shots=None, frames_per_shot=3, resolution=(480, 270), eng
             layout = {"path": sheet_path, "cols": ncols, "rows": rows, "tile_size": [w, h],
                       "size": [ncols * w, rows * h], "tiles": tile_map}
     finally:
+        for m, c in bound:
+            m.camera = c
         scene.frame_set(saved["frame"])
         scene.camera = saved["camera"]
         r.resolution_x, r.resolution_y, r.resolution_percentage = saved["rx"], saved["ry"], saved["pct"]
