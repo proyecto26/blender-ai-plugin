@@ -9,6 +9,7 @@ metadata:
   role: specialist
   category: genre
   stage: brief
+  requires: "camera-cinematography, compositing, environment-artist, lighting, set-dressing, vfx-fx"
   triggers: soulslike, souls like, bonfire, fog gate, monumental ruins, difficult action RPG art
   related-skills: dark-gritty-mood, fantasy-worlds, environment-artist, lighting, set-dressing
 ---

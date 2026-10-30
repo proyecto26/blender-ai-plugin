@@ -9,6 +9,7 @@ metadata:
   role: specialist
   category: mood
   stage: brief
+  requires: "camera-cinematography, compositing, lighting, rendering"
   triggers: analog horror, found footage, VHS horror, CRT horror, tape horror, Mandel effect, lost media
   related-skills: horror-style, psx-horror-style, camera-cinematography, compositing, lighting
 ---

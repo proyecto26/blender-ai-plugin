@@ -9,6 +9,7 @@ metadata:
   role: specialist
   category: mood
   stage: brief
+  requires: "camera-cinematography, compositing, lighting, materials, vfx-fx"
   triggers: dreamlike, surreal, mysterious, mystical, hopeful, chaotic, uncanny mood
   related-skills: dream-weirdcore-style, lighting, vfx-fx, compositing, camera-cinematography
 ---

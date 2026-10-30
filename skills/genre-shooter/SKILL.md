@@ -9,6 +9,7 @@ metadata:
   role: specialist
   category: genre
   stage: brief
+  requires: "camera-cinematography, collision-proxy, environment-artist, hard-surface, lighting, set-dressing"
   triggers: shooter, FPS, TPS, battle royale, extraction shooter, cover shooter, gun game art
   related-skills: environment-artist, hard-surface, prop-artist, collision-proxy, scene-assembly
 ---

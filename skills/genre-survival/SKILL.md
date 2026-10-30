@@ -9,6 +9,7 @@ metadata:
   role: specialist
   category: genre
   stage: brief
+  requires: "camera-cinematography, compositing, lighting, materials, set-dressing"
   triggers: survival, survival horror, crafting, resource gathering, survival game art
   related-skills: environment-artist, prop-artist, horror-style, set-dressing, biome-worlds
 ---

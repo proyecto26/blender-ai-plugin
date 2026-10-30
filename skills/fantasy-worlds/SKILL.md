@@ -9,6 +9,7 @@ metadata:
   role: specialist
   category: world
   stage: brief
+  requires: "camera-cinematography, compositing, lighting, materials, set-dressing"
   triggers: fantasy, medieval, high fantasy, dark fantasy, urban fantasy, castle, magic world
   related-skills: environment-artist, prop-artist, materials, vegetation-artist, creature-artist
 ---

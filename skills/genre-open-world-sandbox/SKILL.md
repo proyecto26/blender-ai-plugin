@@ -9,6 +9,7 @@ metadata:
   role: specialist
   category: genre
   stage: brief
+  requires: "blender-mcp-workflow, geometry-nodes, lighting, lod-pipeline, set-dressing"
   triggers: open world, sandbox, open-world, exploration, traversable world, sandbox game
   related-skills: biome-worlds, environment-artist, vegetation-artist, scene-assembly, lod-pipeline
 ---

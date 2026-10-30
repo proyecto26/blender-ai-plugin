@@ -9,6 +9,7 @@ metadata:
   role: specialist
   category: mood
   stage: brief
+  requires: "camera-cinematography, compositing, lighting, materials"
   triggers: mascot horror, puppet horror, felt horror, costume horror, Happy Tree wrongness, puppet combo adjacent
   related-skills: horror-style, stop-motion-craft-style, character-artist, psx-horror-style, materials
 ---

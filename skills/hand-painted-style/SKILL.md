@@ -9,6 +9,7 @@ metadata:
   role: specialist
   category: style
   stage: brief
+  requires: "compositing, lighting, materials, rendering"
   triggers: hand painted, hand-painted, painted texture, brushwork, stylized painted
   related-skills: stylized-style, texture-workflow, materials, lookdev
 ---

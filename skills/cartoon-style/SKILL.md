@@ -9,6 +9,7 @@ metadata:
   role: specialist
   category: style
   stage: brief
+  requires: "compositing, lighting, rendering, stylized-style"
   triggers: cartoon, toon, rubber hose, Saturday morning, bold cartoon, graphic cartoon
   related-skills: stylized-style, anime-style, materials, rendering, character-artist
 ---

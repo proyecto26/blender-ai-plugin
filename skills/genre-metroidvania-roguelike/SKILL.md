@@ -9,6 +9,7 @@ metadata:
   role: specialist
   category: genre
   stage: brief
+  requires: "blender-mcp-workflow, camera-cinematography, environment-artist, hard-surface, lighting, materials, set-dressing"
   triggers: metroidvania, roguelike, roguelite, room modules, procedural rooms, ability gate
   related-skills: environment-artist, scene-assembly, materials, biome-worlds
 ---

@@ -9,6 +9,7 @@ metadata:
   role: specialist
   category: genre
   stage: brief
+  requires: "camera-cinematography, compositing, environment-artist, lighting, materials, set-dressing"
   triggers: stealth, stealth game, shadow play, infiltration, stealth level art
   related-skills: environment-artist, lighting, materials, scene-assembly
 ---

@@ -9,6 +9,7 @@ metadata:
   role: specialist
   category: style
   stage: brief
+  requires: "camera-cinematography, compositing, lighting, materials"
   triggers: body horror, mutation, flesh, visceral, grotesque anatomy, Cronenberg
   related-skills: horror-style, creature-artist, sculpting, materials, character-artist
 ---

@@ -9,6 +9,7 @@ metadata:
   role: specialist
   category: mood
   stage: brief
+  requires: "camera-cinematography, compositing, lighting, materials, set-dressing"
   triggers: dark, grim, gritty, rusty, abandoned, decayed, industrial, lonely, melancholic, tense, eerie, creepy
   related-skills: horror-style, materials, lighting, set-dressing, environment-artist
 ---

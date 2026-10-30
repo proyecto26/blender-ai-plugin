@@ -9,6 +9,7 @@ metadata:
   role: specialist
   category: genre
   stage: brief
+  requires: "camera-cinematography, compositing, lighting, materials, set-dressing"
   triggers: RPG, JRPG, CRPG, ARPG, MMORPG, loot, quest hub, RPG environment
   related-skills: fantasy-worlds, environment-artist, prop-artist, character-artist, materials
 ---

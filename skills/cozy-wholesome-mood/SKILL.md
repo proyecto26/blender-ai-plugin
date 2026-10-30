@@ -9,6 +9,7 @@ metadata:
   role: specialist
   category: mood
   stage: brief
+  requires: "camera-cinematography, compositing, hard-surface, lighting, rendering, set-dressing, stylized-style"
   triggers: cozy, cute, wholesome, relaxing, peaceful, hygge, warm lighting cozy
   related-skills: stylized-style, lighting, set-dressing, materials, camera-cinematography
 ---

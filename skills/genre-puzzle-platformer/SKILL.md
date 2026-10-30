@@ -9,6 +9,7 @@ metadata:
   role: specialist
   category: genre
   stage: brief
+  requires: "camera-cinematography, collision-proxy, environment-artist, lighting, materials, procedural-modeling"
   triggers: puzzle, platformer, jump puzzle, puzzle game art, platforming
   related-skills: environment-artist, prop-artist, materials, camera-cinematography
 ---

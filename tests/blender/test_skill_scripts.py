@@ -302,6 +302,56 @@ def _fix_asset_children_world():
             "z": round(kid.matrix_world.translation.z, 4)}
 
 
+def _fix_asset_vertex_children():
+    import bmesh as _bm
+    from mathutils import Euler, Matrix as _M
+    out = {}
+    for mode in ("scale", "rotation_scale"):
+        me = bpy.data.meshes.new(f"FixVP_{mode}")
+        bm = _bm.new()
+        _bm.ops.create_cube(bm, size=1.0)
+        bm.to_mesh(me)
+        bm.free()
+        parent = bpy.data.objects.new(f"SM_FixVP_{mode}", me)
+        bpy.context.scene.collection.objects.link(parent)
+        parent.scale = (2.0, 0.5, 1.5)
+        parent.rotation_euler = Euler((0.3, 0.2, 0.7))
+        hidden = bpy.data.collections.new(f"FixVP_hidden_{mode}")
+        bpy.context.scene.collection.children.link(hidden)
+        kids = {}
+        for kind, ptype, coll, constrain in (("obj", "OBJECT", None, False), ("vert", "VERTEX", None, False),
+                                             ("tri", "VERTEX_3", None, False), ("zero", "OBJECT", None, False),
+                                             ("con", "VERTEX_3", None, True), ("excl", "VERTEX_3", hidden, False)):
+            k = bpy.data.objects.new(f"FixVK_{mode}_{kind}", None)
+            (coll or bpy.context.scene.collection).objects.link(k)
+            k.parent = parent
+            k.parent_type = ptype
+            if ptype == "VERTEX":
+                k.parent_vertices[0] = 2
+            elif ptype == "VERTEX_3":
+                k.parent_vertices = (0, 3, 5)
+            k.location = (0.3, -0.2, 0.4)
+            k.rotation_euler = Euler((0.1, 0.5, -0.2))
+            if kind == "zero":
+                k.scale = (0.0, 1.0, 1.0)
+            if constrain:
+                k.constraints.new("LIMIT_LOCATION")
+            kids[kind] = k
+        bpy.context.view_layer.update()
+        bpy.context.view_layer.layer_collection.children[hidden.name].exclude = True
+        before = {n: k.matrix_world.copy() for n, k in kids.items()}
+        r = run("blender-mcp-workflow", "fix_asset.py", {"objects": [parent.name], "apply": mode, "uv": ""})
+        bpy.context.view_layer.update()
+        rep = r["objects"][parent.name]
+        reported = {c["name"]: c["reason"] for c in rep.get("children_not_preserved", [])}
+        out[mode] = {
+            "kept": {n: _world_close(before[n], kids[n].matrix_world) for n in ("obj", "vert", "tri", "zero")},
+            "reported": reported,
+            "con_reason": reported.get(kids["con"].name), "excl_reason": reported.get(kids["excl"].name),
+            "applied": rep["applied"]}
+    return out
+
+
 def _work_copy_child_world():
     parent, kid = _kid_scene("SM_WcKidP", "SOCKET_WcKid")
     before = kid.matrix_world.copy()
@@ -564,6 +614,10 @@ def build_cases(out_dir):
          and r["blocked_by"] == "validate" and r["final_events"] == 4),
         ("blender-mcp-workflow.fix_asset_children_keep_world", lambda: _fix_asset_children_world(),
          lambda r: r["kid_world_kept"] and r["applied"]),
+        ("blender-mcp-workflow.fix_asset_vertex_children_keep_world", lambda: _fix_asset_vertex_children(),
+         lambda r: all(m["applied"] and all(m["kept"].values()) and m["con_reason"] == "constraints"
+                       and m["excl_reason"] == "not evaluated in the active view layer" and len(m["reported"]) == 2
+                       for m in r.values())),
         ("work-copy.accept_children_keep_world", lambda: _work_copy_child_world(),
          lambda r: r["kid_world_kept"] and r["parent_is_new"] and r["applied"]),
         ("work-copy.checkpoint_set_untouched", lambda: _work_copy_set_checkpoint(),

@@ -9,6 +9,7 @@ metadata:
   role: specialist
   category: style
   stage: brief
+  requires: "isometric-style, lowpoly-style, rendering, stylized-style"
   triggers: pixel art, pixel, texel, low res texture, sprite-like, pixelated
   related-skills: lowpoly-style, retro-8bit-style, retro-16bit-style, hd-2d-style, materials
 ---

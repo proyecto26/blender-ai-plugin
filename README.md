@@ -144,7 +144,7 @@ EEVEE bloom, `scene.compositing_node_group`, the new Principled BSDF socket name
 ### Safe by default
 
 Agents inspect the scene before changing it, work in named collections, never delete user data without
-asking, and test destructive operations in background Blender (`execute_blender_code_for_cli`). This is a
+asking, and test destructive operations in background Blender (`execute_blender_code_for_cli`, needs `BLENDER_PATH`, see [setup](docs/BLENDER_MCP_SETUP.md)). This is a
 real concern because MCP code runs with your user permissions.
 
 ---
@@ -283,6 +283,8 @@ claude plugin eval . --eval-dir evals-routing-heldout --ablation none --json r.j
 - **Vision-dependent steps** such as reference matching and look development depend on your model's
   image understanding. The scripts make the results repeatable, but taste is still your call.
 - **Engine import settings** (Unreal/Unity/Godot) are documented, not automated inside the engines.
+- **Install the plugin whole.** Many style, mood and genre recipes call other skills' scripts; each skill lists
+  them in `metadata.requires` (checked by `scripts/validate_skills.py`). A skill copied on its own needs those.
 - **AI video is a handoff.** `ai-video-handoff` writes files and a manifest; Seam or ComfyUI runs the paid or
   cloud step through their own tools, with your consent. Music and SFX for films are files you supply and license.
 

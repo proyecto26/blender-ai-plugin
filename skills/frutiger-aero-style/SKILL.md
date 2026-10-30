@@ -9,6 +9,7 @@ metadata:
   role: specialist
   category: style
   stage: brief
+  requires: "camera-cinematography, compositing, lighting, materials, rendering"
   triggers: Frutiger Aero, aero, aqua UI, glossy 2000s, vista aesthetic, bubbly futurism
   related-skills: neon-retrofuturism, materials, lighting, environment-artist, lookdev
 ---

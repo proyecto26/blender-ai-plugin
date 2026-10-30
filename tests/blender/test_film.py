@@ -382,7 +382,26 @@ def build_cases(out_dir, scene):
         bpy.data.movieclips.remove(clip)
         ok = (size > 0 and info["frames"] == 8 and info["size"] == (160, 90)
               and res["rendered"]["bytes"] == size and settings_snapshot(scene) == before)
+        state["verify"] = res.get("verify")
         return ok, info
+
+    def ae_verify_with_audio():
+        v = state.get("verify") or {}
+        return (v.get("ok") is True and v.get("audio_stream") is True and v.get("frames") == 8
+                and (v.get("audio_rms") or 0) > 0), v
+
+    def ae_verify_without_audio():
+        mp4 = os.path.join(edit_dir, "silent.mp4")
+        res = run("assemble_edit.py", {"out_path": mp4, "resolution": [160, 90], "render": True, "frames": [1, 8]})
+        v = res.get("verify") or {}
+        try:
+            import aud
+            aud.Sound(mp4).data()
+            stream_absent = False
+        except Exception:
+            stream_absent = True
+        return (v.get("ok") is True and v.get("audio_expected") is False and "audio_stream" not in v
+                and res["output"]["audio_codec"] == "NONE" and stream_absent), v
 
     def ae_decode_colors():
         frames = list(range(1, 9))
@@ -439,6 +458,7 @@ def build_cases(out_dir, scene):
         ("assemble.edit_stills", ae_edit_stills), ("assemble.fades_keyframed", ae_fades), ("assemble.ffmpeg_settings", ae_output_settings),
         ("assemble.credits", ae_credits), ("assemble.license_required", ae_requires_license),
         ("assemble.refuses_foreign_scene", ae_refuses_foreign_scene), ("assemble.idempotent", ae_idempotent), ("assemble.render_8_frames", ae_render),
+        ("assemble.verify_with_audio", ae_verify_with_audio), ("assemble.verify_without_audio", ae_verify_without_audio),
         ("assemble.decoded_shot_colors", ae_decode_colors), ("assemble.audio_samples", ae_audio_present),
         ("assemble.audio_strip_reload", ae_audio_strip_reload),
     ]

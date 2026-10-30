@@ -9,6 +9,7 @@ metadata:
   role: specialist
   category: mood
   stage: brief
+  requires: "camera-cinematography, compositing, lighting, materials, rendering"
   triggers: neon, vaporwave, synthwave, retrofuturistic, outrun, retrowave, neon nights
   related-skills: sci-fi-punk-worlds, lighting, materials, compositing, environment-artist
 ---

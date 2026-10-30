@@ -9,6 +9,7 @@ metadata:
   role: specialist
   category: style
   stage: brief
+  requires: "camera-cinematography, compositing, lighting, rendering, stylized-style"
   triggers: manga, seinen, shonen, shojo, screentone, manga panel, Japanese comic
   related-skills: anime-style, comic-book-style, compositing, camera-cinematography
 ---

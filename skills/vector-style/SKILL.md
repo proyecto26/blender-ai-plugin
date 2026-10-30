@@ -9,6 +9,7 @@ metadata:
   role: specialist
   category: style
   stage: brief
+  requires: "camera-cinematography, compositing, lighting, rendering, stylized-style"
   triggers: vector, flat design, clean vector, graphic flat, svg-like
   related-skills: minimalist-style, cartoon-style, materials, rendering
 ---

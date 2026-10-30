@@ -9,6 +9,7 @@ metadata:
   role: specialist
   category: style
   stage: brief
+  requires: "camera-cinematography, compositing, environment-artist, lighting, materials"
   triggers: liminal, liminal space, Backrooms, empty mall, empty school, poolrooms, transitional space
   related-skills: horror-style, environment-artist, lighting, materials, scene-assembly
 ---

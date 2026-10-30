@@ -32,6 +32,9 @@ result = {"exists": obj is not None, "dims": list(obj.dimensions) if obj else No
 separate process. Changes are **not saved** unless your code saves (to a new path). Ideal for
 batch validation, exports and experiments that must not disturb the user's session.
 The `*_for_cli` summary tools mirror the live ones for files on disk.
+Needs the `BLENDER_PATH` environment variable (the Blender executable, or on a Microsoft Store install the
+`blender-launcher.exe` alias) set in the MCP server's environment, then a restart of the agent; without it the
+tool fails with "Blender executable not found". Fall back to the headless command in this skill.
 
 Rules:
 - Keep each call small (one phase) and return evidence (`names`, `tris`, `status`).

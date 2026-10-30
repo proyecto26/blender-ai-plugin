@@ -9,6 +9,7 @@ metadata:
   role: specialist
   category: world
   stage: brief
+  requires: "camera-cinematography, compositing, lighting, lowpoly-style, materials"
   triggers: Silent Hill, Fear to Fathom, Puppet Combo, indie horror, corporate horror, cabin horror, hospital horror, forest horror, urban decay horror
   related-skills: horror-style, psx-horror-style, liminal-space-style, environment-artist, lighting
 ---

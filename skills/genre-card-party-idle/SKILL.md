@@ -9,6 +9,7 @@ metadata:
   role: specialist
   category: genre
   stage: brief
+  requires: "camera-cinematography, compositing, lighting, materials, rendering"
   triggers: card game, deck builder, party game, idle, incremental, educational, rhythm game, UI stage
   related-skills: prop-artist, camera-cinematography, materials, lookdev, minimalist-style
 ---

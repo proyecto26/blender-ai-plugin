@@ -9,6 +9,7 @@ metadata:
   role: specialist
   category: genre
   stage: brief
+  requires: "camera-cinematography, compositing, lighting, materials, set-dressing"
   triggers: action game, hack and slash, beat em up, brawler, fighting game, combat arena, action adventure
   related-skills: environment-artist, prop-artist, camera-cinematography, vfx-fx
 ---

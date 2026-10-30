@@ -15,7 +15,10 @@ ARGS:
     uv_scale    (float) metres per UV unit for "box" (default 1.0)
 
 A mesh shared by several objects is made single-user first, so siblings are never changed.
-Children of a fixed object keep their world transform (their parent inverse absorbs the change).
+Children of a fixed object keep their world transform (their parent inverse absorbs the change). Vertex- and
+triangle-parented children are corrected by measuring them, which needs a child with no constraints, a
+non-singular transform and a base in the active view layer; any other child is left as is and listed in
+`children_not_preserved` with the reason.
 """
 import json
 import math
@@ -50,23 +53,45 @@ def _apply(obj, apply):
         bake = Matrix.Diagonal((*scale, 1.0))
         keep = Matrix.Translation(loc) @ rot.to_matrix().to_4x4()
     if bake == Matrix.Identity(4):
-        return False
+        return False, []
     # Like Blender's Apply Scale, children keep their world transform: the parent's world matrix
     # changes from W to W @ basis^-1 @ keep, so fold the difference into each child's parent inverse.
     for vl in bpy.context.scene.view_layers:
         vl.update()
     old_world = obj.matrix_world.copy()
     new_world = old_world @ obj.matrix_basis.inverted_safe() @ keep
-    # Vertex-parented children follow the baked vertices instead (a VERTEX child stays put; a VERTEX_3
-    # child may shift, as with Blender's own Apply Scale): re-check them after applying.
-    kids = [c for c in bpy.data.objects if c.parent is obj and c.parent_type == "OBJECT"]
+    # Vertex/triangle-parented children follow the baked geometry, so their parent frame is measured instead:
+    # world = frame @ parent_inverse @ basis, hence parent_inverse' = pi @ B @ W_new^-1 @ W_old @ B^-1.
+    # All checks run before anything changes; children outside the supported cases are only reported.
+    view_layer = bpy.context.view_layer
+    kids = [c for c in bpy.data.objects if c.parent is obj]
+    object_kids, measured, skipped = [], [], []
+    for c in kids:
+        if c.parent_type == "OBJECT":
+            object_kids.append(c)
+        elif c.parent_type not in ("VERTEX", "VERTEX_3"):
+            skipped.append({"name": c.name, "reason": f"parent type {c.parent_type}"})
+        elif c.constraints:
+            skipped.append({"name": c.name, "reason": "constraints"})
+        elif c.name not in view_layer.objects:
+            skipped.append({"name": c.name, "reason": "not evaluated in the active view layer"})
+        elif abs(c.matrix_basis.determinant()) < 1e-9 or abs(c.matrix_world.determinant()) < 1e-9:
+            skipped.append({"name": c.name, "reason": "singular"})
+        else:
+            measured.append((c, c.matrix_world.copy()))
     obj.data.transform(bake)
     obj.matrix_basis = keep
-    for c in kids:
+    for c in object_kids:
         c.matrix_parent_inverse = new_world.inverted_safe() @ old_world @ c.matrix_parent_inverse
     if any(s < 0 for s in scale):
         obj.data.flip_normals()
-    return True
+    if measured:
+        view_layer.update()
+        for c, w_old in measured:
+            b = c.matrix_basis.copy()
+            c.matrix_parent_inverse = c.matrix_parent_inverse @ b @ c.matrix_world.inverted() @ w_old @ b.inverted()
+        view_layer.update()
+    return True, skipped
 
 
 def _box_uv(me, uv_scale):
@@ -106,7 +131,10 @@ def main(objects=None, apply="scale", uv="box", uv_scale=1.0):
             continue
         if obj.data.users > 1:
             obj.data = obj.data.copy()
-        r = {"applied": _apply(obj, apply) if apply else False, "uv_added": None}
+        applied, skipped = _apply(obj, apply) if apply else (False, [])
+        r = {"applied": applied, "uv_added": None}
+        if skipped:
+            r["children_not_preserved"] = skipped
         if uv and not obj.data.uv_layers:
             _box_uv(obj.data, uv_scale) if uv == "box" else _smart_uv(obj)
             r["uv_added"] = uv

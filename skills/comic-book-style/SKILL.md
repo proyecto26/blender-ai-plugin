@@ -9,6 +9,7 @@ metadata:
   role: specialist
   category: style
   stage: brief
+  requires: "camera-cinematography, compositing, lighting, rendering, stylized-style"
   triggers: comic book, comics, graphic novel, ink lines, halftone, Ben Day, superhero comic
   related-skills: stylized-style, materials, rendering, compositing, camera-cinematography
 ---

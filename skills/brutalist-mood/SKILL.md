@@ -9,6 +9,7 @@ metadata:
   role: specialist
   category: mood
   stage: brief
+  requires: "camera-cinematography, compositing, hard-surface, lighting, materials"
   triggers: brutalist, brutalism, raw concrete, monumental concrete, austere architecture
   related-skills: archviz, environment-artist, materials, camera-cinematography, minimalist-style
 ---

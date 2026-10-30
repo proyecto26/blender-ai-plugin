@@ -9,6 +9,7 @@ metadata:
   role: specialist
   category: mood
   stage: brief
+  requires: "camera-cinematography, compositing, lighting, materials, vfx-fx"
   triggers: cosmic horror, eldritch, Lovecraftian, Lovecraft, non-Euclidean, unknowable, void horror
   related-skills: horror-style, creature-artist, lighting, vfx-fx, compositing
 ---

@@ -40,5 +40,7 @@ If the license is unclear, treat it as not usable and ask.
 
 ## What you can and cannot check
 
-You can verify duration, start frame, channel, volume and that the rendered mp4 contains audio. You cannot
-hear it. Report levels as measured and ask the user to listen before delivery.
+`assemble_edit.py` reports each strip's start frame, channel and volume, and with `render: True` its `verify`
+decodes the rendered mp4's audio: `audio_stream`, `audio_seconds` (must match the film length) and
+`audio_rms` (signal level). That proves the audio is in the file at the right length, not that it sounds
+right. You cannot hear it: report the numbers and ask the user to listen before delivery.

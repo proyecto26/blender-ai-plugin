@@ -9,6 +9,7 @@ metadata:
   role: specialist
   category: world
   stage: brief
+  requires: "compositing, lighting, lowpoly-style, rendering"
   triggers: PS1 style, PS2 style, PS3 style, PS4 style, PS5 style, retro arcade, DOS style, CRT style, VHS style, film grain
   related-skills: lowpoly-style, psx-horror-style, realistic-style, compositing, materials
 ---

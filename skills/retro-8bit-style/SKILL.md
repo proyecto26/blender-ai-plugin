@@ -9,6 +9,7 @@ metadata:
   role: specialist
   category: style
   stage: brief
+  requires: "compositing, isometric-style, lowpoly-style, rendering, stylized-style"
   triggers: 8-bit, 8bit, NES, retro 8-bit, four color, chunky pixel
   related-skills: pixel-art-style, retro-16bit-style, lowpoly-style, materials
 ---

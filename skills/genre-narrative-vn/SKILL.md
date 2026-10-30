@@ -9,6 +9,7 @@ metadata:
   role: specialist
   category: genre
   stage: brief
+  requires: "camera-cinematography, compositing, lighting, rendering, set-dressing"
   triggers: visual novel, interactive movie, walking simulator, narrative game, story scene, VN background
   related-skills: camera-cinematography, lighting, set-dressing, archviz, compositing
 ---

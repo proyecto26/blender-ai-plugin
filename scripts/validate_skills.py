@@ -196,6 +196,28 @@ SELF_TEST_BAD = [
 ]
 
 
+SCRIPT_REF_RE = re.compile(r"\{skills\}/([\w-]+)/scripts/([\w.-]+\.py)")
+
+
+def dependency_errors(name, text, meta, skill_names, script_exists):
+    """Cross-skill calls are dependencies: each `{skills}/<x>/scripts/<y>.py` must exist and <x> must be the
+    skill itself or listed in metadata.requires (a comma-separated string); every requires name must exist."""
+    errors = []
+    raw = meta.get("requires", "") if isinstance(meta, dict) else ""
+    requires = {r.strip() for r in raw.split(",") if r.strip()} if isinstance(raw, str) else set()
+    if raw and not isinstance(raw, str):
+        errors.append("metadata.requires must be a quoted comma-separated string")
+    for r in sorted(requires - skill_names):
+        errors.append(f"metadata.requires names unknown skill '{r}'")
+    for m in SCRIPT_REF_RE.finditer(text):
+        dep, script = m.group(1), m.group(2)
+        if not script_exists(dep, script):
+            errors.append(f"calls missing script {dep}/scripts/{script}")
+        elif dep != name and dep not in requires:
+            errors.append(f"calls {dep}/scripts/{script} but '{dep}' is not in metadata.requires")
+    return errors
+
+
 def self_test():
     failures = []
     for n, text in enumerate(SELF_TEST_GOOD):
@@ -214,6 +236,13 @@ def self_test():
     fm, errs = parse_frontmatter(long_text)
     if errs or len(fm["description"]) != 800:
         failures.append(f"escaped length should decode to 800 chars, got {len(fm['description'])} {errs}")
+    names, exists = {"a", "b"}, lambda d, s: (d, s) in {("a", "x.py"), ("b", "y.py")}
+    cases = [("{skills}/b/scripts/y.py", {"requires": "b"}, 0), ("{skills}/b/scripts/y.py", {}, 1),
+             ("{skills}/a/scripts/x.py", {}, 0), ("", {"requires": "b, zz"}, 1), ("{skills}/b/scripts/no.py", {"requires": "b"}, 1)]
+    for text, meta, want in cases:
+        got = len(dependency_errors("a", text, meta, names, exists))
+        if got != want:
+            failures.append(f"dependency check {text!r} {meta}: {got} errors, expected {want}")
     for f in failures:
         print("SELF-TEST FAIL:", f)
     print(f"self-test: {len(SELF_TEST_GOOD)} good, {len(SELF_TEST_BAD)} bad samples, "
@@ -381,6 +410,17 @@ def main():
         report[skill.name] = {"errors": errors, "warnings": warnings}
         total_errors += len(errors)
         total_warnings += len(warnings)
+    names = {s.name for s in skills}
+    exists = lambda d, s: (ROOT / "skills" / d / "scripts" / s).is_file()
+    for skill in skills:
+        md = skill / "SKILL.md"
+        if md.exists():
+            text = md.read_text(encoding="utf-8")
+            fm, _ = parse_frontmatter(text)
+            dep_errs = dependency_errors(skill.name, text, (fm or {}).get("metadata") or {}, names, exists)
+            if dep_errs:
+                report.setdefault(skill.name, {"errors": [], "warnings": []})["errors"] += dep_errs
+                total_errors += len(dep_errs)
     routing_errors, routing_warnings = routing_checks(skills)
     report["(routing)"] = {"errors": routing_errors, "warnings": routing_warnings}
     total_errors += len(routing_errors)

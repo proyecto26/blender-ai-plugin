@@ -9,6 +9,7 @@ metadata:
   role: specialist
   category: world
   stage: brief
+  requires: "camera-cinematography, compositing, lighting, materials, set-dressing"
   triggers: underwater, desert, arctic, jungle, underground, cave, floating islands, biome, climate setting
   related-skills: environment-artist, vegetation-artist, lighting, materials, scene-assembly
 ---

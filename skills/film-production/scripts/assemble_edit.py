@@ -18,11 +18,12 @@ ARGS:
                   "CC0", "CC-BY-4.0", "user-owned"), channel (int, default 2+index), start_frame (int, edit
                   frame, default 1), volume (float, default 1.0), fade_in / fade_out (seconds, default 0),
                   and optional title, author, source_url, notes (copied to the credits file).
-    render        (bool) render the edit scene's animation to out_path (default False)
+    render        (bool) render the edit scene's animation to out_path (default False); the rendered file is read
+                  back into `verify`: frames and size, and with audio a decoded stream of the right length
     frames        ([start, end]|None) limit the edit frame range (for tests / quick checks)
     resolution    ([w, h]|None) edit resolution (default: the source scene's)
 Shots are laid back to back from edit frame 1 (gaps in the source timeline are dropped). The script never
-downloads audio and never generates sound.
+downloads audio and never generates sound. Without `audio` the mp4 gets no audio stream at all.
 """
 import json
 import os
@@ -32,6 +33,36 @@ import bpy
 
 
 OWNER_KEY = "film_edit_owner"  # set on scenes this script creates; any other scene is never rebuilt
+
+
+def _verify(path, frames_expected, size, fps, audio_expected):
+    """Read the rendered mp4 back. Audio absence is known from the encoder setting, so it is only probed when
+    audio was supplied; then a decode error or a stream of the wrong length is a FAIL, never a pass."""
+    if not os.path.isfile(path):
+        return {"checked": False, "ok": False, "reason": "no output file"}
+    clip = bpy.data.movieclips.load(path)
+    try:
+        out = {"checked": True, "frames": clip.frame_duration, "size": list(clip.size),
+               "audio_expected": audio_expected}
+    finally:
+        bpy.data.movieclips.remove(clip)
+    ok = out["frames"] == frames_expected and out["size"] == list(size)
+    if audio_expected:
+        try:
+            import aud
+            import numpy as np
+            snd = aud.Sound(path)
+            rate = snd.specs[0]
+            data = np.asarray(snd.data(), dtype=np.float32)
+            seconds = len(data) / rate
+            out.update(audio_stream=len(data) > 0, audio_seconds=round(seconds, 3),
+                       audio_rms=round(float(np.sqrt(np.mean(data ** 2))) if len(data) else 0.0, 5))
+            ok = ok and len(data) > 0 and abs(seconds - frames_expected / fps) <= 2 / fps + 0.05
+        except Exception as exc:  # no stream or undecodable: the file does not carry the audio it should
+            out.update(audio_stream=False, error=repr(exc))
+            ok = False
+    out["ok"] = ok
+    return out
 
 def _cli_args():
     if "--" not in sys.argv:
@@ -217,7 +248,7 @@ def main(out_path=None, source_scene=None, edit_scene="EDIT", audio=None, render
     ff.codec = "H264"
     ff.constant_rate_factor = "MEDIUM"
     ff.ffmpeg_preset = "GOOD"
-    ff.audio_codec = "AAC"
+    ff.audio_codec = "AAC" if audio else "NONE"  # no silent track when no audio was supplied
     ff.audio_bitrate = 192
     ff.audio_mixrate = 48000
     ff.audio_channels = "STEREO"
@@ -225,16 +256,18 @@ def main(out_path=None, source_scene=None, edit_scene="EDIT", audio=None, render
     edit.render.filepath = out_path
 
     credits_path = _write_credits(out_dir, audio) if audio else None
-    rendered = None
+    rendered = verify = None
     if render:
         bpy.ops.render.render(animation=True, scene=edit.name)
         rendered = {"exists": os.path.isfile(out_path), "bytes": os.path.getsize(out_path) if os.path.isfile(out_path) else 0}
+        verify = _verify(out_path, edit.frame_end - edit.frame_start + 1,
+                         (edit.render.resolution_x, edit.render.resolution_y), fps, bool(audio))
     return {"edit_scene": edit.name, "strips": strips_out + sound_strips, "total_frames": total,
             "frame_range": [edit.frame_start, edit.frame_end], "fps": fps,
             "resolution": [edit.render.resolution_x, edit.render.resolution_y], "audio": audio_info,
             "output": {"media_type": im.media_type, "file_format": im.file_format, "container": ff.format,
                        "codec": ff.codec, "audio_codec": ff.audio_codec, "path": out_path},
-            "audio_credits": credits_path, "rendered": rendered}
+            "audio_credits": credits_path, "rendered": rendered, "verify": verify}
 
 
 ARGS = globals().get("ARGS") or _cli_args()

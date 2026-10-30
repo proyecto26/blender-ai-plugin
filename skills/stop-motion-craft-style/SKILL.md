@@ -9,6 +9,7 @@ metadata:
   role: specialist
   category: style
   stage: brief
+  requires: "camera-cinematography, compositing, lighting, materials, rendering"
   triggers: stop motion, claymation, clay, paper craft, papercraft, handmade, craft aesthetic, puppet physical
   related-skills: materials, lighting, camera-cinematography, character-artist, mascot-puppet-horror
 ---

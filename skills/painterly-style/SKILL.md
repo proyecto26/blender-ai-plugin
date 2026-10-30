@@ -9,6 +9,7 @@ metadata:
   role: specialist
   category: style
   stage: brief
+  requires: "compositing, lighting, materials, rendering"
   triggers: painterly, watercolor, oil painting, impressionist, illustrative paint, gouache
   related-skills: hand-painted-style, stylized-style, materials, compositing, rendering
 ---

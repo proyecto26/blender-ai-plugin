@@ -59,7 +59,7 @@ r = runpy.run_path("<skill_dir>/scripts/assemble_edit.py", init_globals={"ARGS":
     "audio": [{"path": "<project>/music/theme.wav", "license": "CC0", "volume": 0.8, "fade_in": 1, "fade_out": 2}]}})["result"]
 ```
 
-It builds a separate `EDIT` scene (it refuses to rebuild a scene of that name it did not create; scene strips per shot with each shot's camera, sound strips with volume keyframe fades) and sets H.264/AAC in an MPEG-4 container. The source scene is never modified. Run it first with `render: False` and check `strips`, then again with `render: True`. Use `frames: [1, 24]` for a quick test render.
+It builds a separate `EDIT` scene (it refuses to rebuild a scene of that name it did not create; scene strips per shot with each shot's camera, sound strips with volume keyframe fades) and sets H.264 in an MPEG-4 container, with AAC audio only when `audio` is given (no audio stream otherwise). With `render: True` it reads the mp4 back into `verify`: frame count, size and, with audio, a decoded stream of the film's length (`verify.ok`). The source scene is never modified. Run it first with `render: False` and check `strips`, then again with `render: True`. Use `frames: [1, 24]` for a quick test render.
 
 ## Preview-inspect-fix loop
 
@@ -86,7 +86,7 @@ Three stills show composition, not motion. For `moving` shots also preview frame
 - Engine: EEVEE (`BLENDER_EEVEE`). Settings that matter: render samples (64 is a good default), ray tracing for reflections/GI, shadow quality, motion blur on `scene.render.use_motion_blur`, and colour management (keep AgX unless the look demands otherwise; the edit scene copies the source view transform).
 - Frame rate: choose once (24 for film feel, 30 for web) and set it with `shot_list.py`; never change fps after animating.
 - Resolution: 1920x1080 for delivery; previews stay at 480x270.
-- Long films (over about 20 seconds or heavy scenes): render each shot to an image sequence first (PNG or EXR) and replace the scene strips with image strips, so a crash does not lose work, then assemble. Short films can render straight from the edit scene.
+- Long films (over about 20 seconds or heavy scenes): render each shot to an image sequence first, so a crash does not lose work. No script automates this yet; do it by hand: per shot, set the source scene's frame range to the shot and its camera marker active, set `render.image_settings.file_format` to PNG and `render.filepath` to `<project>/renders/<shot_id>/`, render the animation; then in the EDIT scene replace each scene strip with an image strip of that folder. Short films can render straight from the edit scene.
 - Render a still or a 24-frame slice first and inspect it before the full render.
 - A scene strip's source scene is only evaluated correctly for animation renders. To inspect an edit frame, render a short animation range and read a frame from it; a single still rendered after `frame_set` can show stale content.
 - Never overwrite a previous final: write `final_v2.mp4`.

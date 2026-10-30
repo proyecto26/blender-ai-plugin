@@ -8,6 +8,34 @@ Format: [Semantic Versioning](https://semver.org/) — `Major.Minor.Patch`
 
 ## [Unreleased]
 
+Iteration 8: delivery routing in user words, and the known issues left after iteration 7.
+
+### Changed
+- The seven delivery descriptions (unreal-export, unity-export, godot-export, lod-pipeline,
+  asset-optimization, collision-proxy, export-pipeline) name the symptoms users report ("imports tiny",
+  "comes in rotated -90", "walk through walls") and say to load the skill even for advice
+- `unity-export` documents FBX (`export_unity.py`) as the scripted path; GLB goes through glTFast and the
+  `export-pipeline` skill
+- `assemble_edit.py` writes an AAC audio stream only when audio is supplied (no silent track)
+
+### Added
+- `metadata.requires` on every skill that calls another skill's script; `validate_skills.py` checks that each
+  `{skills}/<x>/scripts/<y>.py` exists and that `<x>` is declared
+- `assemble_edit.py` `verify` (with `render: True`): reads the mp4 back for frame count, size and a decoded
+  audio stream of the film's length
+- `fix_asset.py` reports `children_not_preserved` (constraints, singular transform, not in the active view
+  layer) instead of moving them silently
+- Symptom-worded delivery routing cases (`evals-routing/deliv-*`); `execute_blender_code_for_cli` notes that
+  it needs `BLENDER_PATH`
+
+### Fixed
+- `fix_asset.py`: vertex- and triangle-parented children keep their world transform when scale or rotation is
+  applied
+- `render_handoff.py`: lists only the files written in this run and warns about leftovers from earlier runs
+- Film docs no longer promise an audio check or image-sequence automation that no script performed
+
+---
+
 Iteration 7: routing that holds up with many skills, film and AI-video pipelines, refs-first worlds.
 
 ### Changed

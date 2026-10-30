@@ -9,6 +9,7 @@ metadata:
   role: specialist
   category: world
   stage: brief
+  requires: "camera-cinematography, compositing, lighting, materials, set-dressing"
   triggers: post-apocalyptic, post-apoc, zombie apocalypse, alien invasion, dystopian, utopian, post-human, wasteland
   related-skills: environment-artist, prop-artist, materials, set-dressing, vehicle-artist
 ---

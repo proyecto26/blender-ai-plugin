@@ -9,6 +9,7 @@ metadata:
   role: specialist
   category: style
   stage: brief
+  requires: "camera-cinematography, compositing, lighting, materials, rendering"
   triggers: noir, neo-noir, hardboiled, detective noir, high contrast black and white
   related-skills: camera-cinematography, lighting, compositing, materials, lookdev
 ---

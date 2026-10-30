@@ -9,6 +9,7 @@ metadata:
   role: specialist
   category: style
   stage: brief
+  requires: "camera-cinematography, compositing, lighting, materials, set-dressing"
   triggers: folk horror, rural horror, ritual, pagan, pastoral dread, village horror, Wicker Man
   related-skills: horror-style, environment-artist, set-dressing, vegetation-artist, materials
 ---

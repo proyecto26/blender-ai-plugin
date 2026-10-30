@@ -9,6 +9,7 @@ metadata:
   role: specialist
   category: world
   stage: brief
+  requires: "camera-cinematography, compositing, lighting, materials, set-dressing"
   triggers: western, pirate, samurai, ninja, Viking, ancient Egypt, ancient Greece, Roman, Victorian, modern, military, Cold War, World War
   related-skills: environment-artist, prop-artist, character-artist, materials, set-dressing
 ---

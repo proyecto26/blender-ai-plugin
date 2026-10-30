@@ -9,6 +9,7 @@ metadata:
   role: specialist
   category: style
   stage: brief
+  requires: "camera-cinematography, compositing, lighting, materials, rendering"
   triggers: minimalist, minimal, abstract, reduced forms, negative space, simple shapes
   related-skills: stylized-style, materials, camera-cinematography, lookdev
 ---

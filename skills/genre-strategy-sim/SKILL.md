@@ -9,6 +9,7 @@ metadata:
   role: specialist
   category: genre
   stage: brief
+  requires: "isometric-style, lighting, lod-pipeline, set-dressing, stylized-style"
   triggers: strategy, RTS, turn-based strategy, tower defense, MOBA, city builder, colony sim, simulation, life sim, farming sim
   related-skills: isometric-style, environment-artist, prop-artist, scene-assembly, vegetation-artist
 ---

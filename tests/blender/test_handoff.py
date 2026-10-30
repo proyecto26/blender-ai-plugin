@@ -317,6 +317,14 @@ def main(out_dir=None):
             assert doc["shots"][1]["frame"] == 36
         check("comfy.frame_selection_follows_shot_range", comfy_frame_selection)
 
+        def comfy_rerun_lists_only_new_files():
+            run({"out_dir": d("rerun"), "target": "comfy", "size": SIZE, "subject": ["Subject"]})
+            r = run({"out_dir": d("rerun"), "target": "comfy", "size": SIZE, "passes": ["beauty"]})
+            names = [os.path.basename(f) for f in r["files"] if f.endswith(".png")]
+            assert names and set(names) == {"beauty.png"}, names
+            assert any("left from an earlier run" in w and "mask.png" in w for w in r["warnings"]), r["warnings"]
+        check("comfy.rerun_lists_only_files_written_now", comfy_rerun_lists_only_new_files)
+
         def mask_needs_subject():
             try:
                 run({"out_dir": d("nosub"), "target": "comfy", "size": SIZE})

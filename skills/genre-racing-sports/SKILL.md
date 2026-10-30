@@ -9,6 +9,7 @@ metadata:
   role: specialist
   category: genre
   stage: brief
+  requires: "camera-cinematography, compositing, lighting, materials, procedural-modeling"
   triggers: racing, sports, track, stadium, race course, sports arena
   related-skills: vehicle-artist, environment-artist, materials, camera-cinematography
 ---

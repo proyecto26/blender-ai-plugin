@@ -9,6 +9,7 @@ metadata:
   role: specialist
   category: style
   stage: brief
+  requires: "camera-cinematography, compositing, lighting, rendering, stylized-style"
   triggers: chibi, SD, super deformed, cute proportions, chibi character
   related-skills: anime-style, cartoon-style, character-artist, stylized-style
 ---

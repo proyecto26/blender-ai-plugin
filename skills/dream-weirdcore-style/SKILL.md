@@ -9,6 +9,7 @@ metadata:
   role: specialist
   category: style
   stage: brief
+  requires: "blender-mcp-workflow, camera-cinematography, compositing, lighting, lowpoly-style"
   triggers: dreamcore, weirdcore, traumacore, dream horror, nostalgic horror, surreal childhood, weirdcore edit
   related-skills: liminal-space-style, dream-surreal-mood, horror-style, compositing, lighting
 ---

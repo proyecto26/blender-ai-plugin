@@ -9,6 +9,7 @@ metadata:
   role: specialist
   category: world
   stage: brief
+  requires: "blender-mcp-workflow, camera-cinematography, compositing, lighting, materials"
   triggers: sci-fi, hard sci-fi, space, cyberpunk, steampunk, dieselpunk, atompunk, solarpunk, biopunk, clockpunk, retrofuturism
   related-skills: hard-surface, environment-artist, vehicle-artist, materials, vfx-fx, neon-retrofuturism
 ---

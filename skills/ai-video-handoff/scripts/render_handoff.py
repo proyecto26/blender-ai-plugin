@@ -493,7 +493,12 @@ def main(out_dir=None, target="both", shots=None, size=None, fps=None, clip_seco
                                      "normalized": True}
                     mist_note = entry["mist"]["polarity"]
                 comfy_entries.append(entry)
-                files += [folder / n for n in ("beauty.png", "mask.png", "depth.png") if (folder / n).exists()]
+                written = [folder / f"{k}.png" for k in entry["files"]]
+                files += written
+                left = [n for n in ("beauty.png", "mask.png", "depth.png")
+                        if (folder / n).exists() and folder / n not in written]
+                if left:
+                    warnings.append(f"{sid}: left from an earlier run, not rendered now: {', '.join(left)}")
     finally:
         state.restore()
     if state.errors:

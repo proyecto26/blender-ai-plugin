@@ -9,6 +9,7 @@ metadata:
   role: specialist
   category: style
   stage: brief
+  requires: "isometric-style, lowpoly-style, rendering, stylized-style"
   triggers: 16-bit, 16bit, SNES, Genesis, Mega Drive, retro 16-bit
   related-skills: pixel-art-style, retro-8bit-style, materials, lookdev
 ---

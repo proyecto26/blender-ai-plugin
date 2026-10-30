@@ -9,6 +9,7 @@ metadata:
   role: specialist
   category: world
   stage: brief
+  requires: "animation, camera-cinematography, lighting, materials"
   triggers: archetype, elf, dwarf, orc, goblin, vampire, werewolf, zombie, alien, mecha, android, knight, assassin, superhero, villain, witch, wizard, cowboy, soldier
   related-skills: character-artist, creature-artist, anime-style, realistic-style, materials
 ---
