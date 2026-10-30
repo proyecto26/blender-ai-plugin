@@ -58,13 +58,13 @@ Stages: inspect, brief, model, look_dev, light_camera, animate, validate, export
 
 | Skill | Stage | Job | Scripts |
 |---|---|---|---|
-| `asset-optimization` | validate | Cuts polycount and cleans stray geometry, duplicate verts and heavy materials against a budget. | optimize_mesh.py |
-| `collision-proxy` | validate | Collision proxies: UCX/UHX hulls, boxes and capsules for games. | make_collision.py |
-| `export-pipeline` | export | Engine-agnostic export to FBX, glTF/GLB, OBJ, USD with verified scale, axis, pivots, batches. | export_asset.py |
-| `godot-export` | export | Godot 4 export via glTF/GLB with right scale, materials, clips and -col shapes. | export_godot.py |
-| `lod-pipeline` | validate | LOD generation: LOD1..N copies, naming and screen-size targets. | generate_lods.py |
-| `unity-export` | export | Unity export: scale, axis, materials, humanoid rigs, LODs. | export_unity.py |
-| `unreal-export` | export | Unreal Engine export: FBX scale, SM_/SK_ naming, UCX collision, sockets. | export_unreal.py |
+| `asset-optimization` | validate | Cut an asset to budget, tested scripts: polycount, stray geometry, duplicate verts, extra materials. | optimize_mesh.py |
+| `collision-proxy` | validate | Game colliders, tested scripts: UCX/UHX convex hulls, boxes, capsules, engine naming. | make_collision.py |
+| `export-pipeline` | export | Engine-agnostic export, tested scripts: FBX, GLB, OBJ, USD scale, axis, pivot, batch. | export_asset.py |
+| `godot-export` | export | Godot 4 export, tested scripts: GLB scale, PBR, clips, -col collision. | export_godot.py |
+| `lod-pipeline` | validate | LOD chains, tested scripts: LOD1..N copies, naming, screen-size switch distances. | generate_lods.py |
+| `unity-export` | export | Unity export, tested scripts: FBX axis, scale, materials, humanoid rigs. | export_unity.py |
+| `unreal-export` | export | Unreal/UE5 export, tested scripts: FBX scale, SM_/SK_ names, UCX collision, sockets. | export_unreal.py |
 
 ## Art styles (pick at most one unless the brief mixes them)
 

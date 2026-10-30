@@ -1,6 +1,6 @@
 ---
 name: asset-optimization
-description: "Cuts polycount and cleans stray geometry, duplicate verts and heavy materials against a budget. Use when an asset is too heavy or fails a budget before export. Ships tested scripts. Not for LODs (use lod-pipeline)."
+description: "Cut an asset to budget, tested scripts: polycount, stray geometry, duplicate verts, extra materials. Use when an asset or scan is too heavy, fails a budget or needs an audit; load even for advice. Not LODs (use lod-pipeline)."
 license: MIT
 metadata:
   author: https://github.com/arjun988

@@ -1,6 +1,6 @@
 ---
 name: collision-proxy
-description: "Collision proxies: UCX/UHX hulls, boxes and capsules for games. Use when a mesh needs a collider, or shapes are missing, misnamed or too dense. Ships tested scripts. Not for simulation (use physics-sim)."
+description: "Game colliders, tested scripts: UCX/UHX convex hulls, boxes, capsules, engine naming. Use when players walk through a mesh, physics uses the render mesh or colliders are dense; load even for advice. Not sims (use physics-sim)."
 license: MIT
 metadata:
   author: https://github.com/arjun988

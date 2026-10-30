@@ -1,6 +1,6 @@
 ---
 name: lod-pipeline
-description: "LOD generation: LOD1..N copies, naming and screen-size targets. Use when a mesh needs lower-poly distant versions for Unreal, Unity or Godot. Ships tested scripts. Not for one-off cleanup (use asset-optimization)."
+description: "LOD chains, tested scripts: LOD1..N copies, naming, screen-size switch distances. Use when distant meshes cost frame rate, LODs pop or an engine needs LODs; load even for advice. Not one-off cleanup (use asset-optimization)."
 license: MIT
 metadata:
   author: https://github.com/arjun988

@@ -1,6 +1,6 @@
 ---
 name: unity-export
-description: "Unity export: scale, axis, materials, humanoid rigs, LODs. Use when an asset is headed for Unity or arrives rotated or without materials. Ships tested scripts. Not for Unreal or Godot (use unreal-export, godot-export)."
+description: "Unity export, tested scripts: FBX axis, scale, materials, humanoid rigs. Use when an asset goes to Unity, comes in rotated -90, at scale 100 or white; load even for advice. Not Unreal/Godot (use unreal-export, godot-export)."
 license: MIT
 metadata:
   author: https://github.com/arjun988

@@ -1,6 +1,6 @@
 ---
 name: export-pipeline
-description: "Engine-agnostic export to FBX, glTF/GLB, OBJ, USD with verified scale, axis, pivots, batches. Use when unsure which engine or exports look wrong. Ships tested scripts. One engine? Use unity-, unreal- or godot-export."
+description: "Engine-agnostic export, tested scripts: FBX, GLB, OBJ, USD scale, axis, pivot, batch. Use for web/three.js, client deliveries, kits or no engine yet; load even for advice. One engine? Use unity-export, unreal-export, godot-export."
 license: MIT
 metadata:
   author: https://github.com/arjun988

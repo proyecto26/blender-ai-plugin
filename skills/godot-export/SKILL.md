@@ -1,6 +1,6 @@
 ---
 name: godot-export
-description: "Godot 4 export via glTF/GLB with right scale, materials, clips and -col shapes. Use when an asset is headed for Godot. Ships tested scripts. Not for Unity or Unreal (use unity-export, unreal-export)."
+description: "Godot 4 export, tested scripts: GLB scale, PBR, clips, -col collision. Use when an asset goes to Godot, looks grey, merges clips or needs import collision; load even for advice. Not Unity/Unreal (use unity-export, unreal-export)."
 license: MIT
 metadata:
   author: https://github.com/arjun988

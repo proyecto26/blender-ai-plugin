@@ -1,6 +1,6 @@
 ---
 name: unreal-export
-description: "Unreal Engine export: FBX scale, SM_/SK_ naming, UCX collision, sockets. Use when an asset is headed for Unreal or arrives mis-scaled. Ships tested scripts. Not for Unity or Godot (use unity-export, godot-export)."
+description: "Unreal/UE5 export, tested scripts: FBX scale, SM_/SK_ names, UCX collision, sockets. Use when an asset goes to Unreal, imports tiny, huge or without collision; load even for advice. Not Unity/Godot (use unity-export, godot-export)"
 license: MIT
 metadata:
   author: https://github.com/arjun988
