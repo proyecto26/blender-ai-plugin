@@ -143,9 +143,10 @@ EEVEE bloom, `scene.compositing_node_group`, the new Principled BSDF socket name
 
 ### Safe by default
 
-Agents inspect the scene before changing it, work in named collections, never delete user data without
-asking, and test destructive operations in background Blender (`execute_blender_code_for_cli`, needs `BLENDER_PATH`, see [setup](docs/BLENDER_MCP_SETUP.md)). This is a
-real concern because MCP code runs with your user permissions.
+Agents work live in your open Blender window so you can watch. They inspect the scene before changing it, work in
+named collections, make undo checkpoints, run destructive steps on disposable copies, and never delete user data
+without asking. Long renders run in a background process ([setup](docs/BLENDER_MCP_SETUP.md)). This is a real concern
+because MCP code runs with your user permissions.
 
 ---
 

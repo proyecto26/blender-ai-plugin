@@ -41,4 +41,6 @@ claude plugin eval --runs 1                        # pilot the eval suite (uses 
 ```
 
 With the official Blender MCP connected, the smoke tests can also run headless via
-`execute_blender_code_for_cli` on a scratch `.blend` — never against the user's open file.
+`execute_blender_code_for_cli` on a scratch `.blend` (not on Microsoft Store installs). Automated tests never run
+against the user's open file. The one exception is an attended live acceptance: the user has agreed, is watching, and
+the open file is disposable. See `docs/local_skill_development.md`.

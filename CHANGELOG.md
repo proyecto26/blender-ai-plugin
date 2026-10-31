@@ -10,7 +10,15 @@ Format: [Semantic Versioning](https://semver.org/) — `Major.Minor.Patch`
 
 Iteration 10: fixes found by running the skills live in an open Blender window.
 
+### Changed
+- Live work in the open window is the documented default; long renders and batches run in a background process from a
+  saved snapshot. New `blender-mcp-workflow` -> `references/live-session.md` covers undo checkpoints, minimized-window
+  screenshots, blocking renders and timeouts, all measured
+
 ### Fixed
+- Docs no longer offer the Microsoft Store launcher as `BLENDER_PATH`: the `*_for_cli` tools cannot return results
+  through it, and `No result marker` now means "outcome unknown"
+- Docs no longer say `print` output is lost, or treat `bpy.data.is_dirty` as proof that a file is saved
 - `export_asset.py` and `export_godot.py`: `verify` reports `no_geometry` and is not `ok` when a requested mesh
   was written without geometry (glTF omits an empty mesh and keeps its node, so a 176-byte file passed)
 - The four export scripts restore the scene camera and the active object's mode, also when the export fails

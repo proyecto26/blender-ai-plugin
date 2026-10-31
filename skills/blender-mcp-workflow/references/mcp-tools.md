@@ -20,7 +20,8 @@ extensions repository. Tool names below are the server's; clients prefix them (e
 ## Execution
 
 `execute_blender_code(code)` - runs in the live session. Assign a JSON-serialisable **dict** to
-`result`; `print` output is not returned.
+`result`. Printed text comes back in `stdout`, and an exception as a traceback in `message`. Check `result`, not
+the prints. Before working live, read `references/live-session.md`.
 
 ```python
 import bpy
@@ -32,9 +33,9 @@ result = {"exists": obj is not None, "dims": list(obj.dimensions) if obj else No
 separate process. Changes are **not saved** unless your code saves (to a new path). Ideal for
 batch validation, exports and experiments that must not disturb the user's session.
 The `*_for_cli` summary tools mirror the live ones for files on disk.
-Needs the `BLENDER_PATH` environment variable (the Blender executable, or on a Microsoft Store install the
-`blender-launcher.exe` alias) set in the MCP server's environment, then a restart of the agent; without it the
-tool fails with "Blender executable not found". Fall back to the headless command in this skill.
+Needs the `BLENDER_PATH` environment variable (a Blender executable) set in the MCP server's environment, then a
+restart of the agent; without it the tool fails with "Blender executable not found". It stops after 120 s. It cannot work on a Microsoft
+Store install, and `No result marker` means the outcome is unknown: see `references/live-session.md`.
 
 Rules:
 - Keep each call small (one phase) and return evidence (`names`, `tris`, `status`).
@@ -91,7 +92,8 @@ bm.to_mesh(obj.data); bm.free()
 
 | Error | Action |
 |-------|--------|
-| Connection refused / timeout | Blender closed or add-on disabled - ask the user to enable the MCP add-on |
+| Connection refused | Blender closed or add-on disabled - ask the user to enable the MCP add-on |
+| Timeout | The code may still be running. Do not retry: follow "After a Timeout" in `references/live-session.md` |
 | `result must be a dict` | Wrap the value: `result = {"value": x}` |
 | `context is incorrect` / poll failed | Set mode/selection or use `temp_override` |
 | `KeyError` on a node socket | Socket renamed in 5.x - see `blender-5-api-notes.md` / `get_python_api_docs` |

@@ -103,6 +103,13 @@ Before a destructive step (apply transforms/modifiers, join, boolean apply, reme
 every reference; the untouched original goes to the excluded `__Checkpoint`) or `revert` (copies removed).
 One pending work set at a time. Details: `references/mcp-integration.md`.
 
+## Working Live
+
+The user usually watches in the open window, so bounded work runs live: call `bpy.ops.ed.undo_push` before and after
+each phase (MCP code adds no undo steps), and send long renders to a background process from a saved snapshot. A black
+screenshot usually means a minimized window, not an empty scene. After a timeout the code or a render may still be
+running, so do not retry or edit until it has been checked. Read `references/live-session.md` before the first live edit.
+
 ## Execution Protocol
 
 ```
@@ -138,8 +145,8 @@ Model training data is full of Blender 2.8-4.0 code. Treat every API you did not
 2. **Look it up.** For any hand-written API, call `search_api_docs` / `get_python_api_docs` (bundled with
    the server for the running version) or read `references/blender-5-api-notes.md`. Never invent
    operators or properties.
-3. **Probe in isolation.** Run a minimal snippet with `execute_blender_code_for_cli` on a scratch `.blend`
-   (or check `bl_rna.properties`) before touching the user's scene.
+3. **Probe in isolation.** Check `bl_rna.properties`, or run a minimal snippet in a temporary scene you remove, or
+   with `execute_blender_code_for_cli` on a scratch `.blend` where that tool works, before touching the user's scene.
 4. **Apply, then confirm.** Make the real change, then confirm with `get_objects_summary`,
    `get_object_detail_summary`, or a screenshot. Report the evidence, not just "done".
 5. **Current version only.** Write code for the running Blender (5.2+). No `bpy.app.version` branches or
@@ -151,6 +158,7 @@ Model training data is full of Blender 2.8-4.0 code. Treat every API you did not
 |-------|------|
 | Blender 5.x API changes (verified on 5.2 LTS) | `references/blender-5-api-notes.md` |
 | Tool recipes and pitfalls | `references/mcp-tools.md` |
+| Working live: checkpoints, traps, timeouts, background work | `references/live-session.md` |
 | MCP-first operating rules | `references/mcp-integration.md` |
 | Universal asset pipeline | `references/asset-pipeline.md` |
 | Naming conventions | `references/naming-conventions.md` |
