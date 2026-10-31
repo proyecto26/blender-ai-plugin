@@ -26,7 +26,7 @@ A `validate_asset.py` WARN passes only with a recorded reason (`warn: true` + `r
 | 5 | light_camera | `light_rig.py`, `camera_rig.py` | `camera_rig` result `occluded_by == []` and `visible_fraction` near 1.0; `eye_height` set for first-person views | camera render |
 | 6 | validate | full `validate_asset.py` on the export set | verdict PASS (WARN only with a reason); tri budget met | final views |
 | 7 | export | engine export script | `exists` true and bytes > 0; export only after stage 6 PASS | none |
-| 8 | verify | read the export's `verify` | `verify.ok == true` (no `missing`, no `leaked`); `checked: false` is NOT_CHECKED | none |
+| 8 | verify | read the export's `verify` | `verify.ok == true` (no `missing`, no `no_geometry`, no `leaked`); `checked: false` is NOT_CHECKED | none |
 
 ## Recording
 

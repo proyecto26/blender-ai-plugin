@@ -15,7 +15,7 @@ ARGS:
     sheet            (bool) build <out_dir>/contact_sheet.png (default True)
     cols             (int|None) contact sheet columns (default: auto from the tile aspect)
 Returns file paths, the sheet layout (cols, rows, tile size, tile -> shot/frame) and the active camera per
-shot. Restores frame, camera, resolution, engine, samples, filepath, file format and colour mode in `finally`.
+shot. Restores frame, camera, resolution, engine, samples, filepath, file format, colour mode and depth in `finally`.
 Timeline markers bound to cameras would switch the camera at render time, so their bindings are lifted while
 rendering and put back afterwards: each preview shows the shot's own camera.
 """
@@ -108,7 +108,7 @@ def main(out_dir=None, shots=None, frames_per_shot=3, resolution=(480, 270), eng
     r, im = scene.render, scene.render.image_settings
     saved = {"frame": scene.frame_current, "camera": scene.camera, "rx": r.resolution_x, "ry": r.resolution_y,
              "pct": r.resolution_percentage, "engine": r.engine, "filepath": r.filepath,
-             "media": im.media_type, "fmt": im.file_format, "color_mode": im.color_mode,
+             "media": im.media_type, "fmt": im.file_format, "color_mode": im.color_mode, "depth": im.color_depth,
              "samples": scene.eevee.taa_render_samples, "ext": r.use_file_extension}
     files, tiles, per_shot = [], [], {}
     bound = [(m, m.camera) for m in scene.timeline_markers if m.camera]
@@ -158,6 +158,7 @@ def main(out_dir=None, shots=None, frames_per_shot=3, resolution=(480, 270), eng
         im.media_type = saved["media"]
         im.file_format = saved["fmt"]
         im.color_mode = saved["color_mode"]
+        im.color_depth = saved["depth"]
     return {"files": files, "contact_sheet": layout, "shots": per_shot, "resolution": [w, h], "engine": engine,
             "samples": int(samples)}
 

@@ -8,6 +8,15 @@ Format: [Semantic Versioning](https://semver.org/) — `Major.Minor.Patch`
 
 ## [Unreleased]
 
+Iteration 10: fixes found by running the skills live in an open Blender window.
+
+### Fixed
+- `export_asset.py` and `export_godot.py`: `verify` reports `no_geometry` and is not `ok` when a requested mesh
+  was written without geometry (glTF omits an empty mesh and keeps its node, so a 176-byte file passed)
+- The four export scripts restore the scene camera and the active object's mode, also when the export fails
+  (glTF left Edit Mode; moving frames, as glTF and animated FBX do, let a camera marker replace `scene.camera`)
+- `capture_views.py` and `preview_frames.py` restore the image colour depth (an EXR at 32 bits came back at 16)
+
 Iteration 9: fixes found by an end-to-end film and export test (a fox short, Blender 5.2.3 headless).
 
 ### Fixed

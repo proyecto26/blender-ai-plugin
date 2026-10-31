@@ -377,6 +377,99 @@ def _capture_ignores_marker_cameras(out_dir):
         bpy.data.cameras.remove(cam_data)
 
 
+def _export_keeps_state(skill, script, args):
+    """An export must leave the scene camera and the Edit Mode it found: the exporters leave Edit Mode and move
+    frames, which lets a marker bound to another camera replace scene.camera."""
+    scene = bpy.context.scene
+    view_layer = bpy.context.view_layer
+    saved = (scene.camera, view_layer.objects.active, list(bpy.context.selected_objects))
+    objs, marker = [], None
+    edit = bpy.data.objects["SM_Crate_01"]
+    try:
+        for n in ("__StateCam", "__StateMarkerCam"):
+            objs.append(bpy.data.objects.new(n, bpy.data.cameras.new(n)))
+            scene.collection.objects.link(objs[-1])
+        marker = scene.timeline_markers.new("__StateMarker", frame=scene.frame_current)
+        marker.camera = objs[1]
+        scene.camera = objs[0]
+        view_layer.objects.active = edit
+        edit.select_set(True)
+        bpy.ops.object.mode_set(mode="EDIT")
+        r = run(skill, script, args)
+        return {"exported": r.get("exists", r.get("exported")), "verify_ok": (r.get("verify") or {}).get("ok"),
+                "camera": scene.camera.name if scene.camera else None, "mode": edit.mode,
+                "active": view_layer.objects.active.name if view_layer.objects.active else None}
+    finally:
+        try:
+            if edit.mode != "OBJECT":
+                bpy.ops.object.mode_set(mode="OBJECT")
+        finally:
+            scene.camera, view_layer.objects.active = saved[0], saved[1]
+            for o in bpy.context.selected_objects:
+                o.select_set(False)
+            for o in saved[2]:
+                o.select_set(True)
+            if marker:
+                scene.timeline_markers.remove(marker)
+            for o in objs:
+                data = o.data
+                bpy.data.objects.remove(o)
+                bpy.data.cameras.remove(data)
+
+
+def _kept_state(r):
+    return r["exported"] and r["camera"] == "__StateCam" and r["mode"] == "EDIT" and r["active"] == "SM_Crate_01"
+
+
+def _export_empty_mesh(skill, script, out_path):
+    """glTF omits a mesh with no geometry and keeps the node: the read-back must not call that a good export."""
+    mesh = bpy.data.meshes.new("__EmptyMesh")
+    obj = bpy.data.objects.new("SM_EmptyProbe", mesh)
+    bpy.context.scene.collection.objects.link(obj)
+    try:
+        args = {"objects": [obj.name], "out_path": out_path}
+        if skill == "export-pipeline":
+            args["engine"] = "godot"
+        return run(skill, script, args)["verify"]
+    finally:
+        bpy.data.objects.remove(obj)
+        bpy.data.meshes.remove(mesh)
+
+
+def _export_instancer(out_path):
+    """A vertex instancer that hides itself exports as a transform node plus its child: that is a good export."""
+    bm_mesh = bpy.data.meshes.new("__InstancerMesh")
+    bm_mesh.from_pydata([(0, 0, 0), (3, 0, 0)], [], [])
+    inst = bpy.data.objects.new("SM_InstancerProbe", bm_mesh)
+    inst.instance_type = "VERTS"
+    inst.show_instancer_for_render = False
+    bpy.context.scene.collection.objects.link(inst)
+    child = bpy.data.objects["SM_Crate_01"].copy()
+    child.name = "SM_InstancerChild"
+    bpy.context.scene.collection.objects.link(child)
+    child.parent = inst
+    try:
+        return run("export-pipeline", "export_asset.py", {"objects": [inst.name, child.name], "engine": "godot",
+                                                          "out_path": out_path})["verify"]
+    finally:
+        bpy.data.objects.remove(child)
+        bpy.data.objects.remove(inst)
+        bpy.data.meshes.remove(bm_mesh)
+
+
+def _capture_keeps_depth(out_dir):
+    im = bpy.context.scene.render.image_settings
+    saved = (im.media_type, im.file_format, im.color_depth)
+    im.file_format, im.color_depth = "OPEN_EXR", "32"
+    try:
+        run("blender-mcp-workflow", "capture_views.py", {"target": "SM_Crate_01", "out_dir": out_dir,
+                                                         "views": ["front"], "resolution": 64})
+        return {"fmt": im.file_format, "depth": im.color_depth}
+    finally:
+        im.media_type, im.file_format = saved[0], saved[1]
+        im.color_depth = saved[2]
+
+
 def _work_copy_child_world():
     parent, kid = _kid_scene("SM_WcKidP", "SOCKET_WcKid")
     before = kid.matrix_world.copy()
@@ -509,6 +602,32 @@ def build_cases(out_dir):
         ("export-pipeline.glb", lambda: run("export-pipeline", "export_asset.py", {
             "objects": ["SM_Crate_01"], "engine": "web", "out_path": os.path.join(out_dir, "SM_Crate_01.glb")}),
          lambda r: r["bytes"] > 500 and _glb_check(r, {"SM_Crate_01"}) and set(glb_nodes(r["path"])) == {"SM_Crate_01"}),
+        ("core.capture_keeps_color_depth", lambda: _capture_keeps_depth(out_dir),
+         lambda r: r == {"fmt": "OPEN_EXR", "depth": "32"}),
+        ("export-pipeline.glb_keeps_camera_and_mode", lambda: _export_keeps_state("export-pipeline", "export_asset.py", {
+            "objects": ["SM_Crate_01"], "engine": "web", "out_path": os.path.join(out_dir, "state.glb")}), _kept_state),
+        ("export-pipeline.fbx_keeps_camera_and_mode", lambda: _export_keeps_state("export-pipeline", "export_asset.py", {
+            "objects": ["SM_Crate_01"], "engine": "unity", "out_path": os.path.join(out_dir, "state.fbx")}), _kept_state),
+        ("godot-export.keeps_camera_and_mode", lambda: _export_keeps_state("godot-export", "export_godot.py", {
+            "objects": ["SM_Crate_01"], "out_path": os.path.join(out_dir, "state_godot.glb")}), _kept_state),
+        ("unity-export.keeps_camera_and_mode", lambda: _export_keeps_state("unity-export", "export_unity.py", {
+            "objects": ["SM_Crate_01"], "out_path": os.path.join(out_dir, "state_unity.fbx"), "strict": False}), _kept_state),
+        ("unity-export.animated_keeps_camera_and_mode", lambda: _export_keeps_state("unity-export", "export_unity.py", {
+            "objects": ["SM_Crate_01"], "out_path": os.path.join(out_dir, "state_unity_anim.fbx"), "strict": False,
+            "animation": True}), _kept_state),
+        ("export-pipeline.fbx_animated_keeps_camera_and_mode", lambda: _export_keeps_state("export-pipeline", "export_asset.py", {
+            "objects": ["SM_Crate_01"], "engine": "unity", "animation": True,
+            "out_path": os.path.join(out_dir, "state_anim.fbx")}), _kept_state),
+        ("export-pipeline.glb_instancer_is_ok", lambda: _export_instancer(os.path.join(out_dir, "instancer.glb")),
+         lambda r: r["no_geometry"] == []),
+        ("unreal-export.keeps_camera_and_mode", lambda: _export_keeps_state("unreal-export", "export_unreal.py", {
+            "mesh": "SM_Crate_01", "out_dir": os.path.join(out_dir, "state_unreal"), "strict": False}), _kept_state),
+        ("export-pipeline.glb_empty_mesh_not_ok", lambda: _export_empty_mesh(
+            "export-pipeline", "export_asset.py", os.path.join(out_dir, "empty.glb")),
+         lambda r: r["ok"] is False and r["no_geometry"] == ["SM_EmptyProbe"]),
+        ("godot-export.empty_mesh_not_ok", lambda: _export_empty_mesh(
+            "godot-export", "export_godot.py", os.path.join(out_dir, "empty_godot.glb")),
+         lambda r: r["ok"] is False and r["no_geometry"] == ["SM_EmptyProbe"]),
         ("unreal-export.export_unreal", lambda: run("unreal-export", "export_unreal.py", {
             "mesh": "SM_Sphere_01", "out_dir": out_dir, "strict": False}),
          lambda r: r["exported"] and r["collision"] and r["checks"]["prefix"] == "PASS"

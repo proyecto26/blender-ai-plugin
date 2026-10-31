@@ -11,7 +11,8 @@ ARGS:
     out_path  (str, required) .glb (binary, recommended) or .gltf
     animation (bool) default False
 
-Returns `verify` (the file is read back): {checked, nodes, joints, missing, leaked, ok}.
+Returns `verify` (the file is read back): {checked, nodes, joints, missing, no_geometry, leaked, ok}.
+The scene camera and the mode the active object was in are restored (the glTF exporter changes both).
 """
 import json
 import os
@@ -71,7 +72,8 @@ def _allowed_names(targets):
 
 
 def _verify(path, targets):
-    """Read the exported file back: nodes, joints, requested meshes missing, other objects leaked."""
+    """Read the exported file back: nodes, joints, requested meshes missing or written with no geometry (glTF
+    omits an empty mesh and keeps its node), other objects leaked."""
     if not path.lower().endswith((".glb", ".gltf")) or not os.path.exists(path):
         return {"checked": False}
     data = _gltf_json(path)
@@ -81,10 +83,24 @@ def _verify(path, targets):
     allowed = _allowed_names(targets)
     present = set(nodes)
     missing = sorted(o.name for o in targets if o.type == "MESH" and o.name not in present)
+    with_mesh = {n.get("name", "") for n in data.get("nodes", []) if "mesh" in n}
+    no_geometry = sorted(o.name for o in targets if o.type == "MESH" and o.instance_type == "NONE"
+                         and o.name in present and o.name not in with_mesh)
     leaked = sorted({n for i, n in enumerate(nodes)
                      if i not in joint_idx and n in bpy.data.objects and n not in allowed})
     return {"checked": True, "nodes": sorted(present), "joints": joints, "missing": missing,
-            "leaked": leaked, "ok": not missing and not leaked}
+            "no_geometry": no_geometry, "leaked": leaked, "ok": not missing and not no_geometry and not leaked}
+
+
+def _restore_state(camera, active, mode):
+    """Put back the scene camera and the active object's mode. Never raises, so an export error stays the reported one."""
+    try:
+        bpy.context.scene.camera = camera
+        if active and active.mode != mode:
+            with bpy.context.temp_override(active_object=active, object=active):
+                bpy.ops.object.mode_set(mode=mode)
+    except (RuntimeError, ReferenceError) as exc:
+        print(f"export: could not restore camera/mode: {exc}", file=sys.stderr)
 
 
 def main(out_path, objects=None, animation=False):
@@ -99,6 +115,9 @@ def main(out_path, objects=None, animation=False):
     unapplied = [o.name for o in targets if o.type == "MESH" and not all(abs(s - 1) < 1e-4 for s in o.scale)]
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
     prev = [o for o in bpy.context.selected_objects]
+    prev_active = bpy.context.view_layer.objects.active
+    prev_mode = prev_active.mode if prev_active else "OBJECT"
+    prev_camera = bpy.context.scene.camera
     for o in prev:
         o.select_set(False)
     for o in targets:
@@ -115,6 +134,7 @@ def main(out_path, objects=None, animation=False):
             o.select_set(False)
         for o in prev:
             o.select_set(True)
+        _restore_state(prev_camera, prev_active, prev_mode)
     ok = os.path.exists(out_path)
     return {"exported": ok, "path": out_path, "bytes": os.path.getsize(out_path) if ok else 0,
             "verify": _verify(out_path, targets),

@@ -185,7 +185,7 @@ result = runpy.run_path("<skill_dir>/scripts/export_asset.py", init_globals={"AR
 
 ARGS: `objects`, `engine`, `out_path`, `animation`
 
-glTF/GLB exports use the active scene only and read the file back: check `verify.ok` after every export (`nodes`, `missing`, `leaked` explain a failure). `verify.checked: false` (FBX, USD, OBJ) means NOT_CHECKED, never a pass.
+glTF/GLB exports use the active scene only and read the file back: check `verify.ok` after every export (`nodes`, `missing`, `no_geometry`, `leaked` explain a failure). `verify.checked: false` (FBX, USD, OBJ) means NOT_CHECKED, never a pass.
 
 ## Reference Guide
 
