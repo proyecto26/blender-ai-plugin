@@ -83,6 +83,8 @@ GOOD_MANIFEST = {"events": [{"stage": "inspect", "verdict": "NOT_CHECKED", "time
                             {"stage": "model", "verdict": "PASS", "time": "2026-01-01T00:01:00+00:00"},
                             {"stage": "light_camera", "verdict": "PASS", "time": "2026-01-01T00:02:00+00:00"}]}
 STATUS = {"state": "done", "ended": T0 + 100}
+BAD_RESTORED = [(T0 + 300, assistant(text("La captura salio negra."))),
+                (T0 + 400, {"type": "result", "subtype": "success", "result": "Hecho."})]
 
 
 def extra_cases():
@@ -124,6 +126,11 @@ def main():
                    "gates": "OK", "announcements": "OK", "finish": "NOTE"}
     failures = [("bad", k, v, bad.get(k)) for k, v in expect_bad.items() if bad.get(k) != v]
     failures += extra_cases()
+    with tempfile.TemporaryDirectory() as tmp:
+        late = list(BAD_RESTORED)
+        got = score(tmp, late, GOOD_MANIFEST, STATUS, "x", True)["window"]
+    if got != "FLAG":
+        failures.append(("told only after the window was restored", "", "FLAG", got))
     failures += [("good", k, v, good.get(k)) for k, v in expect_good.items() if good.get(k) != v]
     print(json.dumps({"passed": not failures, "failures": failures, "bad": bad, "good": good}, indent=2))
     return 1 if failures else 0

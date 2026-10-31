@@ -116,8 +116,9 @@ def score_window(run, args, manifest):
     samples = minimized_spans(args.monitor)
     if not samples:
         return verdict("window", "OK", "window never minimized")
-    final = run["results"][-1]["text"] if run["results"] else ""
-    told = [x for x in run["texts"] if re.search(MINIMIZED_WORDS, x["text"], re.I) and x["text"].strip() != final.strip()]
+    # Only a message sent while the window was still minimized gives the user the chance to act on it.
+    told = [x for x in run["texts"] if re.search(MINIMIZED_WORDS, x["text"], re.I) and not x["child"]
+            and (x["t"] is None or local_clock(x["t"]) <= max(samples))]
     problems = []
     if not told:
         problems.append("the agent did not tell the user during the run")
