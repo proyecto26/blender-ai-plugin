@@ -8,6 +8,26 @@ Format: [Semantic Versioning](https://semver.org/) — `Major.Minor.Patch`
 
 ## [Unreleased]
 
+Iteration 11: fixes from a measured run of the real orchestrator agent, reviewed by Codex.
+
+### Added
+- `rendering` -> `scripts/background_render.py`: render in a background Blender with an atomic progress status file; it
+  refuses to run in the open window and sets the Cycles device in its own process
+- `tests/agent_runs/score_run.py`: compares a run's claims with its session trace (preferences, window, skills, gates,
+  claims, early finish). It catches regressions; it does not stop a bad report, and one run proves one case
+
+### Changed
+- `run_manifest.py`: a capture must exist and is hashed; look_dev and light_camera need one to PASS; any PASS needs a
+  non-empty `result_summary`. These check that evidence is present and linked, not that it is true
+- The orchestrator names only loaded skills, records gates as stages end, reports a running job as still running, and
+  uses its caller line only with a calling agent
+- `live-session.md`: no preference changes in the open window, one Blender call at a time, tell the user at once about an
+  unusable screenshot
+
+### Fixed
+- `live-session.md` said `*_for_cli` stops the process at 120 s; the tool gives up, and through the launcher Blender kept
+  running to at least 150 s
+
 Iteration 10: fixes found by running the skills live in an open Blender window.
 
 ### Changed

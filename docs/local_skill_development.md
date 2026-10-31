@@ -58,7 +58,7 @@ This also works on Microsoft Store installs, since the results do not depend on 
 blender-launcher.exe --background scratch.blend --online-mode --command blender_mcp --port 9877
 ```
 
-Run the MCP server with `BLENDER_MCP_PORT=9877`. Tested with a JSON-RPC client, not yet from an agent session. Keep to these rules:
+Run the MCP server with `BLENDER_MCP_PORT=9877`. Tested with a JSON-RPC client and from real agent sessions (`--mcp-config` with that env, `--strict-mcp-config`). Keep to these rules:
 
 - Check the port is free first. Windows lets a second instance bind it without error, and the older one keeps answering.
 - **Reverting and stopping destroy work, so guard each in the same call,** in case the client reached the wrong Blender:
@@ -69,6 +69,13 @@ Run the MCP server with `BLENDER_MCP_PORT=9877`. Tested with a JSON-RPC client, 
 - Use one instance per test. Scene changes, render settings and handlers carry over between calls.
 - Stop it with a guarded `os._exit(0)` through `execute_blender_code`; `quit_blender` is refused and `sys.exit` does not stop it.
 - Screenshots and viewport operators are not available, so a pass proves nothing about them.
+
+## Scoring a Real Agent Run
+
+`tests/agent_runs/score_run.py` compares what a run claimed with its stream-json trace: preference writes, skills named
+but not loaded, gates batched in one call, overclaims, and whether the session finished before its render. Its text
+checks are heuristics and it runs after the job, so it catches regressions rather than stopping a bad report. One run
+shows one case, not general reliability. `tests/agent_runs/test_score_run.py` needs no Blender.
 
 ## Checklist
 

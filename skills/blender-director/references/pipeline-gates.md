@@ -32,8 +32,15 @@ A `validate_asset.py` WARN passes only with a recorded reason (`warn: true` + `r
 
 Append one event per gate with `scripts/run_manifest.py` (stage ids: inspect, brief, model, look_dev,
 light_camera, animate, film, handoff, validate, export, verify; animate, film and handoff are optional
-and stay N/A until a verdict is recorded). The script refuses a PASS after an earlier FAIL, hashes
-exported files, and keeps every path inside `out_dir`.
+and stay N/A until a verdict is recorded). The script refuses a PASS after an earlier FAIL, a PASS with an
+empty `result_summary`, and a PASS for look_dev or light_camera with no capture file. It hashes exports and
+captures, and keeps every path inside `out_dir`.
+
+Record each gate when its stage ends, from that stage's real result, and record it again after a rebuild. The script
+cannot tell whether a summary is true or a capture looks right, so never write verdicts from memory in one batch.
+If the inspect screenshot is black or missing, record NOT_CHECKED with the reason, and record PASS once you have seen a
+usable one; `complete` stays false until then. A background Blender has no window to capture: record inspect as N/A with
+that reason, not PASS. The visual evidence then comes from the look_dev and light_camera renders.
 
 ## Repeat-failure stop
 

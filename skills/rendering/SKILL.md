@@ -115,6 +115,7 @@ path of this installed script and their ARGS. Don't inline or rewrite the script
 
 | Script | What it does |
 |--------|--------------|
+| `scripts/background_render.py` | Render the animation in a background Blender with a progress status file; refuses to run in the window |
 | `scripts/render_preset.py` | Apply a render preset (engine, samples, denoise, resolution, color management). Returns the previous values so the change can be reverted. |
 
 ```python
@@ -123,6 +124,21 @@ result = runpy.run_path("<skill_dir>/scripts/render_preset.py", init_globals={"A
 ```
 
 ARGS: `preset`, `resolution_percentage`, `device`
+
+### Long renders
+
+Do not run a long render in the user's window: it freezes until the render ends. Save a copy of the file, then start
+`scripts/background_render.py` from your shell in a background task. It refuses to run inside the window, and sets the
+Cycles device in its own process, so the user's preferences stay as they are.
+
+```bash
+blender -b snapshot.blend --python-exit-code 1 --python <skill_dir>/scripts/background_render.py -- --args-file args.json
+```
+
+ARGS: `out_dir`, `frame_start`, `frame_end`, `device`, `overwrite`
+
+Follow `<out_dir>/render_status.json`, which gives progress and time left, and tell the user that path when the job
+starts. `done` means this run rendered every frame and they are on disk. Encode the video as a separate step and check it with `ffprobe`.
 
 ## Reference Image Validation
 

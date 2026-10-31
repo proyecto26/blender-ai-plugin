@@ -34,7 +34,8 @@ separate process. Changes are **not saved** unless your code saves (to a new pat
 batch validation, exports and experiments that must not disturb the user's session.
 The `*_for_cli` summary tools mirror the live ones for files on disk.
 Needs the `BLENDER_PATH` environment variable (a Blender executable) set in the MCP server's environment, then a
-restart of the agent; without it the tool fails with "Blender executable not found". It stops after 120 s. It cannot work on a Microsoft
+restart of the agent; without it the tool fails with "Blender executable not found". The tool gives up after 120 s,
+which does not prove the process stopped. It cannot work on a Microsoft
 Store install, and `No result marker` means the outcome is unknown: see `references/live-session.md`.
 
 Rules:

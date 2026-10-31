@@ -47,7 +47,7 @@ stdout, and `blender.exe` under `WindowsApps` gives access denied (reported upst
 
 - The launcher is never a valid `BLENDER_PATH` for `*_for_cli` tools.
 - `No result marker` means **outcome unknown**: the code may have run. Check outputs before running anything again.
-- `*_for_cli` tools stop at 120 s with no override (`_CLI_TIMEOUT`), so long work on every platform uses a direct
+- `*_for_cli` tools give up at 120 s (through the launcher Blender kept running to at least 150 s) with no override (`_CLI_TIMEOUT`), so long work on every platform uses a direct
   `-b file.blend --python script.py` process with a script that writes JSON, as the tests do; Store users run it through
   the launcher.
 - Other installs: set `BLENDER_PATH` to `blender.exe`. Upstream #42 reports a hang on Windows; untested here. macOS and

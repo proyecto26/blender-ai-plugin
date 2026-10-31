@@ -503,20 +503,79 @@ def _work_copy_set_checkpoint():
             "prev_parent_is_prev": prev_p.name}
 
 
+def _manifest_evidence():
+    import hashlib
+    d = os.path.join(OUT, "manifest_evidence")
+    os.makedirs(d, exist_ok=True)
+    with open(os.path.join(d, "shot.png"), "wb") as fh:
+        fh.write(b"png")
+    base = {"out_dir": d, "skill": "lighting", "script": "camera_rig.py", "stage": "light_camera"}
+    rm = lambda **kw: run("blender-director", "run_manifest.py", dict(base, **kw))
+    summary = {"occluded_by": []}
+    no_capture = _expect_error(lambda: rm(verdict="PASS", result_summary=summary))
+    ghost = _expect_error(lambda: rm(verdict="PASS", result_summary=summary, capture="missing.png"))
+    empties = [_expect_error(lambda v=v: rm(verdict="PASS", capture="shot.png", result_summary=v)) for v in (None, {}, "  ")]
+    no_capture_nc = rm(verdict="NOT_CHECKED", reason="window minimized")
+    good = rm(verdict="PASS", result_summary=summary, capture="shot.png")
+    with open(os.path.join(d, "run_manifest.json"), encoding="utf-8") as fh:
+        last = json.load(fh)["events"][-1]
+    return {"no_capture": no_capture, "ghost": ghost, "empties": empties, "nc": no_capture_nc["gates"]["light_camera"],
+            "good": good["gates"]["light_camera"], "hash": last.get("capture_sha256"), "bytes": last.get("capture_bytes"),
+            "expect": hashlib.sha256(b"png").hexdigest()}
+
+
+def _background_render():
+    scene = bpy.context.scene
+    r = scene.render
+    saved = (r.engine, r.filepath, r.resolution_x, r.resolution_y, r.resolution_percentage, r.use_overwrite,
+             scene.frame_start, scene.frame_end, scene.frame_current, r.image_settings.media_type,
+             r.image_settings.file_format)
+    handlers = len(bpy.app.handlers.render_post)
+    d = os.path.join(OUT, "bg_render")
+    status_path = os.path.join(d, "render_status.json")
+    read = lambda: json.load(open(status_path, encoding="utf-8"))
+    args = {"out_dir": d, "frame_start": 1, "frame_end": 2}
+    try:
+        r.engine = "BLENDER_WORKBENCH"
+        r.resolution_x, r.resolution_y, r.resolution_percentage = 32, 32, 100
+        r.image_settings.media_type = "IMAGE"
+        r.image_settings.file_format = "PNG"
+        res = run("rendering", "background_render.py", args)
+        first = read()
+        repeat = _expect_error(lambda: run("rendering", "background_render.py", args))
+        repeat_state = read()["state"]
+        again = run("rendering", "background_render.py", dict(args, overwrite=True))["state"]
+        bad_device = _expect_error(lambda: run("rendering", "background_render.py", dict(args, overwrite=True, device="NOPE")))
+        bad_state = read()
+        strays = _expect_error(lambda: run("rendering", "background_render.py", dict(args, frame_start=3, frame_end=4)))
+        r.image_settings.media_type = "VIDEO"
+        movie = _expect_error(lambda: run("rendering", "background_render.py", dict(args, overwrite=True)))
+        return {"state": res["state"], "done": first["frames_done"], "total": first["frames_total"],
+                "files": sorted(os.listdir(os.path.join(d, "frames"))), "ended": first["ended"], "repeat": repeat,
+                "repeat_state": repeat_state, "again": again, "bad_device": bad_device, "bad_state": bad_state["state"],
+                "bad_error": bad_state["error"], "strays": strays, "movie": movie, "handlers_kept": len(bpy.app.handlers.render_post) == handlers}
+    finally:
+        r.image_settings.media_type, r.image_settings.file_format = saved[9], saved[10]
+        r.engine, r.filepath, r.resolution_x, r.resolution_y, r.resolution_percentage, r.use_overwrite = saved[:6]
+        scene.frame_start, scene.frame_end = saved[6], saved[7]
+        scene.frame_set(saved[8])
+
+
 def _manifest_validate_gate():
     d = os.path.join(OUT, "manifest_gate")
     os.makedirs(d, exist_ok=True)
     base = {"out_dir": d, "skill": "blender-mcp-workflow", "script": "validate_asset.py"}
     rm = lambda **kw: run("blender-director", "run_manifest.py", dict(base, **kw))
-    rm(stage="model", verdict="PASS")
+    ok = {"result_summary": {"fails": 0}}
+    rm(stage="model", verdict="PASS", **ok)
     missing = _expect_error(lambda: rm(stage="export", verdict="PASS"))
     rm(stage="validate", verdict="NOT_CHECKED", reason="not run yet")
     not_checked = _expect_error(lambda: rm(stage="export", verdict="PASS"))
     verify_nc = _expect_error(lambda: rm(stage="verify", verdict="PASS"))
     rm(stage="validate", verdict="N/A", reason="no mesh output")
-    ok_na = rm(stage="export", verdict="PASS")
-    rm(stage="validate", verdict="PASS")
-    ok_verify = rm(stage="verify", verdict="PASS")
+    ok_na = rm(stage="export", verdict="PASS", **ok)
+    rm(stage="validate", verdict="PASS", **ok)
+    ok_verify = rm(stage="verify", verdict="PASS", **ok)
     return {"missing": missing, "not_checked": not_checked, "verify_nc": verify_nc,
             "export_after_na": ok_na["gates"]["export"], "verify_after_pass": ok_verify["gates"]["verify"]}
 
@@ -752,6 +811,16 @@ def build_cases(out_dir):
          lambda r: r["mid_pending"] and r["before"] == r["after"] and not r["pending_after"]),
         ("work-copy.begin_twice_errors", lambda: _work_copy_twice(),
          lambda r: r["error"] and "pending" in r["error"] and not r["pending_after"]),
+        ("director.manifest_needs_evidence", lambda: _manifest_evidence(),
+         lambda r: "capture" in (r["no_capture"] or "") and "not found" in (r["ghost"] or "")
+         and all(e and "result_summary" in e for e in r["empties"]) and r["nc"] == "NOT_CHECKED"
+         and r["good"] == "PASS" and r["hash"] == r["expect"] and r["bytes"] == 3),
+        ("rendering.background_render", lambda: _background_render(),
+         lambda r: r["state"] == "done" and r["done"] == 2 and r["total"] == 2 and len(r["files"]) == 2 and r["ended"]
+         and "already exist" in (r["repeat"] or "") and r["repeat_state"] == "error" and r["again"] == "done"
+         and "device" in (r["bad_device"] or "") and r["bad_state"] == "error" and "device" in (r["bad_error"] or "")
+         and "outside this frame range" in (r["strays"] or "") and "image format" in (r["movie"] or "")
+         and r["handlers_kept"]),
         ("director.run_manifest", lambda: _manifest_case(),
          lambda r: r["events"] == 2 and r["r2_events"] == 2 and r["hash"] == r["expect_hash"]
          and r["outside"] and "outside" in r["outside"] and r["outside_cap"] and "outside" in r["outside_cap"]
