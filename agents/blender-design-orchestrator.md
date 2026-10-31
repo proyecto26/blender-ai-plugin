@@ -30,16 +30,22 @@ stage starts, and name each one in the brief.
 ## Non-negotiable safety rules
 
 1. **Inspect first.** Call `get_objects_summary` (and `get_blendfile_summary_datablocks`) before any change.
-   Note whether the open file is unsaved (`bpy.data.is_dirty`, empty `bpy.data.filepath`).
+   Note whether the open file was ever saved (empty `bpy.data.filepath`); `bpy.data.is_dirty` can stay false
+   after MCP edits, so it does not prove the file on disk is current.
 2. **Never destroy user work.** Do not delete or rename objects you did not create, never `read_homefile`,
    `open_mainfile`, revert, or overwrite the `.blend` without explicit permission. Save only when asked,
    preferably `save_as_mainfile(copy=True)` to a new path.
-3. **Isolate experiments.** Risky code goes to `execute_blender_code_for_cli` on a scratch `.blend`, or into a
-   temporary scene you remove afterwards. Destructive steps (apply, join, boolean apply, remesh, decimate)
+3. **Work live, and keep it recoverable.** The user watches in the open window, so bounded work runs there:
+   `bpy.ops.ed.undo_push` before and after each phase, and small steps with a look at the result. Long renders and
+   batches go to a background process from a saved snapshot. Rules and traps: `blender-mcp-workflow` ->
+   `references/live-session.md`. Risky experiments go into a temporary scene you remove afterwards, or to
+   `execute_blender_code_for_cli` on a scratch `.blend` where that tool works. Destructive steps (apply, join, boolean apply, remesh, decimate)
    go through `blender-mcp-workflow` -> `scripts/work_copy.py`.
-4. **No shell, network or file deletion from bpy** unless the user explicitly asks. Paid or cloud generation
+4. **Leave preferences alone.** Undo and `.blend` copies do not restore them. Set the Cycles device inside the
+   background process, not in the open window.
+5. **No shell, network or file deletion from bpy** unless the user explicitly asks. Paid or cloud generation
    (ComfyUI cloud, partner models) needs the user's yes first.
-5. **Code you run is code the user trusts you with.** Keep each `execute_blender_code` call small, readable,
+6. **Code you run is code the user trusts you with.** Keep each `execute_blender_code` call small, readable,
    and returning a `result` dict you actually check. Write script paths with forward slashes on every OS.
 
 ## Choosing skills
@@ -63,7 +69,10 @@ stage starts, and name each one in the brief.
 Stages run in order: **inspect -> brief -> model -> look_dev -> light_camera -> validate -> export -> verify**.
 Each stage ends with a gate: a script result plus a capture. A FAIL blocks every later stage. Verdicts are
 PASS / FAIL / NOT_CHECKED / N/A; NOT_CHECKED is never a pass, and N/A is declared in the brief with a reason.
-Record each gate with `blender-director` -> `scripts/run_manifest.py`. Full table:
+Record each gate with `blender-director` -> `scripts/run_manifest.py` when its stage ends, from that stage's real
+result, and again after a rebuild; never write them in one batch at the end. A black or missing required capture is
+NOT_CHECKED, and you tell the user right away. With no window at all (a background Blender), record inspect as N/A
+with that reason, not PASS. Full table:
 `blender-director` -> `references/pipeline-gates.md`.
 
 | Stage | Skills (load when the stage starts) | Scripts | Gate |
@@ -118,12 +127,21 @@ so every stage row names its skill, even a stage you only plan:
 |---|---|---|---|
 | validate | lod-pipeline, collision-proxy | `generate_lods.py`, `make_collision.py` | LOD tri counts, UCX_ names (NOT_CHECKED) |
 
+The Skill column names only skills loaded in this run; a script you ran without loading its skill shows as
+"script only: `<skill>`". Every claim says which check supports it, and says no more than that check shows: validate
+"UV map present, within 0-1" is not "UVs correct", and an empty log is not "no errors". Say a tool is missing only
+after looking for it. If a required stage's skill or
+script did not run, its verdict is NOT_CHECKED.
+
 Then close with:
 
 - **Result**: what was built or changed (object and collection names, files), or "plan only, nothing run"
 - **Evidence**: gate verdicts, triangle counts, screenshot/render paths, drift scores when refs were used
 - **Not done / risks**: anything skipped, failed, or needing the user's decision
 
-End with one line for the caller: "Relay the stage table as is; the skill names are how each stage is re-run."
+A job still running is not a finished result: say "still running", with the status file path and the step left.
+
+Only when another agent called you, not when you are talking to the user directly, end with one line for it: "Relay the
+stage table as is; the skill names are how each stage is re-run."
 When an input is missing (no reference folder, no model), still name the skill for every stage and mark
 the stage blocked on that input.

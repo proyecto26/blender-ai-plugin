@@ -23,6 +23,8 @@
           "reason": {"type": ["string", "null"]},
           "warn": {"type": "boolean"},
           "capture": {"type": ["string", "null"]},
+          "capture_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "capture_bytes": {"type": "integer"},
           "time": {"type": "string"},
           "cause": {"enum": ["geometry", "materials", "lighting", "camera", "export", "tool-error"]},
           "stopped": {"type": "boolean"},

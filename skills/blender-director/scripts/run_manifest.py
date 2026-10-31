@@ -20,14 +20,16 @@ ARGS:
     verdict         (str) PASS | FAIL | NOT_CHECKED | N/A   (NOT_CHECKED is never a pass)
     reason          (str) required for FAIL, N/A, NOT_CHECKED and for a PASS that accepts a WARN (warn=true)
     warn            (bool) PASS accepted despite a WARN (needs reason)
-    capture         (str|None) screenshot / render path inside out_dir (relative paths resolve there)
+    capture         (str|None) screenshot / render file inside out_dir (relative paths resolve there); it must
+                    exist, and its sha256 and size are recorded. look_dev and light_camera need one to PASS.
     exports         (list[str]) files inside out_dir; their sha256 and size are recorded
     cause           (str) geometry | materials | lighting | camera | export | tool-error; required on the
                     second consecutive FAIL of the same stage (stop and report, no third blind retry)
 
 Rules: a PASS for a stage is refused while an earlier stage's latest verdict is FAIL; a PASS for `export`
-or `verify` also needs the latest `validate` verdict to be PASS or N/A (NOT_CHECKED / missing is refused). Nothing is ever
-deleted. Result: events count, `gates` (latest verdict per stage), `blocked_by`, `stop`, `complete`
+or `verify` also needs the latest `validate` verdict to be PASS or N/A (NOT_CHECKED / missing is refused). Any PASS needs
+a non-empty `result_summary`. These guards check that evidence is present and linked, not that it is true or that a
+capture looks right. Nothing is ever deleted. Result: events count, `gates` (latest verdict per stage), `blocked_by`, `stop`, `complete`
 (every stage PASS or N/A).
 """
 import datetime
@@ -40,6 +42,7 @@ STAGES = ["inspect", "brief", "model", "look_dev", "light_camera", "animate", "f
           "validate", "export", "verify"]
 OPTIONAL = {"animate", "film", "handoff"}  # tracks most asset runs never enter; N/A until a verdict is recorded
 VERDICTS = ["PASS", "FAIL", "NOT_CHECKED", "N/A"]
+CAPTURE_STAGES = ("look_dev", "light_camera")
 CAUSES = ["geometry", "materials", "lighting", "camera", "export", "tool-error"]
 NAME = "run_manifest.json"
 
@@ -146,16 +149,29 @@ def main(out_dir, brief=None, stage=None, skill=None, script=None, args=None, re
                 raise ValueError(f"second consecutive FAIL at '{stage}': pass cause={CAUSES}, then stop "
                                  "and report to the user instead of retrying")
             stop = True
-        cap_rel = _inside(out_dir, capture)[1] if capture else None
+        cap_rel = None
+        cap_info = {}
+        if capture:
+            cap_full, cap_rel = _inside(out_dir, capture)
+            if not os.path.isfile(cap_full):
+                raise ValueError(f"capture file not found: {capture}")
+            cap_info = {"capture_sha256": _sha256(cap_full), "capture_bytes": os.path.getsize(cap_full)}
         files = []
         for f in exports or []:
             full, rel = _inside(out_dir, f)
             if not os.path.isfile(full):
                 raise ValueError(f"export file not found: {f}")
             files.append({"path": rel, "sha256": _sha256(full), "bytes": os.path.getsize(full)})
+        if verdict == "PASS":
+            if stage in CAPTURE_STAGES and not capture:
+                raise ValueError(f"stage '{stage}' cannot PASS without a capture file; record NOT_CHECKED if none exists")
+            empty = result_summary is None or result_summary == {} or not str(result_summary).strip()
+            if empty:
+                raise ValueError("a PASS needs a result_summary with the numbers or verdicts that support it")
         event = {"stage": stage, "skill": skill, "script": script, "args": args or {},
                  "result_summary": result_summary if result_summary is not None else {},
                  "verdict": verdict, "reason": reason, "capture": cap_rel, "time": _now()}
+        event.update(cap_info)
         if warn:
             event["warn"] = True
         if files:

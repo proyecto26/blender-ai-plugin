@@ -41,8 +41,41 @@ the routing table in `skills/blender-director/SKILL.md` and to [SKILLS_GUIDE.md]
    `execute_blender_code_for_cli(blend_file="/tmp/empty.blend", code='import runpy; result = runpy.run_path("<repo>/tests/blender/test_skill_scripts.py", init_globals={"ARGS": {"only": ["my-skill"]}})["result"]')`
    or from a terminal:
    `blender -b --factory-startup --python tests/blender/test_skill_scripts.py -- '{"only": ["my-skill"]}'`
+   On a Microsoft Store install use the terminal form through `blender-launcher.exe` and read the JSON report in
+   `out_dir`; the `*_for_cli` tool cannot return results there.
 4. Look at the result: `capture_views.py` renders PNGs you can open, and in the live session
    `get_screenshot_of_area_as_image("VIEW_3D")` shows the viewport.
+5. Check it live when it matters. Background runs cannot prove the viewport, screenshots or how long the window
+   freezes. With the user's agreement, on a disposable file they can watch, run the script in the open window and
+   compare selection, mode, frame, camera and render settings before and after.
+
+## Testing through the real MCP tools, unattended
+
+A separate Blender can serve the add-on's socket, so tests go through the real tools without touching the open window.
+This also works on Microsoft Store installs, since the results do not depend on stdout:
+
+```powershell
+blender-launcher.exe --background scratch.blend --online-mode --command blender_mcp --port 9877
+```
+
+Run the MCP server with `BLENDER_MCP_PORT=9877`. Tested with a JSON-RPC client and from real agent sessions (`--mcp-config` with that env, `--strict-mcp-config`). Keep to these rules:
+
+- Check the port is free first. Windows lets a second instance bind it without error, and the older one keeps answering.
+- **Reverting and stopping destroy work, so guard each in the same call,** in case the client reached the wrong Blender:
+  `assert bpy.app.background and bpy.path.abspath(bpy.data.filepath) == SCRATCH`, comparing to the scratch file's
+  absolute path. A free port does not prove where a call went.
+- Make the guarded `bpy.ops.wm.revert_mainfile()` the first call: a fresh instance has no window context, and export
+  scripts fail on `selected_objects` until then.
+- Use one instance per test. Scene changes, render settings and handlers carry over between calls.
+- Stop it with a guarded `os._exit(0)` through `execute_blender_code`; `quit_blender` is refused and `sys.exit` does not stop it.
+- Screenshots and viewport operators are not available, so a pass proves nothing about them.
+
+## Scoring a Real Agent Run
+
+`tests/agent_runs/score_run.py` compares what a run claimed with its stream-json trace: preference writes, skills named
+but not loaded, gates batched in one call, overclaims, and whether the session finished before its render. Its text
+checks are heuristics and it runs after the job, so it catches regressions rather than stopping a bad report. One run
+shows one case, not general reliability. `tests/agent_runs/test_score_run.py` needs no Blender.
 
 ## Checklist
 

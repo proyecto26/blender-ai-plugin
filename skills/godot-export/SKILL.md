@@ -106,7 +106,7 @@ result = runpy.run_path("<skill_dir>/scripts/export_godot.py", init_globals={"AR
 
 ARGS: `objects`, `out_path`, `animation`
 
-The export uses the active scene only and reads the file back: check `verify.ok` after export (`missing` and `leaked` list mismatches). `verify.checked: false` means NOT_CHECKED, never a pass.
+The export uses the active scene only and reads the file back: check `verify.ok` after export (`missing`, `no_geometry` and `leaked` list mismatches). `verify.checked: false` means NOT_CHECKED, never a pass.
 
 ## Reference Guide
 

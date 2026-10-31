@@ -377,6 +377,99 @@ def _capture_ignores_marker_cameras(out_dir):
         bpy.data.cameras.remove(cam_data)
 
 
+def _export_keeps_state(skill, script, args):
+    """An export must leave the scene camera and the Edit Mode it found: the exporters leave Edit Mode and move
+    frames, which lets a marker bound to another camera replace scene.camera."""
+    scene = bpy.context.scene
+    view_layer = bpy.context.view_layer
+    saved = (scene.camera, view_layer.objects.active, list(bpy.context.selected_objects))
+    objs, marker = [], None
+    edit = bpy.data.objects["SM_Crate_01"]
+    try:
+        for n in ("__StateCam", "__StateMarkerCam"):
+            objs.append(bpy.data.objects.new(n, bpy.data.cameras.new(n)))
+            scene.collection.objects.link(objs[-1])
+        marker = scene.timeline_markers.new("__StateMarker", frame=scene.frame_current)
+        marker.camera = objs[1]
+        scene.camera = objs[0]
+        view_layer.objects.active = edit
+        edit.select_set(True)
+        bpy.ops.object.mode_set(mode="EDIT")
+        r = run(skill, script, args)
+        return {"exported": r.get("exists", r.get("exported")), "verify_ok": (r.get("verify") or {}).get("ok"),
+                "camera": scene.camera.name if scene.camera else None, "mode": edit.mode,
+                "active": view_layer.objects.active.name if view_layer.objects.active else None}
+    finally:
+        try:
+            if edit.mode != "OBJECT":
+                bpy.ops.object.mode_set(mode="OBJECT")
+        finally:
+            scene.camera, view_layer.objects.active = saved[0], saved[1]
+            for o in bpy.context.selected_objects:
+                o.select_set(False)
+            for o in saved[2]:
+                o.select_set(True)
+            if marker:
+                scene.timeline_markers.remove(marker)
+            for o in objs:
+                data = o.data
+                bpy.data.objects.remove(o)
+                bpy.data.cameras.remove(data)
+
+
+def _kept_state(r):
+    return r["exported"] and r["camera"] == "__StateCam" and r["mode"] == "EDIT" and r["active"] == "SM_Crate_01"
+
+
+def _export_empty_mesh(skill, script, out_path):
+    """glTF omits a mesh with no geometry and keeps the node: the read-back must not call that a good export."""
+    mesh = bpy.data.meshes.new("__EmptyMesh")
+    obj = bpy.data.objects.new("SM_EmptyProbe", mesh)
+    bpy.context.scene.collection.objects.link(obj)
+    try:
+        args = {"objects": [obj.name], "out_path": out_path}
+        if skill == "export-pipeline":
+            args["engine"] = "godot"
+        return run(skill, script, args)["verify"]
+    finally:
+        bpy.data.objects.remove(obj)
+        bpy.data.meshes.remove(mesh)
+
+
+def _export_instancer(out_path):
+    """A vertex instancer that hides itself exports as a transform node plus its child: that is a good export."""
+    bm_mesh = bpy.data.meshes.new("__InstancerMesh")
+    bm_mesh.from_pydata([(0, 0, 0), (3, 0, 0)], [], [])
+    inst = bpy.data.objects.new("SM_InstancerProbe", bm_mesh)
+    inst.instance_type = "VERTS"
+    inst.show_instancer_for_render = False
+    bpy.context.scene.collection.objects.link(inst)
+    child = bpy.data.objects["SM_Crate_01"].copy()
+    child.name = "SM_InstancerChild"
+    bpy.context.scene.collection.objects.link(child)
+    child.parent = inst
+    try:
+        return run("export-pipeline", "export_asset.py", {"objects": [inst.name, child.name], "engine": "godot",
+                                                          "out_path": out_path})["verify"]
+    finally:
+        bpy.data.objects.remove(child)
+        bpy.data.objects.remove(inst)
+        bpy.data.meshes.remove(bm_mesh)
+
+
+def _capture_keeps_depth(out_dir):
+    im = bpy.context.scene.render.image_settings
+    saved = (im.media_type, im.file_format, im.color_depth)
+    im.file_format, im.color_depth = "OPEN_EXR", "32"
+    try:
+        run("blender-mcp-workflow", "capture_views.py", {"target": "SM_Crate_01", "out_dir": out_dir,
+                                                         "views": ["front"], "resolution": 64})
+        return {"fmt": im.file_format, "depth": im.color_depth}
+    finally:
+        im.media_type, im.file_format = saved[0], saved[1]
+        im.color_depth = saved[2]
+
+
 def _work_copy_child_world():
     parent, kid = _kid_scene("SM_WcKidP", "SOCKET_WcKid")
     before = kid.matrix_world.copy()
@@ -410,20 +503,79 @@ def _work_copy_set_checkpoint():
             "prev_parent_is_prev": prev_p.name}
 
 
+def _manifest_evidence():
+    import hashlib
+    d = os.path.join(OUT, "manifest_evidence")
+    os.makedirs(d, exist_ok=True)
+    with open(os.path.join(d, "shot.png"), "wb") as fh:
+        fh.write(b"png")
+    base = {"out_dir": d, "skill": "lighting", "script": "camera_rig.py", "stage": "light_camera"}
+    rm = lambda **kw: run("blender-director", "run_manifest.py", dict(base, **kw))
+    summary = {"occluded_by": []}
+    no_capture = _expect_error(lambda: rm(verdict="PASS", result_summary=summary))
+    ghost = _expect_error(lambda: rm(verdict="PASS", result_summary=summary, capture="missing.png"))
+    empties = [_expect_error(lambda v=v: rm(verdict="PASS", capture="shot.png", result_summary=v)) for v in (None, {}, "  ")]
+    no_capture_nc = rm(verdict="NOT_CHECKED", reason="window minimized")
+    good = rm(verdict="PASS", result_summary=summary, capture="shot.png")
+    with open(os.path.join(d, "run_manifest.json"), encoding="utf-8") as fh:
+        last = json.load(fh)["events"][-1]
+    return {"no_capture": no_capture, "ghost": ghost, "empties": empties, "nc": no_capture_nc["gates"]["light_camera"],
+            "good": good["gates"]["light_camera"], "hash": last.get("capture_sha256"), "bytes": last.get("capture_bytes"),
+            "expect": hashlib.sha256(b"png").hexdigest()}
+
+
+def _background_render():
+    scene = bpy.context.scene
+    r = scene.render
+    saved = (r.engine, r.filepath, r.resolution_x, r.resolution_y, r.resolution_percentage, r.use_overwrite,
+             scene.frame_start, scene.frame_end, scene.frame_current, r.image_settings.media_type,
+             r.image_settings.file_format)
+    handlers = len(bpy.app.handlers.render_post)
+    d = os.path.join(OUT, "bg_render")
+    status_path = os.path.join(d, "render_status.json")
+    read = lambda: json.load(open(status_path, encoding="utf-8"))
+    args = {"out_dir": d, "frame_start": 1, "frame_end": 2}
+    try:
+        r.engine = "BLENDER_WORKBENCH"
+        r.resolution_x, r.resolution_y, r.resolution_percentage = 32, 32, 100
+        r.image_settings.media_type = "IMAGE"
+        r.image_settings.file_format = "PNG"
+        res = run("rendering", "background_render.py", args)
+        first = read()
+        repeat = _expect_error(lambda: run("rendering", "background_render.py", args))
+        repeat_state = read()["state"]
+        again = run("rendering", "background_render.py", dict(args, overwrite=True))["state"]
+        bad_device = _expect_error(lambda: run("rendering", "background_render.py", dict(args, overwrite=True, device="NOPE")))
+        bad_state = read()
+        strays = _expect_error(lambda: run("rendering", "background_render.py", dict(args, frame_start=3, frame_end=4)))
+        r.image_settings.media_type = "VIDEO"
+        movie = _expect_error(lambda: run("rendering", "background_render.py", dict(args, overwrite=True)))
+        return {"state": res["state"], "done": first["frames_done"], "total": first["frames_total"],
+                "files": sorted(os.listdir(os.path.join(d, "frames"))), "ended": first["ended"], "repeat": repeat,
+                "repeat_state": repeat_state, "again": again, "bad_device": bad_device, "bad_state": bad_state["state"],
+                "bad_error": bad_state["error"], "strays": strays, "movie": movie, "handlers_kept": len(bpy.app.handlers.render_post) == handlers}
+    finally:
+        r.image_settings.media_type, r.image_settings.file_format = saved[9], saved[10]
+        r.engine, r.filepath, r.resolution_x, r.resolution_y, r.resolution_percentage, r.use_overwrite = saved[:6]
+        scene.frame_start, scene.frame_end = saved[6], saved[7]
+        scene.frame_set(saved[8])
+
+
 def _manifest_validate_gate():
     d = os.path.join(OUT, "manifest_gate")
     os.makedirs(d, exist_ok=True)
     base = {"out_dir": d, "skill": "blender-mcp-workflow", "script": "validate_asset.py"}
     rm = lambda **kw: run("blender-director", "run_manifest.py", dict(base, **kw))
-    rm(stage="model", verdict="PASS")
+    ok = {"result_summary": {"fails": 0}}
+    rm(stage="model", verdict="PASS", **ok)
     missing = _expect_error(lambda: rm(stage="export", verdict="PASS"))
     rm(stage="validate", verdict="NOT_CHECKED", reason="not run yet")
     not_checked = _expect_error(lambda: rm(stage="export", verdict="PASS"))
     verify_nc = _expect_error(lambda: rm(stage="verify", verdict="PASS"))
     rm(stage="validate", verdict="N/A", reason="no mesh output")
-    ok_na = rm(stage="export", verdict="PASS")
-    rm(stage="validate", verdict="PASS")
-    ok_verify = rm(stage="verify", verdict="PASS")
+    ok_na = rm(stage="export", verdict="PASS", **ok)
+    rm(stage="validate", verdict="PASS", **ok)
+    ok_verify = rm(stage="verify", verdict="PASS", **ok)
     return {"missing": missing, "not_checked": not_checked, "verify_nc": verify_nc,
             "export_after_na": ok_na["gates"]["export"], "verify_after_pass": ok_verify["gates"]["verify"]}
 
@@ -509,6 +661,32 @@ def build_cases(out_dir):
         ("export-pipeline.glb", lambda: run("export-pipeline", "export_asset.py", {
             "objects": ["SM_Crate_01"], "engine": "web", "out_path": os.path.join(out_dir, "SM_Crate_01.glb")}),
          lambda r: r["bytes"] > 500 and _glb_check(r, {"SM_Crate_01"}) and set(glb_nodes(r["path"])) == {"SM_Crate_01"}),
+        ("core.capture_keeps_color_depth", lambda: _capture_keeps_depth(out_dir),
+         lambda r: r == {"fmt": "OPEN_EXR", "depth": "32"}),
+        ("export-pipeline.glb_keeps_camera_and_mode", lambda: _export_keeps_state("export-pipeline", "export_asset.py", {
+            "objects": ["SM_Crate_01"], "engine": "web", "out_path": os.path.join(out_dir, "state.glb")}), _kept_state),
+        ("export-pipeline.fbx_keeps_camera_and_mode", lambda: _export_keeps_state("export-pipeline", "export_asset.py", {
+            "objects": ["SM_Crate_01"], "engine": "unity", "out_path": os.path.join(out_dir, "state.fbx")}), _kept_state),
+        ("godot-export.keeps_camera_and_mode", lambda: _export_keeps_state("godot-export", "export_godot.py", {
+            "objects": ["SM_Crate_01"], "out_path": os.path.join(out_dir, "state_godot.glb")}), _kept_state),
+        ("unity-export.keeps_camera_and_mode", lambda: _export_keeps_state("unity-export", "export_unity.py", {
+            "objects": ["SM_Crate_01"], "out_path": os.path.join(out_dir, "state_unity.fbx"), "strict": False}), _kept_state),
+        ("unity-export.animated_keeps_camera_and_mode", lambda: _export_keeps_state("unity-export", "export_unity.py", {
+            "objects": ["SM_Crate_01"], "out_path": os.path.join(out_dir, "state_unity_anim.fbx"), "strict": False,
+            "animation": True}), _kept_state),
+        ("export-pipeline.fbx_animated_keeps_camera_and_mode", lambda: _export_keeps_state("export-pipeline", "export_asset.py", {
+            "objects": ["SM_Crate_01"], "engine": "unity", "animation": True,
+            "out_path": os.path.join(out_dir, "state_anim.fbx")}), _kept_state),
+        ("export-pipeline.glb_instancer_is_ok", lambda: _export_instancer(os.path.join(out_dir, "instancer.glb")),
+         lambda r: r["no_geometry"] == []),
+        ("unreal-export.keeps_camera_and_mode", lambda: _export_keeps_state("unreal-export", "export_unreal.py", {
+            "mesh": "SM_Crate_01", "out_dir": os.path.join(out_dir, "state_unreal"), "strict": False}), _kept_state),
+        ("export-pipeline.glb_empty_mesh_not_ok", lambda: _export_empty_mesh(
+            "export-pipeline", "export_asset.py", os.path.join(out_dir, "empty.glb")),
+         lambda r: r["ok"] is False and r["no_geometry"] == ["SM_EmptyProbe"]),
+        ("godot-export.empty_mesh_not_ok", lambda: _export_empty_mesh(
+            "godot-export", "export_godot.py", os.path.join(out_dir, "empty_godot.glb")),
+         lambda r: r["ok"] is False and r["no_geometry"] == ["SM_EmptyProbe"]),
         ("unreal-export.export_unreal", lambda: run("unreal-export", "export_unreal.py", {
             "mesh": "SM_Sphere_01", "out_dir": out_dir, "strict": False}),
          lambda r: r["exported"] and r["collision"] and r["checks"]["prefix"] == "PASS"
@@ -633,6 +811,16 @@ def build_cases(out_dir):
          lambda r: r["mid_pending"] and r["before"] == r["after"] and not r["pending_after"]),
         ("work-copy.begin_twice_errors", lambda: _work_copy_twice(),
          lambda r: r["error"] and "pending" in r["error"] and not r["pending_after"]),
+        ("director.manifest_needs_evidence", lambda: _manifest_evidence(),
+         lambda r: "capture" in (r["no_capture"] or "") and "not found" in (r["ghost"] or "")
+         and all(e and "result_summary" in e for e in r["empties"]) and r["nc"] == "NOT_CHECKED"
+         and r["good"] == "PASS" and r["hash"] == r["expect"] and r["bytes"] == 3),
+        ("rendering.background_render", lambda: _background_render(),
+         lambda r: r["state"] == "done" and r["done"] == 2 and r["total"] == 2 and len(r["files"]) == 2 and r["ended"]
+         and "already exist" in (r["repeat"] or "") and r["repeat_state"] == "error" and r["again"] == "done"
+         and "device" in (r["bad_device"] or "") and r["bad_state"] == "error" and "device" in (r["bad_error"] or "")
+         and "outside this frame range" in (r["strays"] or "") and "image format" in (r["movie"] or "")
+         and r["handlers_kept"]),
         ("director.run_manifest", lambda: _manifest_case(),
          lambda r: r["events"] == 2 and r["r2_events"] == 2 and r["hash"] == r["expect_hash"]
          and r["outside"] and "outside" in r["outside"] and r["outside_cap"] and "outside" in r["outside_cap"]

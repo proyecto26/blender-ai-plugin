@@ -8,6 +8,43 @@ Format: [Semantic Versioning](https://semver.org/) — `Major.Minor.Patch`
 
 ## [Unreleased]
 
+Iteration 11: fixes from a measured run of the real orchestrator agent, reviewed by Codex.
+
+### Added
+- `rendering` -> `scripts/background_render.py`: render in a background Blender with an atomic progress status file; it
+  refuses to run in the open window and sets the Cycles device in its own process
+- `tests/agent_runs/score_run.py`: compares a run's claims with its session trace (preferences, window, skills, gates,
+  claims, early finish). It catches regressions; it does not stop a bad report, and one run proves one case
+
+### Changed
+- `run_manifest.py`: a capture must exist and is hashed; look_dev and light_camera need one to PASS; any PASS needs a
+  non-empty `result_summary`. These check that evidence is present and linked, not that it is true
+- The orchestrator names only loaded skills, records gates as stages end, reports a running job as still running, and
+  uses its caller line only with a calling agent
+- `live-session.md`: no preference changes in the open window, one Blender call at a time, tell the user at once about an
+  unusable screenshot
+
+### Fixed
+- `live-session.md` said `*_for_cli` stops the process at 120 s; the tool gives up, and through the launcher Blender kept
+  running to at least 150 s
+
+Iteration 10: fixes found by running the skills live in an open Blender window.
+
+### Changed
+- Live work in the open window is the documented default; long renders and batches run in a background process from a
+  saved snapshot. New `blender-mcp-workflow` -> `references/live-session.md` covers undo checkpoints, minimized-window
+  screenshots, blocking renders and timeouts, all measured
+
+### Fixed
+- Docs no longer offer the Microsoft Store launcher as `BLENDER_PATH`: the `*_for_cli` tools cannot return results
+  through it, and `No result marker` now means "outcome unknown"
+- Docs no longer say `print` output is lost, or treat `bpy.data.is_dirty` as proof that a file is saved
+- `export_asset.py` and `export_godot.py`: `verify` reports `no_geometry` and is not `ok` when a requested mesh
+  was written without geometry (glTF omits an empty mesh and keeps its node, so a 176-byte file passed)
+- The four export scripts restore the scene camera and the active object's mode, also when the export fails
+  (glTF left Edit Mode; moving frames, as glTF and animated FBX do, let a camera marker replace `scene.camera`)
+- `capture_views.py` and `preview_frames.py` restore the image colour depth (an EXR at 32 bits came back at 16)
+
 Iteration 9: fixes found by an end-to-end film and export test (a fox short, Blender 5.2.3 headless).
 
 ### Fixed
