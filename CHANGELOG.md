@@ -8,7 +8,14 @@ Format: [Semantic Versioning](https://semver.org/) — `Major.Minor.Patch`
 
 ## [Unreleased]
 
-Iteration 11: fixes from a measured run of the real orchestrator agent, reviewed by Codex.
+Iteration 11: fixes from a measured run of the real orchestrator agent, reviewed by Codex, then from a macOS review.
+
+### Fixed after the macOS review
+- `background_render.py`: a refused run no longer overwrites the status of the previous run, a second launch on a folder
+  whose status says `running` is refused, and a backend the machine lacks gets a clear error naming the available ones
+- `animation` -> `turntable.py`: frames by the narrower view angle, so a tall subject is no longer cropped at 16:9
+- Docs: black captures of a minimized window are Windows-only, `BLENDER_PATH` is optional, and the `*_for_cli` timeout
+  kills a directly started Blender
 
 ### Added
 - `rendering` -> `scripts/background_render.py`: render in a background Blender with an atomic progress status file; it

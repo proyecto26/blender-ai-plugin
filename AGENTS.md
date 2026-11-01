@@ -35,8 +35,9 @@ docs/                            # setup guide, skills guide, demo video
 ```bash
 python3 scripts/validate_skills.py                 # frontmatter, links, deprecated APIs, script safety
 bash scripts/check-manifests.sh                    # manifest consistency + claude plugin validate + schema
-blender -b --factory-startup --python tests/blender/test_skill_scripts.py -- '{"out_dir": "/tmp/bst"}'
-blender -b --factory-startup --python tests/blender/run_recipes.py -- '{"out_dir": "/tmp/bst_recipes"}'   # recipe runner
+out=$(mktemp -d)  # a new folder each run: a reused one produces false failures
+blender -b --factory-startup --python tests/blender/test_skill_scripts.py -- "{\"out_dir\": \"$out\"}"
+blender -b --factory-startup --python tests/blender/run_recipes.py -- "{\"out_dir\": \"$(mktemp -d)\"}"   # recipe runner
 claude plugin eval --runs 1                        # pilot the eval suite (uses tokens)
 ```
 

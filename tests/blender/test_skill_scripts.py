@@ -4,13 +4,13 @@ Builds a throwaway test scene in a NEW scene datablock, runs each script with
 representative ARGS, asserts on the returned result dict, then deletes the test
 scene. Never saves the file.
 
-Run headless (recommended):
-    blender -b --factory-startup --python tests/blender/test_skill_scripts.py -- '{"out_dir": "/tmp/blender-skill-tests"}'
+Run headless (recommended), with a new out_dir each run because a reused one produces false failures:
+    blender -b --factory-startup --python tests/blender/test_skill_scripts.py -- '{"out_dir": "/tmp/bst-<new folder>"}'
 
 Or through the official Blender MCP, against a scratch .blend:
     execute_blender_code_for_cli(blend_file="/tmp/empty.blend", code=
         'import runpy; result = runpy.run_path("<repo>/tests/blender/test_skill_scripts.py", '
-        'init_globals={"ARGS": {"out_dir": "/tmp/blender-skill-tests"}})["result"]')
+        'init_globals={"ARGS": {"out_dir": "/tmp/bst-<new folder>"}})["result"]')
 """
 import json
 import os
@@ -524,6 +524,42 @@ def _manifest_evidence():
             "expect": hashlib.sha256(b"png").hexdigest()}
 
 
+def _turntable_tall_fits():
+    from bpy_extras.object_utils import world_to_camera_view
+    scene = bpy.context.scene
+    r = scene.render
+    saved = (r.resolution_x, r.resolution_y, r.resolution_percentage, scene.frame_start, scene.frame_end,
+             scene.frame_current, scene.camera)
+    box = _cube("SM_TallFit", 1.0, loc=(30, 30, 0))
+    cam = bpy.data.objects["CAM_Turntable"]
+    xs, ys = [], []
+    try:
+        r.resolution_percentage = 100
+        for size, res, fit in (((0.3, 0.3, 2.0), (1280, 720), "AUTO"), ((2.0, 0.3, 0.3), (720, 1280), "AUTO"),
+                               ((0.3, 0.3, 2.0), (1280, 720), "VERTICAL"), ((0.3, 0.3, 2.0), (1280, 720), "HORIZONTAL"),
+                               ((2.0, 0.3, 0.3), (720, 1280), "VERTICAL"), ((2.0, 0.3, 0.3), (720, 1280), "HORIZONTAL")):
+            box.scale = size
+            r.resolution_x, r.resolution_y = res
+            cam.data.sensor_fit = fit
+            bpy.context.view_layer.update()
+            run("animation", "turntable.py", {"target": "SM_TallFit", "frames": 8, "set_active": False})
+            for frame in range(scene.frame_start, scene.frame_start + 8):
+                scene.frame_set(frame)
+                for corner in box.bound_box:
+                    p = world_to_camera_view(scene, cam, box.matrix_world @ Vector(corner))
+                    xs.append(p.x)
+                    ys.append(p.y)
+        return {"x": [round(min(xs), 3), round(max(xs), 3)], "y": [round(min(ys), 3), round(max(ys), 3)]}
+    finally:
+        cam.data.sensor_fit = "AUTO"
+        r.resolution_x, r.resolution_y, r.resolution_percentage = saved[:3]
+        run("animation", "turntable.py", {"target": "SM_Crate_01", "frames": 48})
+        scene.frame_start, scene.frame_end = saved[3], saved[4]
+        scene.frame_set(saved[5])
+        scene.camera = saved[6]
+        bpy.data.objects.remove(box)
+
+
 def _background_render():
     scene = bpy.context.scene
     r = scene.render
@@ -545,15 +581,41 @@ def _background_render():
         repeat = _expect_error(lambda: run("rendering", "background_render.py", args))
         repeat_state = read()["state"]
         again = run("rendering", "background_render.py", dict(args, overwrite=True))["state"]
-        bad_device = _expect_error(lambda: run("rendering", "background_render.py", dict(args, overwrite=True, device="NOPE")))
-        bad_state = read()
+        kept_error = _expect_error(lambda: run("rendering", "background_render.py", dict(args, overwrite=True, device="NOPE")))
+        kept_state = read()["state"]
+        refused = json.load(open(os.path.join(d, "render_refused.json"), encoding="utf-8"))
+        refused_later = refused["time"] > read()["started"] and "device" in refused["error"]
+        with open(os.path.join(d, "render_status.json"), encoding="utf-8") as fh:
+            good_status = fh.read()
+        with open(os.path.join(d, "render_status.json"), "w", encoding="utf-8") as fh:
+            fh.write("[]")
+        unreadable = _expect_error(lambda: run("rendering", "background_render.py", dict(args)))
+        with open(os.path.join(d, "render_status.json"), "w", encoding="utf-8") as fh:
+            fh.write(good_status)
+        bad_dir = d + "_bad"
+        bad_device = _expect_error(lambda: run("rendering", "background_render.py", dict(args, out_dir=bad_dir, device="NOPE")))
+        bad_state = json.load(open(os.path.join(bad_dir, "render_status.json"), encoding="utf-8"))
+        busy_dir = d + "_busy"
+        os.makedirs(busy_dir, exist_ok=True)
+        with open(os.path.join(busy_dir, "render_status.json"), "w", encoding="utf-8") as fh:
+            json.dump({"state": "running"}, fh)
+        busy = _expect_error(lambda: run("rendering", "background_render.py", dict(args, out_dir=busy_dir)))
+        busy_state = json.load(open(os.path.join(busy_dir, "render_status.json"), encoding="utf-8"))["state"]
+        r.engine = "CYCLES"
+        cycles_prefs = bpy.context.preferences.addons["cycles"].preferences
+        have = {t[0] for t in cycles_prefs.get_device_types(bpy.context)}
+        absent = next(t for t in ("OPTIX", "CUDA", "HIP", "ONEAPI", "METAL") if t not in have)
+        no_backend = _expect_error(lambda: run("rendering", "background_render.py", dict(args, out_dir=d + "_none", device=absent)))
+        r.engine = "BLENDER_WORKBENCH"
         strays = _expect_error(lambda: run("rendering", "background_render.py", dict(args, frame_start=3, frame_end=4)))
         r.image_settings.media_type = "VIDEO"
         movie = _expect_error(lambda: run("rendering", "background_render.py", dict(args, overwrite=True)))
         return {"state": res["state"], "done": first["frames_done"], "total": first["frames_total"],
                 "files": sorted(os.listdir(os.path.join(d, "frames"))), "ended": first["ended"], "repeat": repeat,
                 "repeat_state": repeat_state, "again": again, "bad_device": bad_device, "bad_state": bad_state["state"],
-                "bad_error": bad_state["error"], "strays": strays, "movie": movie, "handlers_kept": len(bpy.app.handlers.render_post) == handlers}
+                "bad_error": bad_state["error"], "kept_error": kept_error, "kept_state": kept_state, "refused_later": refused_later,
+                "unreadable": unreadable, "busy": busy,
+                "busy_state": busy_state, "no_backend": no_backend, "strays": strays, "movie": movie, "handlers_kept": len(bpy.app.handlers.render_post) == handlers}
     finally:
         r.image_settings.media_type, r.image_settings.file_format = saved[9], saved[10]
         r.engine, r.filepath, r.resolution_x, r.resolution_y, r.resolution_percentage, r.use_overwrite = saved[:6]
@@ -815,9 +877,15 @@ def build_cases(out_dir):
          lambda r: "capture" in (r["no_capture"] or "") and "not found" in (r["ghost"] or "")
          and all(e and "result_summary" in e for e in r["empties"]) and r["nc"] == "NOT_CHECKED"
          and r["good"] == "PASS" and r["hash"] == r["expect"] and r["bytes"] == 3),
+        ("animation.turntable_fits_any_aspect", lambda: _turntable_tall_fits(),
+         lambda r: r["y"][0] >= 0 and r["y"][1] <= 1 and r["x"][0] >= 0 and r["x"][1] <= 1),
         ("rendering.background_render", lambda: _background_render(),
          lambda r: r["state"] == "done" and r["done"] == 2 and r["total"] == 2 and len(r["files"]) == 2 and r["ended"]
-         and "already exist" in (r["repeat"] or "") and r["repeat_state"] == "error" and r["again"] == "done"
+         and "already exist" in (r["repeat"] or "") and r["repeat_state"] == "done" and r["again"] == "done"
+         and "device" in (r["kept_error"] or "") and r["kept_state"] == "done" and r["refused_later"]
+         and "cannot read" in (r["unreadable"] or "")
+         and "running" in (r["busy"] or "") and r["busy_state"] == "running"
+         and "not available on this machine" in (r["no_backend"] or "")
          and "device" in (r["bad_device"] or "") and r["bad_state"] == "error" and "device" in (r["bad_error"] or "")
          and "outside this frame range" in (r["strays"] or "") and "image format" in (r["movie"] or "")
          and r["handlers_kept"]),

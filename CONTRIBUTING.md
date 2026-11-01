@@ -12,7 +12,8 @@ git checkout -b feat/my-skill
 # edit skills/...
 python3 scripts/validate_skills.py
 bash scripts/check-manifests.sh
-blender -b --factory-startup --python tests/blender/test_skill_scripts.py -- '{"out_dir": "/tmp/bst"}'
+out=$(mktemp -d)  # a new folder each run: a reused one produces false failures
+blender -b --factory-startup --python tests/blender/test_skill_scripts.py -- "{\"out_dir\": \"$out\"}"
 ```
 
 Commit prefixes: `feat:`, `fix:`, `docs:`, `test:`, `chore:`.

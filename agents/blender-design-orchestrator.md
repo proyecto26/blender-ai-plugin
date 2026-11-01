@@ -37,7 +37,8 @@ stage starts, and name each one in the brief.
    preferably `save_as_mainfile(copy=True)` to a new path.
 3. **Work live, and keep it recoverable.** The user watches in the open window, so bounded work runs there:
    `bpy.ops.ed.undo_push` before and after each phase, and small steps with a look at the result. Long renders and
-   batches go to a background process from a saved snapshot. Rules and traps: `blender-mcp-workflow` ->
+   batches go to a background process from a saved snapshot; when you start one, tell the user in that turn what runs,
+   the status file path, and how long you expect it to take. Rules and traps: `blender-mcp-workflow` ->
    `references/live-session.md`. Risky experiments go into a temporary scene you remove afterwards, or to
    `execute_blender_code_for_cli` on a scratch `.blend` where that tool works. Destructive steps (apply, join, boolean apply, remesh, decimate)
    go through `blender-mcp-workflow` -> `scripts/work_copy.py`.

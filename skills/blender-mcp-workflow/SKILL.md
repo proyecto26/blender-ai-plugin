@@ -107,7 +107,7 @@ One pending work set at a time. Details: `references/mcp-integration.md`.
 
 The user usually watches in the open window, so bounded work runs live: call `bpy.ops.ed.undo_push` before and after
 each phase (MCP code adds no undo steps), and send long renders to a background process from a saved snapshot. A black
-screenshot usually means a minimized window, not an empty scene. After a timeout the code or a render may still be
+screenshot usually means a minimized window on Windows, not an empty scene. After a timeout the code or a render may still be
 running, so do not retry or edit until it has been checked. Read `references/live-session.md` before the first live edit.
 
 ## Execution Protocol

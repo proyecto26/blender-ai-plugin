@@ -138,7 +138,8 @@ blender -b snapshot.blend --python-exit-code 1 --python <skill_dir>/scripts/back
 ARGS: `out_dir`, `frame_start`, `frame_end`, `device`, `overwrite`
 
 Follow `<out_dir>/render_status.json`, which gives progress and time left, and tell the user that path when the job
-starts. `done` means this run rendered every frame and they are on disk. Encode the video as a separate step and check it with `ffprobe`.
+starts. `done` means the run named by `started` rendered every frame and they are on disk. Check the exit code too: a refused
+launch exits 1, keeps the earlier status, and writes its reason to `render_refused.json`. Encode the video as a separate step and check it with `ffprobe`.
 
 ## Reference Image Validation
 

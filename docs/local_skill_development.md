@@ -80,6 +80,6 @@ shows one case, not general reliability. `tests/agent_runs/test_score_run.py` ne
 ## Checklist
 
 - [ ] `python3 scripts/validate_skills.py` → 0 errors
-- [ ] `bash scripts/check-manifests.sh` → all OK
+- [ ] `bash scripts/check-manifests.sh` → all OK (needs `jsonschema` installed and network access)
 - [ ] Blender smoke tests pass on 5.2+
 - [ ] Skill triggers on the prompts you expect (`claude plugin eval --runs 1`)

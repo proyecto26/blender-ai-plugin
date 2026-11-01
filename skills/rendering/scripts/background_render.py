@@ -9,13 +9,19 @@ ARGS:
     frame_end   (int|None) default: the scene's
     device      (str|None) Cycles compute type: OPTIX | CUDA | HIP | ONEAPI | METAL, or CPU. Default: leave as is.
                 Set in this process only; preferences are not saved.
-    overwrite   (bool) replace this range's existing frames. Default false: they are an error, so runs do not mix.
+    overwrite   (bool) replace this range's existing frames, and start even if the status says another run is still
+                running, so use it there only once that process is gone. Default false: both are errors, so runs do not mix.
                 Any other file in the frames folder is always an error, because encoding that folder would mix runs.
 
 The status file is replaced atomically: `state` is running, done or error, plus `frames_done`, `frames_total`,
-`last_frame`, `elapsed_s`, `eta_s`, `started`, `ended`, `device`, `samples` and `error`. `done` means this run rendered
+`last_frame`, `elapsed_s`, `eta_s`, `started`, `ended`, `device`, `samples` and `error`. `done` means the run named by `started` rendered
 every expected frame and they are on disk; it does not mean a video exists. Encode the frames as a separate step. Read this file rather than the log:
 the Microsoft Store launcher drops all console output.
+
+A refused launch exits 1 and leaves an existing status file as it was, because that file belongs to the earlier run. The
+reason goes to `<out_dir>/render_refused.json` (`time`, `error`). So check the exit code as well as the status: a refusal
+applies when its `time` is later than the status's `started`, and an old `done` then says nothing about this launch.
+Exit 1 with no new refusal file means the arguments themselves were wrong, such as a misspelled name.
 """
 import json
 import os
@@ -49,6 +55,15 @@ def _write_status(path, status):
     os.replace(tmp, path)
 
 
+def _running_elsewhere(path):
+    """True if the status file says a render is running. A file we cannot read is an error, not a free folder."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return json.load(fh)["state"] == "running"
+    except (ValueError, KeyError, TypeError) as exc:
+        raise ValueError(f"cannot read {path}: {exc}; pass overwrite=true to replace it, or use a new out_dir") from exc
+
+
 def _set_device(scene, device):
     """Set the Cycles device for this process only. The caller never saves preferences."""
     if device not in GPU_TYPES + ("CPU",):
@@ -59,6 +74,9 @@ def _set_device(scene, device):
         scene.cycles.device = "CPU"
         return ["CPU"]
     prefs = bpy.context.preferences.addons["cycles"].preferences
+    available = [t[0] for t in prefs.get_device_types(bpy.context) if t[0] != "NONE"]
+    if device not in available:
+        raise ValueError(f"{device} is not available on this machine; available: {available + ['CPU']}")
     prefs.compute_device_type = device
     prefs.refresh_devices()
     used = []
@@ -85,7 +103,6 @@ def main(out_dir, frame_start=None, frame_end=None, device=None, overwrite=False
     status = {"state": "running", "started": time.time(), "ended": None, "blend": bpy.data.filepath, "device": None,
               "samples": scene.cycles.samples if scene.render.engine == "CYCLES" else None, "frames_done": 0,
               "frames_total": 0, "last_frame": None, "elapsed_s": 0.0, "eta_s": None, "error": None}
-    _write_status(path, status)
 
     def on_frame(sc, *_):
         status["frames_done"] += 1
@@ -95,7 +112,12 @@ def main(out_dir, frame_start=None, frame_end=None, device=None, overwrite=False
         status["eta_s"] = round(status["elapsed_s"] / status["frames_done"] * left, 1)
         _write_status(path, status)
 
+    # A refused run must not touch the status of the run that already owns this folder.
     try:
+        if os.path.exists(path) and not overwrite:
+            if _running_elsewhere(path):
+                raise ValueError(f"{path} says a render is still running; check that process, or pass "
+                                 "overwrite=true if it died, or use a new out_dir")
         if scene.render.image_settings.media_type == "VIDEO":
             raise ValueError("set an image format for the frames; encode the video afterwards")
         if frame_start is not None:
@@ -118,6 +140,14 @@ def main(out_dir, frame_start=None, frame_end=None, device=None, overwrite=False
         if existing and not overwrite:
             raise ValueError(f"{len(existing)} frame(s) already exist in {frames_dir}; "
                              "pass overwrite=true or use a new out_dir")
+    except Exception as exc:
+        if os.path.exists(path):
+            _write_status(os.path.join(out_dir, "render_refused.json"), {"time": time.time(), "error": str(exc)})
+        else:
+            status.update(state="error", error=str(exc), ended=time.time())
+            _write_status(path, status)
+        raise
+    try:
         _write_status(path, status)
         bpy.app.handlers.render_post.append(on_frame)
         try:
