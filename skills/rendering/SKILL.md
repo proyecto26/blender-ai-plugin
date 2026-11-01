@@ -139,7 +139,8 @@ ARGS: `out_dir`, `frame_start`, `frame_end`, `device`, `overwrite`
 
 Follow `<out_dir>/render_status.json`, which gives progress and time left, and tell the user that path when the job
 starts. `done` means the run named by `started` rendered every frame and they are on disk. Check the exit code too: a refused
-launch exits 1, keeps the earlier status, and writes its reason to `render_refused.json`. Encode the video as a separate step and check it with `ffprobe`.
+launch exits 1, keeps the earlier status, and writes its reason to `render_refused.json`. One process owns an `out_dir`
+at a time, and `overwrite` does not get past one that is still rendering. Encode the video as a separate step and check it with `ffprobe`.
 
 ## Reference Image Validation
 

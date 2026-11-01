@@ -13,6 +13,9 @@ Iteration 11: fixes from a measured run of the real orchestrator agent, reviewed
 ### Fixed after the macOS review
 - `background_render.py`: a refused run no longer overwrites the status of the previous run, a second launch on a folder
   whose status says `running` is refused, and a backend the machine lacks gets a clear error naming the available ones
+- `background_render.py`: one process owns an `out_dir`, through an OS lock released when it ends. Two launches at the
+  same moment both rendered before, and `overwrite` no longer gets past a run that is still going.
+  `tests/blender/race_background_render.py` starts two real processes to check it
 - `animation` -> `turntable.py`: frames by the narrower view angle, so a tall subject is no longer cropped at 16:9
 - Docs: black captures of a minimized window are Windows-only, `BLENDER_PATH` is optional, and the `*_for_cli` timeout
   kills a directly started Blender

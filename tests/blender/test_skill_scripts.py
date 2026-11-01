@@ -560,6 +560,26 @@ def _turntable_tall_fits():
         bpy.data.objects.remove(box)
 
 
+def _hold_render_lock(out_dir):
+    """Hold an out_dir's lock the way a running background_render.py does, from a separate descriptor."""
+    fd = os.open(os.path.join(out_dir, "render.lock"), os.O_CREAT | os.O_RDWR)
+    if os.name == "nt":
+        import msvcrt
+        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+    else:
+        import fcntl
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    return fd
+
+
+def _release_render_lock(fd):
+    if os.name == "nt":
+        import msvcrt
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+    os.close(fd)
+
+
 def _background_render():
     scene = bpy.context.scene
     r = scene.render
@@ -601,6 +621,24 @@ def _background_render():
             json.dump({"state": "running"}, fh)
         busy = _expect_error(lambda: run("rendering", "background_render.py", dict(args, out_dir=busy_dir)))
         busy_state = json.load(open(os.path.join(busy_dir, "render_status.json"), encoding="utf-8"))["state"]
+        died = run("rendering", "background_render.py", dict(args, out_dir=busy_dir, overwrite=True))["state"]
+        held_dir = d + "_held"
+        os.makedirs(held_dir, exist_ok=True)
+        held_status = os.path.join(held_dir, "render_status.json")
+        lock = _hold_render_lock(held_dir)
+        try:
+            held = _expect_error(lambda: run("rendering", "background_render.py", dict(args, out_dir=held_dir)))
+            held_no_status = not os.path.exists(held_status)
+            with open(held_status, "w", encoding="utf-8") as fh:
+                json.dump({"state": "running", "started": 1}, fh)
+            held_over = _expect_error(lambda: run("rendering", "background_render.py", dict(args, out_dir=held_dir, overwrite=True)))
+            held_kept = json.load(open(held_status, encoding="utf-8")) == {"state": "running", "started": 1}
+            held_reason = json.load(open(os.path.join(held_dir, "render_refused.json"), encoding="utf-8"))["error"]
+        finally:
+            _release_render_lock(lock)
+        after_held = run("rendering", "background_render.py", dict(args, out_dir=held_dir, overwrite=True))["state"]
+        # bad_dir's run took the lock and was refused inside it, so this shows the refusal gave the lock back.
+        _release_render_lock(_hold_render_lock(bad_dir))
         r.engine = "CYCLES"
         cycles_prefs = bpy.context.preferences.addons["cycles"].preferences
         have = {t[0] for t in cycles_prefs.get_device_types(bpy.context)}
@@ -614,7 +652,8 @@ def _background_render():
                 "files": sorted(os.listdir(os.path.join(d, "frames"))), "ended": first["ended"], "repeat": repeat,
                 "repeat_state": repeat_state, "again": again, "bad_device": bad_device, "bad_state": bad_state["state"],
                 "bad_error": bad_state["error"], "kept_error": kept_error, "kept_state": kept_state, "refused_later": refused_later,
-                "unreadable": unreadable, "busy": busy,
+                "unreadable": unreadable, "busy": busy, "died": died, "held": held, "held_no_status": held_no_status,
+                "held_over": held_over, "held_kept": held_kept, "held_reason": held_reason, "after_held": after_held,
                 "busy_state": busy_state, "no_backend": no_backend, "strays": strays, "movie": movie, "handlers_kept": len(bpy.app.handlers.render_post) == handlers}
     finally:
         r.image_settings.media_type, r.image_settings.file_format = saved[9], saved[10]
@@ -884,7 +923,9 @@ def build_cases(out_dir):
          and "already exist" in (r["repeat"] or "") and r["repeat_state"] == "done" and r["again"] == "done"
          and "device" in (r["kept_error"] or "") and r["kept_state"] == "done" and r["refused_later"]
          and "cannot read" in (r["unreadable"] or "")
-         and "running" in (r["busy"] or "") and r["busy_state"] == "running"
+         and "running" in (r["busy"] or "") and r["busy_state"] == "running" and r["died"] == "done"
+         and "another process" in (r["held"] or "") and r["held_no_status"] and "another process" in (r["held_over"] or "")
+         and r["held_kept"] and "another process" in r["held_reason"] and r["after_held"] == "done"
          and "not available on this machine" in (r["no_backend"] or "")
          and "device" in (r["bad_device"] or "") and r["bad_state"] == "error" and "device" in (r["bad_error"] or "")
          and "outside this frame range" in (r["strays"] or "") and "image format" in (r["movie"] or "")

@@ -9,8 +9,8 @@ ARGS:
     frame_end   (int|None) default: the scene's
     device      (str|None) Cycles compute type: OPTIX | CUDA | HIP | ONEAPI | METAL, or CPU. Default: leave as is.
                 Set in this process only; preferences are not saved.
-    overwrite   (bool) replace this range's existing frames, and start even if the status says another run is still
-                running, so use it there only once that process is gone. Default false: both are errors, so runs do not mix.
+    overwrite   (bool) replace this range's existing frames and the status of a run that died. Default false: both are
+                errors, so runs do not mix. It never gets past a process that is still rendering to this out_dir.
                 Any other file in the frames folder is always an error, because encoding that folder would mix runs.
 
 The status file is replaced atomically: `state` is running, done or error, plus `frames_done`, `frames_total`,
@@ -22,7 +22,11 @@ A refused launch exits 1 and leaves an existing status file as it was, because t
 reason goes to `<out_dir>/render_refused.json` (`time`, `error`). So check the exit code as well as the status: a refusal
 applies when its `time` is later than the status's `started`, and an old `done` then says nothing about this launch.
 Exit 1 with no new refusal file means the arguments themselves were wrong, such as a misspelled name.
+
+One process owns an out_dir at a time, through an OS lock on `<out_dir>/render.lock`. The operating system drops the lock
+when the process ends, even in a crash, so the file stays behind and needs no cleanup.
 """
+import errno
 import json
 import os
 import sys
@@ -30,7 +34,13 @@ import time
 
 import bpy
 
+if os.name == "nt":
+    import msvcrt
+else:
+    import fcntl
+
 GPU_TYPES = ("OPTIX", "CUDA", "HIP", "ONEAPI", "METAL")
+LOCK_BUSY = (errno.EACCES, errno.EAGAIN, errno.EWOULDBLOCK)
 
 
 def _cli_args():
@@ -49,10 +59,46 @@ def _cli_args():
 
 
 def _write_status(path, status):
-    tmp = path + ".tmp"
+    tmp = f"{path}.{os.getpid()}.tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(status, fh, indent=2)
     os.replace(tmp, path)
+
+
+def _write_refusal(out_dir, exc):
+    """Record why a launch was refused. Failing to record it must not replace that reason."""
+    try:
+        _write_status(os.path.join(out_dir, "render_refused.json"), {"time": time.time(), "error": str(exc)})
+    except OSError:
+        pass
+
+
+def _take_lock(out_dir):
+    """Own out_dir until _release_lock, or raise ValueError if another process owns it."""
+    fd = os.open(os.path.join(out_dir, "render.lock"), os.O_CREAT | os.O_RDWR)
+    try:
+        if os.name == "nt":
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        else:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError as exc:
+        os.close(fd)
+        if exc.errno in LOCK_BUSY:
+            raise ValueError(f"another process is rendering to {out_dir}; wait for it to end or use a new out_dir") from exc
+        raise
+    return fd
+
+
+def _release_lock(fd):
+    try:
+        if os.name == "nt":
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        else:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
 
 
 def _running_elsewhere(path):
@@ -98,6 +144,20 @@ def main(out_dir, frame_start=None, frame_end=None, device=None, overwrite=False
         raise ValueError("out_dir is required")
     frames_dir = os.path.join(out_dir, "frames")
     os.makedirs(frames_dir, exist_ok=True)
+    # A process that loses here must leave the status alone: the owner may not have published it yet.
+    try:
+        lock = _take_lock(out_dir)
+    except ValueError as exc:
+        _write_refusal(out_dir, exc)
+        raise
+    try:
+        return _render(out_dir, frames_dir, frame_start, frame_end, device, overwrite)
+    finally:
+        _release_lock(lock)
+
+
+def _render(out_dir, frames_dir, frame_start, frame_end, device, overwrite):
+    """Everything that reads or writes the folder; the caller holds its lock."""
     path = os.path.join(out_dir, "render_status.json")
     scene = bpy.context.scene
     status = {"state": "running", "started": time.time(), "ended": None, "blend": bpy.data.filepath, "device": None,
@@ -116,8 +176,8 @@ def main(out_dir, frame_start=None, frame_end=None, device=None, overwrite=False
     try:
         if os.path.exists(path) and not overwrite:
             if _running_elsewhere(path):
-                raise ValueError(f"{path} says a render is still running; check that process, or pass "
-                                 "overwrite=true if it died, or use a new out_dir")
+                raise ValueError(f"{path} says a render is running, but no process owns this folder, so that run died; "
+                                 "pass overwrite=true to replace it, or use a new out_dir")
         if scene.render.image_settings.media_type == "VIDEO":
             raise ValueError("set an image format for the frames; encode the video afterwards")
         if frame_start is not None:
@@ -142,7 +202,7 @@ def main(out_dir, frame_start=None, frame_end=None, device=None, overwrite=False
                              "pass overwrite=true or use a new out_dir")
     except Exception as exc:
         if os.path.exists(path):
-            _write_status(os.path.join(out_dir, "render_refused.json"), {"time": time.time(), "error": str(exc)})
+            _write_refusal(out_dir, exc)
         else:
             status.update(state="error", error=str(exc), ended=time.time())
             _write_status(path, status)

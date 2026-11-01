@@ -38,6 +38,7 @@ bash scripts/check-manifests.sh                    # manifest consistency + clau
 out=$(mktemp -d)  # a new folder each run: a reused one produces false failures
 blender -b --factory-startup --python tests/blender/test_skill_scripts.py -- "{\"out_dir\": \"$out\"}"
 blender -b --factory-startup --python tests/blender/run_recipes.py -- "{\"out_dir\": \"$(mktemp -d)\"}"   # recipe runner
+python3 tests/blender/race_background_render.py --blender <path>   # two real processes on one out_dir
 claude plugin eval --runs 1                        # pilot the eval suite (uses tokens)
 ```
 
