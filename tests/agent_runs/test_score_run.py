@@ -94,6 +94,8 @@ def extra_cases():
     inspect = lambda reason: {"events": [{"stage": "inspect", "verdict": "PASS", "time": "t", "reason": reason}]}
     batch = {"calls": [{"name": "Bash", "input": {"command": "run_manifest.py stage='model' stage='look_dev' stage='validate'"}, "t": None}]}
     metadata = {"calls": [{"name": "Bash", "input": {"command": "run_manifest.py brief='model look_dev validate'"}, "t": None}]}
+    bash = lambda command: {"calls": [{"name": "Bash", "input": {"command": command}, "t": T0, "end": T0 + 1}],
+                            "results": [], "texts": []}
     with tempfile.TemporaryDirectory() as tmp:
         def finish(run, status):
             path = os.path.join(tmp, "s.json")
@@ -111,6 +113,10 @@ def extra_cases():
                 final("Still running; see out/render_status.json"), {"state": "done", "ended": T0 + 100}), "NOTE"),
             ("honest handoff", finish(final("Still running; see out/render_status.json"), {"state": "running"}), "NOTE"),
             ("silent unfinished job", finish(final("Done."), {"state": "running"}), "FLAG"),
+            ("nohup job with no path in the text", score_run.score_announcements(
+                bash('nohup blender -b f.blend --python r.py > log.txt 2>&1 &\necho "pid $!"'))["verdict"], "FLAG"),
+            ("foreground render is not a background job", score_run.score_announcements(
+                bash("blender -b f.blend --python r.py > log.txt 2>&1 && echo ok"))["verdict"], "OK"),
             ("raw trace has no timings", finish(final("Done.", None), {"state": "done", "ended": T0}), "SKIP"),
         ]
     return [(name, "", want, got) for name, got, want in checks if got != want]

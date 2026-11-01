@@ -816,8 +816,10 @@ def build_cases(out_dir):
          lambda r: r["objects"]["SM_Rock_B"]["faces"] > 6),
         ("isometric-style.iso_camera", lambda: run("isometric-style", "iso_camera.py", {"projection": "dimetric_2_1", "pixel_tile": 32}),
          lambda r: r["ortho_scale"] > 0 and r["resolution"][0] % 32 == 0),
+        # The crate, not GEO_Ground, is the collider: GEO_Ground scatters COL_Rocks, so a rigid body ground makes a
+        # dependency cycle that crashed Blender 5.2.3 on macOS in Instance on Points (exit 139, 2 of 3 runs).
         ("physics-sim.rigid_body_setup", lambda: run("physics-sim", "rigid_body_setup.py", {
-            "active": ["SM_Rock_B"], "passive": ["GEO_Ground"], "material": "stone", "frames": 20, "bake": True}),
+            "active": ["SM_Rock_B"], "passive": ["SM_Crate_01"], "material": "stone", "frames": 20, "bake": True}),
          lambda r: r["active"]["SM_Rock_B"]["mass_kg"] > 0 and r.get("baked") is True),
         ("cloth-sim.cloth_setup", lambda: run("cloth-sim", "cloth_setup.py", {
             "cloth": "SM_Flag", "fabric": "silk", "pin_group": "Pin", "colliders": ["SM_Crate_01"]}),

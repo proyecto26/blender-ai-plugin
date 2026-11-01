@@ -35,8 +35,9 @@ batch validation, exports and experiments that must not disturb the user's sessi
 The `*_for_cli` summary tools mirror the live ones for files on disk.
 Needs a Blender executable: `BLENDER_PATH` in the MCP server's environment (then restart the agent), or `blender` on
 that server's `PATH`; with neither the tool fails with "Blender executable not found". The tool gives up after 120 s:
-that kills a directly started Blender, while through the Store launcher Blender kept running. It cannot work on a Microsoft
-Store install, and `No result marker` means the outcome is unknown: see `references/live-session.md`.
+measured on macOS, that kills a directly started Blender, while through the Store launcher Blender kept running. It
+cannot work on a Microsoft Store install, and `No result marker` means the outcome is unknown: see
+`references/live-session.md`.
 
 Rules:
 - Keep each call small (one phase) and return evidence (`names`, `tris`, `status`).

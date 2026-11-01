@@ -25,6 +25,8 @@ LIVE_CODE = "mcp__blender__execute_blender_code"
 RUNNING_WORDS = r"still running|sigue|en curso|todav[ií]a|no ha terminado|cuando termine|when it finishes|in progress"
 MINIMIZED_WORDS = r"minimi|restaur|restore|black|negr"
 FREEZE_WORDS = r"congel|freez|bloque|block|not responding|no responde"
+# A shell job sent to the background (`nohup`, or a lone `&`, not `&&`, `2>&1` or `&>`), as agents do on macOS/Linux.
+DETACHED = r"\bnohup\b|(?<![&>|])&(?![&>])"
 LOG_CLAIM = r"(registro|log)\b.{0,40}(no contiene errores|sin errores|no errors|is clean|limpio)"
 UV_CLAIM = r"\buvs?\b.{0,20}(correct|ok\b)"
 OPEN_CLAIM = r"(abre sin problema|opens? (fine|cleanly|without))"
@@ -220,8 +222,9 @@ def score_announcements(run):
             before = [x["text"] for x in timed if c["t"] - 120 <= x["t"] <= c["t"]]
             if not any(re.search(FREEZE_WORDS, b, re.I) for b in before):
                 problems.append(f"live call of {c['end'] - c['t']:.0f} s with no warning")
-        if c["name"] == "Bash" and c["input"].get("run_in_background") and re.search(r"(-b|--background)\b.*--python",
-                                                                                      c["input"].get("command", "")):
+        command = c["input"].get("command", "")
+        if c["name"] == "Bash" and (c["input"].get("run_in_background") or re.search(DETACHED, command)) and re.search(
+                r"(-b|--background)\b.*--python", command):
             near = [x["text"] for x in timed if c["t"] - 30 <= x["t"] <= c["t"] + 60]
             if not any(re.search(r"render_status|status|[\\/]", n) for n in near):
                 problems.append("background job started with no path or status file in the text")
