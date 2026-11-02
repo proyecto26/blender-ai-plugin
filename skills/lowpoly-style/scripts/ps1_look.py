@@ -30,6 +30,7 @@ import hashlib
 import json
 import sys
 
+import bmesh
 import bpy
 
 GROUP = "GN_PS1_VertexSnap"
@@ -307,8 +308,14 @@ def main(objects=None, snap=0.02, resolution=(320, 240), flat=False, fog=True, t
             mod = obj.modifiers.get("PS1_VertexSnap") or obj.modifiers.new("PS1_VertexSnap", "NODES")
             mod.node_group = ng
             _set_input(mod, "Grid", float(snap))
-            for poly in obj.data.polygons:
-                poly.use_smooth = not flat
+            if obj.mode == "EDIT":  # the live faces are the BMesh; obj.data.polygons would be overwritten on exit
+                ebm = bmesh.from_edit_mesh(obj.data)
+                for face in ebm.faces:
+                    face.smooth = not flat
+                bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
+            else:
+                for poly in obj.data.polygons:
+                    poly.use_smooth = not flat
             snapped.append(obj.name)
     textured = []
     if texture:
