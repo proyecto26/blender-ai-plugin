@@ -338,39 +338,69 @@ def same_file(a, b):
     return not re.match(r"[a-z]:/|/|~", short) and long_.endswith("/" + short)
 
 
-SHELL_WRITE = (r"sed\s+(?:-\w*i|--in-place)|set-content|add-content|out-file|-replace|\btee\b|\bmv\b|move-item|\bcp\b|"
-               r"copy-item|\.write|writealltext")
+# A shell command naming the args file is a read only when each piece naming it starts with one of these (or is the
+# Blender launch itself) and redirects nothing into the file. Anything else may have rewritten it.
+READ_ONLY = {"cat", "type", "head", "tail", "get-content", "ls", "grep"}
+
+
+def shell_may_write(raw, ref, base):
+    """True when a shell command names the args file and is not plainly read-only. Leans to True: an unknown file costs
+    one announcement, a stale `plan: true` hides a real render."""
+    redirect = r">>?\s*[\"']?[^\s\"'|&;>]*" + re.escape(base)
+    for piece in re.split(r"&&|\|\||[;|\n]", raw):
+        if not any(same_file(m, ref) for m in path_mentions(piece, base)):
+            continue
+        if re.search(redirect, norm_path(piece)):
+            return True
+        if blender_segments(piece):
+            continue
+        words = re.findall(TOKEN, piece.lstrip(" \t&("))
+        first = next(((q or sq or b) for q, sq, b in words), "")
+        first = re.sub(r"\.exe$", "", first.replace("\\", "/").rsplit("/", 1)[-1].lower())
+        if first not in READ_ONLY:
+            return True
+    return False
 
 
 def args_file_text(call, run, ref, base):
-    """What the args file held when this job launched: its latest full write (a call naming the file with an out_dir),
-    then every later in-place Edit replayed on it. A call that only reads the file changes nothing. When a later change
-    cannot be replayed (an Edit whose old text is not in the file, a shell rewrite, another tool), the content is not
-    known: return the text with `plan` made unreadable, so no plan exemption is granted. Leaning to flag costs one
-    message; a stale `plan: true` hides a real render."""
-    text, unknown = "", False
+    """What the args file held when this job launched, or its text with `plan` made unreadable when that is not known.
+    The state is known only from a full `Write` (its content), then every later Edit / MultiEdit replayed on it. A Read,
+    Grep, Glob, or a read-only shell command (see shell_may_write) changes nothing. Anything else naming the file (any
+    other shell command, another tool, an Edit whose old text is not in the file, a Write with no text) makes the state
+    unknown until the next full Write, so no plan exemption is granted."""
+    text, unknown = "", True
     for c in run["calls"]:
         if c is call or c["seq"] >= call["seq"]:
             continue
-        inp, raw = c["input"], str(c["input"])
-        if not any(same_file(m, ref) for m in path_mentions(raw, base)):
+        inp, name, raw = c["input"], c["name"], str(c["input"])
+        if name in ("Write", "Edit", "MultiEdit"):
+            names = path_mentions('"%s"' % inp.get("file_path", ""), base)  # quoted: a path may hold spaces
+        elif name in SHELLS:
+            raw = str(inp.get("command", ""))
+            names = path_mentions(raw, base)
+        else:
+            names = path_mentions(raw, base)
+        if not any(same_file(m, ref) for m in names):
             continue
-        if re.search(r"out_dir", raw):
-            body = inp.get("content")
-            text = body if isinstance(body, str) and re.search(r"out_dir", body) else raw
-            unknown = False
-        elif c["name"] in ("Edit", "MultiEdit"):
+        body = inp.get("content")
+        if name == "Write":
+            if isinstance(body, str):
+                text, unknown = body, False
+            else:
+                unknown = True
+        elif name in ("Edit", "MultiEdit"):
             for e in inp.get("edits") or [inp]:
                 old, new = e.get("old_string"), e.get("new_string")
-                if not isinstance(old, str) or not isinstance(new, str) or not old or old not in text:
+                if unknown or not isinstance(old, str) or not isinstance(new, str) or not old or old not in text:
                     unknown = True
                 else:
                     text = text.replace(old, new) if e.get("replace_all") else text.replace(old, new, 1)
-        elif c["name"] in SHELLS:
-            redirect = re.search(r">>?\s*[\"']?[^\s\"'|&;>]*" + re.escape(base), norm_path(raw))
-            if redirect or re.search(SHELL_WRITE, raw, re.I):
+        elif name in SHELLS:
+            if shell_may_write(raw, ref, base):
                 unknown = True
-        elif c["name"] not in ("Read", "Grep", "Glob"):
+                if re.search(r"out_dir", raw):
+                    text += "\n" + raw  # keep its out_dir readable for the announcement check; plan is neutralized
+        elif name not in ("Read", "Grep", "Glob"):
             unknown = True
     return re.sub(PLAN_ON, "plan: unknown", text, flags=re.I) if unknown else text
 
