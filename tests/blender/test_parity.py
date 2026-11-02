@@ -266,6 +266,35 @@ def test_clash(check, out_dir):
     d = r["clashes"][0]["depth_m"] if r["clashes"] else None
     check("H1 vertex depth 0.25 within 10%", d is not None and abs(d - 0.25) <= 0.025, d)
 
+    # review H-1: the depth is the penetration along the overlap axis, not the distance to the nearest surface.
+    # The box pokes 0.25 m into the cube along X but sits only 0.01 m from the cube's Y and Z faces.
+    reset_scene()
+    box("Cube", (2, 2, 2))
+    box("Slab", (0.5, 1.98, 1.98), (1.0, 0, 0))
+    for order in (["Cube", "Slab"], ["Slab", "Cube"]):
+        r = audit(objects=order)
+        d = r["clashes"][0]["depth_m"] if r["clashes"] else None
+        check(f"H1 depth is along the overlap axis (0.25, not the 0.01 to the nearest face), order {order[0]} first",
+              r["verdict"] == "FAIL" and d is not None and abs(d - 0.25) <= 0.025, r["clashes"])
+
+    # review H-2: two coincident solids are the worst overlap there is; they must not pass
+    reset_scene()
+    box("Twin1", (1, 1, 1))
+    box("Twin2", (1, 1, 1))
+    r = audit(objects=["Twin1", "Twin2"])
+    check("H1 coincident cubes fail as a clash", r["verdict"] == "FAIL" and len(r["clashes"]) == 1
+          and r["clashes"][0].get("depth") == "coincident", r)
+    box("Twin3", (1, 1, 1), (1, 0, 0))  # a neighbour that only touches Twin1 stays a pass
+    r = audit(objects=["Twin1", "Twin3"])
+    check("H1 face-touching neighbour of a coincident pair still passes", r["verdict"] == "PASS", r)
+    r = audit(objects=["Twin1", "Twin2"], ignore_pairs=[["Twin1", "Twin2"]])
+    check("H1 coincident pair can be allowed with ignore_pairs", r["verdict"] == "PASS", r)
+    reset_scene()
+    for n in ("Sheet1", "Sheet2"):
+        mesh_obj(n, lambda bm: bmesh.ops.create_grid(bm, x_segments=2, y_segments=2, size=1.0))
+    r = audit(objects=["Sheet1", "Sheet2"])
+    check("H1 coincident open sheets fail too", r["verdict"] == "FAIL", r)
+
     # a cube inside a cube: no surfaces cross, still a fail
     reset_scene()
     box("Outer", (2, 2, 2))
@@ -655,6 +684,28 @@ def test_fit(check, out_dir, measured):
     check("H3 max_evals respected", r["evals"] == 5 and not r["converged"], (r["evals"], r["converged"]))
     check("H3 values restored after a capped run", near(box_o.scale, (0.8, 0.8, 0.8)), tuple(box_o.scale))
 
+    # review M-1: count the real score calls (rasterize runs once per view per score) with a counter the script does not own
+    calls = []
+    real_run_path = runpy.run_path
+
+    def counting_run_path(path, *a, **k):
+        g = real_run_path(path, *a, **k)
+        if os.path.basename(path) == "silhouette_score.py" and "rasterize" in g:
+            inner = g["rasterize"]
+            g["rasterize"] = lambda *x, **y: (calls.append(1), inner(*x, **y))[1]
+        return g
+
+    runpy.run_path = counting_run_path
+    try:
+        for cap in (1, 2, 5):
+            calls.clear()
+            box_o.scale, box_o.location = (0.8, 0.8, 0.8), (0, 0, 0)
+            r = fit(objects=["Box"], views=views, params=[{"object": "Box", "path": "scale", "min": 0.3, "max": 3.0}], max_evals=cap)
+            check(f"H3 max_evals={cap}: real score calls never exceed it, and the reported count is the real one",
+                  len(calls) <= cap and r["evals"] == len(calls), (cap, len(calls), r["evals"]))
+    finally:
+        runpy.run_path = real_run_path
+
     # single axis component
     box_o.scale, box_o.location = (0.8, 1.3, 1.3), (0.25, 0, 0)  # the camera looks along Y, so X is the visible axis
     r = fit(objects=["Box"], views=views, params=[{"object": "Box", "path": "scale[0]", "min": 0.3, "max": 3.0}], max_evals=60, apply=True)
@@ -760,6 +811,9 @@ def test_ingest(check, out_dir, measured):
             check(f"{label}: validate_asset ran on the imported meshes", set(r["validation"]["objects"]) == set(r["meshes"]), list(r["validation"]["objects"]))
             check(f"{label}: transforms were baked (validate transforms_applied PASS)",
                   all(o["checks"]["transforms_applied"]["status"] == "PASS" for o in r["validation"]["objects"].values()), r["validation"]["objects"])
+            roots = [bpy.data.objects[n] for n in r["imported_objects"] if bpy.data.objects[n].parent is None]
+            check(f"{label}: every imported root has its origin at the world origin (base centre)",
+                  roots and all(o.matrix_world.translation.length < 2e-3 for o in roots), [(o.name, tuple(o.matrix_world.translation)) for o in roots])
             if kind != "obj":  # OBJ has no hierarchy
                 head_m = next(m for m in meshes if "Head" in m.name)
                 chain, p = [], head_m.parent
@@ -807,6 +861,24 @@ def test_ingest(check, out_dir, measured):
     check("H4 refusal after the import removes the objects and the collection it made",
           set(bpy.data.objects.keys()) == names and set(bpy.data.collections.keys()) == cols,
           (set(bpy.data.objects.keys()) - names, set(bpy.data.collections.keys()) - cols))
+
+    # review (non-blocking): an importer that creates an object and then raises must not leave it behind
+    reset_scene()
+    box("Existing", (1, 1, 1))
+    names, cols, meshes_before = set(bpy.data.objects.keys()), set(bpy.data.collections.keys()), set(bpy.data.meshes.keys())
+    src = open(os.path.join(SCRIPTS, "ingest_asset.py"), encoding="utf-8").read()
+    head, tail = src.split("def _run_import(kind, path):", 1)
+    tail = tail.split("\ndef _layer_collection", 1)[1]
+    broken = head + ("def _run_import(kind, path):\n"
+                     "    me = bpy.data.meshes.new('Half'); o = bpy.data.objects.new('Half', me)\n"
+                     "    bpy.context.scene.collection.objects.link(o)\n"
+                     "    raise RuntimeError('corrupt mesh 2')\n\n\ndef _layer_collection") + tail
+    g = {"ARGS": {"path": os.path.join(d, "model_glb.glb")}, "__name__": "__skill_test__", "__file__": os.path.join(SCRIPTS, "ingest_asset.py")}
+    msg = raises(lambda: exec(compile(broken, "ingest_asset_broken.py", "exec"), g), (RuntimeError, ValueError))
+    check("H4 partial import: the importer's error surfaces", msg and "corrupt mesh 2" in msg, msg)
+    check("H4 partial import: the object the importer made is removed, with its mesh and the collection",
+          set(bpy.data.objects.keys()) == names and set(bpy.data.collections.keys()) == cols and set(bpy.data.meshes.keys()) == meshes_before,
+          (set(bpy.data.objects.keys()) - names, set(bpy.data.collections.keys()) - cols, set(bpy.data.meshes.keys()) - meshes_before))
 
     # up-axis fix: OBJ written with Y up, read with the importer's default -> comes in lying down
     reset_scene()

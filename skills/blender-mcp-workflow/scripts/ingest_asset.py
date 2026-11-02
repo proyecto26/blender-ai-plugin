@@ -13,7 +13,8 @@ are scaled, moved, renamed and (optionally) baked.
 Steps: import into a fresh collection; optional up-axis fix (rotation about world X); uniform scale so the chosen
 axis of the combined mesh bounds equals `target_size_m`; the combined bounds are then moved so their base centre
 (middle of X and Y, lowest Z) sits at the world origin; a mesh that is alone in its hierarchy also gets its origin
-there; mesh objects get the name prefix; transforms are baked into the meshes (children keep their world shape);
+there; every root object of the imported hierarchy also gets its origin there (children keep their world shape);
+mesh objects get the name prefix; transforms are baked into the meshes (children keep their world shape);
 finally `validate_asset.py` (same folder) is run on the imported meshes and returned as `validation`. A failure after
 the import removes everything the import created.
 
@@ -144,6 +145,7 @@ def main(path=None, collection=None, target_size_m=None, size_axis="z", up_axis_
     view_layer = bpy.context.view_layer
     objs_before = set(bpy.data.objects.keys())
     cols_before = set(bpy.data.collections.keys())
+    meshes_before = set(bpy.data.meshes.keys())
     selected = [o.name for o in scene.objects if o.select_get()]
     active = view_layer.objects.active.name if view_layer.objects.active else None
     prev_layer_col = view_layer.active_layer_collection
@@ -219,17 +221,29 @@ def main(path=None, collection=None, target_size_m=None, size_axis="z", up_axis_
                 notes.append({"children_not_preserved": skipped})
         _update()
 
-        # a mesh that is alone in its hierarchy gets its origin at the world origin (set origin without moving it)
-        if len(roots) == 1 and roots[0].type == "MESH" and not roots[0].children:
-            r = roots[0]
-            if apply_transforms:
+        # every root gets its origin at the world origin, which is the base centre now (set origin without moving
+        # anything: a mesh root's data is shifted to compensate, and the children keep their world matrices)
+        for r in roots:
+            if r.type == "MESH" and not apply_transforms:
+                notes.append(f"origin of {r.name} left as imported: it can only be reset after the transforms are baked")
+                continue
+            if r.type not in ("MESH", "EMPTY"):
+                continue
+            if r.type == "MESH" and not np.allclose(np.array(r.matrix_world.to_3x3()), np.eye(3), atol=1e-6):
+                notes.append(f"origin of {r.name} left as imported: it still carries rotation or scale")
+                continue
+            kids = [(c, c.matrix_world.copy()) for c in r.children]
+            if r.type == "MESH":
                 if r.data.users > 1:
                     r.data = r.data.copy()
                 r.data.transform(Matrix.Translation(r.matrix_world.to_translation()))
-                r.matrix_world = Matrix.Identity(4)
-                _update()
-            else:
-                notes.append("origin left as imported: it can only be reset after the transforms are baked")
+            at_origin = r.matrix_world.copy()  # an empty may carry rotation and scale for its children: keep those
+            at_origin.translation = (0.0, 0.0, 0.0)
+            r.matrix_world = at_origin
+            _update()
+            for c, mw in kids:
+                c.matrix_world = mw
+            _update()
 
         depsgraph = bpy.context.evaluated_depsgraph_get()
         lo2, hi2 = _world_bounds(meshes, depsgraph)
@@ -238,9 +252,14 @@ def main(path=None, collection=None, target_size_m=None, size_axis="z", up_axis_
             "objects": [o.name for o in meshes], "tri_budget": tri_budget, "prefix": prefix,
             "max_size_m": float(max_size_m)}}, run_name="__ingest_validate__")["result"]
     except Exception:
-        for o in new:
-            if o.name in bpy.data.objects:
-                bpy.data.objects.remove(o)
+        # what the import made, even when it failed half way and `new` is still empty
+        made = [o for o in bpy.data.objects if o.name not in objs_before]
+        made_meshes = {o.data for o in made if o.type == "MESH" and o.data is not None and o.data.name not in meshes_before}
+        for o in made:
+            bpy.data.objects.remove(o)
+        for me in made_meshes:
+            if me.users == 0:
+                bpy.data.meshes.remove(me)
         for c in [c for c in bpy.data.collections if c.name not in cols_before]:
             bpy.data.collections.remove(c)
         raise

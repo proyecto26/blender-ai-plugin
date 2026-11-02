@@ -20,7 +20,8 @@ ARGS:
                 is below it, default step/32)}. The path is read with the Blender data path rules, for example
                 "scale" (all three axes move together), "scale[2]", "location[0]", "modifiers['Bevel'].width".
                 Only float and int properties that are not read-only. Everything is checked before any change.
-    max_evals   (int) cap on silhouette evaluations including the first (default 60)
+    max_evals   (int) cap on silhouette evaluations, the first and the closing re-score of the best values included
+                (default 60); `evals` is the true count. With 1 there is no re-score and `score_checked` is null
     apply       (bool) keep the best values (default false: all values are restored)
     bg_tol      (float) as in silhouette_score.py
     scripts_dir (str|None) folder holding silhouette_score.py; default = the folder of this script
@@ -167,6 +168,8 @@ def main(objects=None, views=None, params=None, max_evals=60, apply=False, bg_to
         return total / len(refs)
 
     history, evals = [], 0
+    checked = max_evals >= 2  # the last evaluation re-scores the applied best values (score_checked); with 1 there is none
+    budget = max_evals - 1 if checked else max_evals
     try:
         x = [p.get() for p in ps]
         starts = list(x)
@@ -176,11 +179,11 @@ def main(objects=None, views=None, params=None, max_evals=60, apply=False, bg_to
         start_score = best
         history.append({"eval": 1, "score": round(best, 5), "values": [round(v, 5) for v in x]})
         converged = False
-        while evals < max_evals:
+        while evals < budget:
             improved = False
             for i, p in enumerate(ps):
                 for sign in (1, -1):
-                    if evals >= max_evals:
+                    if evals >= budget:
                         break
                     cand = min(p.hi, max(p.lo, x[i] + sign * steps[i]))
                     if p.integer:
@@ -202,7 +205,10 @@ def main(objects=None, views=None, params=None, max_evals=60, apply=False, bg_to
                     break
         for p, v in zip(ps, x):
             p.set(v)
-        final_score = score()  # the scene is at the best values here; one more evaluation, not counted in `evals`
+        final_score = None
+        if checked:
+            final_score = score()  # the scene is at the best values here; the last evaluation of the budget
+            evals += 1
     finally:
         if not apply:
             for p in ps:
@@ -210,7 +216,7 @@ def main(objects=None, views=None, params=None, max_evals=60, apply=False, bg_to
             bpy.context.view_layer.update()
     return {"best": [{"param": p.label, "value": round(v, 6), "start": round(s0, 6)}
                      for p, v, s0 in zip(ps, x, starts)],
-            "score_start": round(start_score, 5), "score_best": round(best, 5), "score_checked": round(final_score, 5),
+            "score_start": round(start_score, 5), "score_best": round(best, 5), "score_checked": None if final_score is None else round(final_score, 5),
             "evals": evals, "max_evals": max_evals, "converged": converged, "applied": bool(apply),
             "restored": not apply, "history": history[-40:]}
 

@@ -17,8 +17,10 @@ checked against their docs and cited.
   Reports penetrating pairs with an estimated depth, objects fully inside others, and floating parts (connected groups by
   contact within `gap_max_m`). Touching faces are not a clash. Accept: touching cubes pass; interpenetrating cubes fail;
   a cube inside a cube fails, although no surfaces cross; a floating part is named; modifiers count; scene unchanged.
-  Depth means the deepest vertex of one mesh inside the other, found by ray parity along the nearest axis of overlap; a known
-  0.25 m overlap must report 0.25 within 10%, and a known 0.03 m gap must group or not group according to `gap_max_m`.
+  Depth is the shortest translation along +-X, +-Y or +-Z that carries the inside points of one mesh (found by ray parity)
+  out of the other: per direction the largest ray distance to the surface, the smallest of the six. (Revised: "nearest axis
+  of overlap" was ambiguous, and distance to the nearest surface reads 0.01 m for a box 0.25 m deep that sits close to
+  the side faces.) Coincident solids fail as a clash. A known 0.25 m overlap must report 0.25 within 10%, and a known 0.03 m gap must group or not group according to `gap_max_m`.
   Open meshes have no inside: containment and depth are reported as `not_measured` for them, never as a pass.
 - **H2 `blender-mcp-workflow/scripts/silhouette_score.py`** (read-only). Projects evaluated triangles through each named
   camera, rasterizes with numpy, compares with a reference mask (alpha, or background from the corners): IoU, bbox and
