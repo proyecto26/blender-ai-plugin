@@ -12,6 +12,8 @@ ARGS:
     overwrite   (bool) replace this range's existing frames and the status of a run that died. Default false: both are
                 errors, so runs do not mix. It never gets past a process that is still rendering to this out_dir.
                 Any other file in the frames folder is always an error, because encoding that folder would mix runs.
+    plan        (bool) make every check and render one frame without saving it, then stop, so the user can be told how
+                long the job will take before it starts. Default false. See "Before a long render" below.
 
 The status file is replaced atomically: `state` is running, done or error, plus `frames_done`, `frames_total`,
 `last_frame`, `elapsed_s`, `eta_s`, `started`, `ended`, `device`, `samples` and `error`. `done` means the run named by `started` rendered
@@ -22,6 +24,13 @@ A refused launch exits 1 and leaves an existing status file as it was, because t
 reason goes to `<out_dir>/render_refused.json` (`time`, `error`). So check the exit code as well as the status: a refusal
 applies when its `time` is later than the status's `started`, and an old `done` then says nothing about this launch.
 Exit 1 with no new refusal file means the arguments themselves were wrong, such as a misspelled name.
+
+Before a long render, run this once with plan=true, in the foreground, with the same arguments. It writes
+`<out_dir>/render_plan.json`: `time`, `frames_total`, `seconds_per_frame`, `expected_s`, `status_path`, `device`, `samples` and
+`tell_user`, one line to send the user before starting the job, and `next_step`. It leaves no status and no frames, so the real run can use
+the same out_dir, and a refusal goes to `render_refused.json`. The estimate comes from that one frame, so it is rough, and
+frames of very different cost make it wrong. Check `time` before trusting an older plan file.
+The real run prints nothing useful for this: its output usually goes to a log, and the Microsoft Store launcher drops it.
 
 One process owns an out_dir at a time, through an OS lock on `<out_dir>/render.lock`. The operating system drops the lock
 when the process ends, even in a crash, so the file stays behind and needs no cleanup.
@@ -136,7 +145,28 @@ def _set_device(scene, device):
     return used
 
 
-def main(out_dir, frame_start=None, frame_end=None, device=None, overwrite=False):
+def _duration(seconds):
+    return f"{max(1, round(seconds))} s" if seconds < 90 else f"{seconds / 60:.0f} min"
+
+
+def _plan(out_dir, status, frames, path):
+    """Measure one frame, and write what the user should hear before the job starts."""
+    scene = bpy.context.scene
+    scene.frame_set(frames[0])
+    begun = time.time()
+    if "FINISHED" not in bpy.ops.render.render(write_still=False):
+        raise RuntimeError(f"the test render of frame {frames[0]} did not finish")
+    each = time.time() - begun
+    plan = {"time": time.time(), "frames_total": len(frames), "seconds_per_frame": round(each, 2), "expected_s": round(each * len(frames), 1),
+            "status_path": path.replace("\\", "/"), "device": status["device"], "samples": status["samples"]}
+    plan["tell_user"] = (f"Rendering {len(frames)} frames in a separate Blender process, about "
+                         f"{_duration(plan['expected_s'])}. Your Blender window stays free. Progress: {plan['status_path']}")
+    plan["next_step"] = "Send tell_user to the user as a message now, then start the job without plan. No tool call shows it to them."
+    _write_status(os.path.join(out_dir, "render_plan.json"), plan)
+    return plan
+
+
+def main(out_dir, frame_start=None, frame_end=None, device=None, overwrite=False, plan=False):
     if not bpy.app.background:
         raise RuntimeError("background_render.py must run with `blender -b`, not in the open window: it blocks Blender "
                            "until the render ends and changes device settings")
@@ -151,12 +181,12 @@ def main(out_dir, frame_start=None, frame_end=None, device=None, overwrite=False
         _write_refusal(out_dir, exc)
         raise
     try:
-        return _render(out_dir, frames_dir, frame_start, frame_end, device, overwrite)
+        return _render(out_dir, frames_dir, frame_start, frame_end, device, overwrite, plan)
     finally:
         _release_lock(lock)
 
 
-def _render(out_dir, frames_dir, frame_start, frame_end, device, overwrite):
+def _render(out_dir, frames_dir, frame_start, frame_end, device, overwrite, plan=False):
     """Everything that reads or writes the folder; the caller holds its lock."""
     path = os.path.join(out_dir, "render_status.json")
     scene = bpy.context.scene
@@ -200,8 +230,10 @@ def _render(out_dir, frames_dir, frame_start, frame_end, device, overwrite):
         if existing and not overwrite:
             raise ValueError(f"{len(existing)} frame(s) already exist in {frames_dir}; "
                              "pass overwrite=true or use a new out_dir")
+        if plan:
+            return _plan(out_dir, status, list(frames), path)
     except Exception as exc:
-        if os.path.exists(path):
+        if plan or os.path.exists(path):
             _write_refusal(out_dir, exc)
         else:
             status.update(state="error", error=str(exc), ended=time.time())

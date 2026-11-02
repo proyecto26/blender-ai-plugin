@@ -77,9 +77,10 @@ edit:
 ## Background Work
 
 Use a separate process for long work, on every platform. Save the file first, and start the process from your shell. For
-renders use `scripts/background_render.py` in the `rendering` skill, which keeps a status file. For anything else run
-`blender -b file.blend --python script.py` and have the script write its result to a JSON file. When it starts, tell the
-user where the output and the status file are.
+renders use `scripts/background_render.py` in the `rendering` skill, which keeps a status file and has a `plan` step that
+gives you the line to send the user. For anything else run `blender -b file.blend --python script.py` and have the script
+write its result to a JSON file. Before you start it, send the user a message with what runs, where the output and the
+status file are, and how long you expect it to take: nothing else tells them a job is running.
 
 - **Report what the process proved.** Read the status file and the files on disk. An empty log proves nothing, because
   the Microsoft Store launcher drops console output.

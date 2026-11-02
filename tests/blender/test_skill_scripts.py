@@ -648,12 +648,26 @@ def _background_render():
         strays = _expect_error(lambda: run("rendering", "background_render.py", dict(args, frame_start=3, frame_end=4)))
         r.image_settings.media_type = "VIDEO"
         movie = _expect_error(lambda: run("rendering", "background_render.py", dict(args, overwrite=True)))
+        r.image_settings.media_type = "IMAGE"
+        r.image_settings.file_format = "PNG"
+        # A plan measures one frame and leaves the folder ready; its refusals never become a status.
+        plan_dir = d + "_plan"
+        plan = run("rendering", "background_render.py", dict(args, out_dir=plan_dir, plan=True))
+        plan_saved = json.load(open(os.path.join(plan_dir, "render_plan.json"), encoding="utf-8"))
+        plan_clean = not os.path.exists(os.path.join(plan_dir, "render_status.json")) and not os.listdir(os.path.join(plan_dir, "frames"))
+        after_plan = run("rendering", "background_render.py", dict(args, out_dir=plan_dir))["state"]
+        plan_done = _expect_error(lambda: run("rendering", "background_render.py", dict(args, plan=True)))
+        plan_bad_dir = d + "_plan_bad"
+        plan_bad = _expect_error(lambda: run("rendering", "background_render.py", dict(args, out_dir=plan_bad_dir, plan=True, device="NOPE")))
+        plan_bad_clean = not os.path.exists(os.path.join(plan_bad_dir, "render_status.json"))
         return {"state": res["state"], "done": first["frames_done"], "total": first["frames_total"],
                 "files": sorted(os.listdir(os.path.join(d, "frames"))), "ended": first["ended"], "repeat": repeat,
                 "repeat_state": repeat_state, "again": again, "bad_device": bad_device, "bad_state": bad_state["state"],
                 "bad_error": bad_state["error"], "kept_error": kept_error, "kept_state": kept_state, "refused_later": refused_later,
                 "unreadable": unreadable, "busy": busy, "died": died, "held": held, "held_no_status": held_no_status,
                 "held_over": held_over, "held_kept": held_kept, "held_reason": held_reason, "after_held": after_held,
+                "plan": plan, "plan_saved": plan_saved, "plan_clean": plan_clean, "after_plan": after_plan, "plan_done": plan_done,
+                "plan_bad": plan_bad, "plan_bad_clean": plan_bad_clean,
                 "busy_state": busy_state, "no_backend": no_backend, "strays": strays, "movie": movie, "handlers_kept": len(bpy.app.handlers.render_post) == handlers}
     finally:
         r.image_settings.media_type, r.image_settings.file_format = saved[9], saved[10]
@@ -966,6 +980,10 @@ def build_cases(out_dir):
          and "not available on this machine" in (r["no_backend"] or "")
          and "device" in (r["bad_device"] or "") and r["bad_state"] == "error" and "device" in (r["bad_error"] or "")
          and "outside this frame range" in (r["strays"] or "") and "image format" in (r["movie"] or "")
+         and r["plan"] == r["plan_saved"] and r["plan"]["frames_total"] == 2 and r["plan"]["expected_s"] > 0
+         and r["plan"]["status_path"] in r["plan"]["tell_user"] and "2 frames" in r["plan"]["tell_user"]
+         and r["plan_clean"] and r["after_plan"] == "done" and "already exist" in (r["plan_done"] or "")
+         and "device" in (r["plan_bad"] or "") and r["plan_bad_clean"]
          and r["handlers_kept"]),
         ("director.run_manifest", lambda: _manifest_case(),
          lambda r: r["events"] == 2 and r["r2_events"] == 2 and r["hash"] == r["expect_hash"]
