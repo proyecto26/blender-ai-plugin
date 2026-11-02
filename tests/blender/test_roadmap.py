@@ -624,6 +624,99 @@ def test_review_r5(rec, scene, out_dir):
               {o.name for o in bpy.data.objects} == objects_before, sorted({o.name for o in bpy.data.objects} ^ objects_before))
 
 
+# ---------------------------------------------------------------- review findings (round 2)
+
+def test_review2(rec, scene, out_dir):
+    # R4: the compound packed-ORM spelling used by many exporters must not be read as plain roughness.
+    orm = os.path.join(out_dir, "r4_orm_compound")
+    os.makedirs(orm, exist_ok=True)
+    save_map(os.path.join(orm, "Rock_BaseColor.png"), 0.4)
+    save_map(os.path.join(orm, "Rock_occlusion_roughness_metallic.png"), 0.3)
+    r = run("texture-workflow", "import_painter_textures.py", {"folder": orm, "material": "MAT_RT_ORM2"})["result"]
+    rec.check("R4-review2: Rock_occlusion_roughness_metallic.png is classified as orm", r["files"].get("orm") ==
+              "Rock_occlusion_roughness_metallic.png", r["files"])
+    nt = bpy.data.materials["MAT_RT_ORM2"].node_tree
+    bsdf = next(n for n in nt.nodes if n.bl_idname == "ShaderNodeBsdfPrincipled")
+    rec.check("R4-review2: compound ORM feeds Roughness from G and Metallic from B",
+              bsdf.inputs["Metallic"].is_linked and bsdf.inputs["Roughness"].is_linked
+              and bsdf.inputs["Roughness"].links[0].from_socket.name == "Green"
+              and bsdf.inputs["Metallic"].links[0].from_socket.name == "Blue")
+
+    # R1: switching dither off on a scene that already has it must remove the stage.
+    sc = bpy.data.scenes.new("__RT_R1_off")
+    sc.render.resolution_x, sc.render.resolution_y = 64, 48
+    base = {"objects": [], "snap": 0, "fog": False, "texture": False, "resolution": [64, 48]}
+    in_scene(sc, lambda: run("lowpoly-style", "ps1_look.py", {**base, "dither": True}))
+    rec.check("R1-review2 fixture: dither installed",
+              "SK_PS1_DitherPosterize" in upstream_names(sc.compositing_node_group))
+    res = in_scene(sc, lambda: run("lowpoly-style", "ps1_look.py", {**base, "dither": False}))["result"]
+    tree = sc.compositing_node_group
+    left = sorted(n.name for n in tree.nodes if n.name.startswith("SK_PS1_"))
+    rec.check("R1-review2: dither=False on a dithered scene removes the SK_PS1_ nodes", not left, left)
+    rec.check("R1-review2: dither=False on a dithered scene leaves nothing dithering the output",
+              not any(n.startswith("SK_PS1_") for n in upstream_names(tree)), sorted(upstream_names(tree)))
+    rec.check("R1-review2: result reports no dither", res["dither"] is None)
+
+    def cube(name, loc, mat):
+        me = bpy.data.meshes.new(name)
+        bm = bmesh.new()
+        bmesh.ops.create_cube(bm, size=1.0)
+        bm.to_mesh(me)
+        bm.free()
+        me.materials.append(mat)
+        o = bpy.data.objects.new(name, me)
+        scene.collection.objects.link(o)
+        o.location = loc
+        return o
+
+    # R5: a normally suffixed material name (Material.001) must round-trip.
+    bpy.data.materials.new("RT_Suf")
+    suf = bpy.data.materials.new("RT_Suf")
+    rec.check("R5-review2 fixture: material really is named with a numeric suffix", suf.name == "RT_Suf.001", suf.name)
+    cube("RT_USD_Suf", (0, 0, 0), suf)
+    bpy.context.view_layer.update()
+    rs = run("usd-pipeline", "usd_roundtrip.py", {"objects": ["RT_USD_Suf"],
+                                                  "out_path": os.path.join(out_dir, "r5_suffix", "suf.usdc")})["result"]
+    rec.check("R5-review2: material named RT_Suf.001 round-trips ok", rs["ok"], rs["problems"])
+
+    # R5: a REAL transform change (not tol=-1): every object that appears during the import is moved 0.5 on X.
+    cube("RT_USD_Move", (2, 0, 0), bpy.data.materials.new("RT_Mv"))
+    bpy.context.view_layer.update()
+    known = {o.name for o in bpy.data.objects}
+    busy = []
+
+    def shift(*_):
+        if busy:
+            return
+        busy.append(1)
+        try:
+            for o in bpy.data.objects:
+                if o.name not in known and not o.get("rt_shifted"):
+                    o["rt_shifted"] = 1
+                    o.location.x += 0.5
+        finally:
+            busy.clear()
+    clean = run("usd-pipeline", "usd_roundtrip.py", {"objects": ["RT_USD_Move"],
+                                                     "out_path": os.path.join(out_dir, "r5_move", "clean.usdc")})["result"]
+    rec.check("R5 negative: without the mover the same object round-trips ok at default tolerance",
+              clean["ok"], clean["problems"])
+    bpy.app.handlers.depsgraph_update_post.append(shift)
+    try:
+        tolerant = run("usd-pipeline", "usd_roundtrip.py", {"objects": ["RT_USD_Move"], "tol": 10.0,
+                                                            "out_path": os.path.join(out_dir, "r5_move", "tolerant.usdc")})["result"]
+        bad = run("usd-pipeline", "usd_roundtrip.py", {"objects": ["RT_USD_Move"],
+                                                       "out_path": os.path.join(out_dir, "r5_move", "move.usdc")})["result"]
+    finally:
+        bpy.app.handlers.depsgraph_update_post.remove(shift)
+    diff = bad["per_object"].get("RT_USD_Move", {}).get("matrix_max_diff")
+    rec.check("R5 negative: a genuinely moved import is measured as a ~0.5 transform difference (not tol=-1)",
+              diff is not None and abs(diff - 0.5) < 1e-3, diff)
+    rec.check("R5 negative: default tolerance rejects the genuinely moved import",
+              not bad["ok"] and any("transform differs" in p for p in bad["problems"]), bad["problems"])
+    rec.check("R5 negative: the same moved import passes under a tolerance above the shift (tolerance, not identity)",
+              tolerant["ok"], tolerant["problems"])
+
+
 # ---------------------------------------------------------------- harness
 
 def run_all(out_dir):
@@ -644,7 +737,7 @@ def run_all(out_dir):
             for name, fn in (("R1", test_r1), ("R2", test_r2), ("R3", test_r3), ("R4", test_r4), ("R5", test_r5),
                              ("R1-review", test_review_r1), ("R2-review", test_review_r2),
                              ("R3-review", test_review_r3), ("R4-review", test_review_r4),
-                             ("R5-review", test_review_r5)):
+                             ("R5-review", test_review_r5), ("review2", test_review2)):
                 rec.section(name, lambda r, fn=fn: fn(r, scene, out_dir))
         finally:
             if ctx:

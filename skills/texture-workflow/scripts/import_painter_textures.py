@@ -69,6 +69,9 @@ def _cli_args():
 def _classify(filename, patterns):
     stem = os.path.splitext(filename)[0].lower()
     tokens = set(re.split(r"[^a-z0-9]+", stem))
+    for w in patterns.get("orm", ()):  # a compound packed name spells out other maps: it must win over their tokens
+        if len(w) > 4 and w in stem:
+            return "orm"
     for kind, words in patterns.items():  # whole name tokens first: "MetalDoor_Normal" is a normal map, not metallic
         if any(w in tokens for w in words):
             return kind
