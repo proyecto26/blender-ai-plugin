@@ -716,6 +716,40 @@ def test_review2(rec, scene, out_dir):
     rec.check("R5 negative: the same moved import passes under a tolerance above the shift (tolerance, not identity)",
               tolerant["ok"], tolerant["problems"])
 
+    # R5: a REAL material difference: every material that appears during the import is renamed, as a lossy
+    # importer would. The run must report ok:false and name the materials, and the clean run must pass.
+    cube("RT_USD_MatDiff", (4, 0, 0), bpy.data.materials.new("RT_MatDiff_Orig"))
+    bpy.context.view_layer.update()
+    known_mats = {m.name for m in bpy.data.materials}
+    renaming = []
+
+    def rename_imported(*_):
+        if renaming:
+            return
+        renaming.append(1)
+        try:
+            for m in list(bpy.data.materials):
+                if m.name not in known_mats and not m.name.endswith("_Changed"):
+                    m.name = m.name.split(".")[0] + "_Changed"
+        finally:
+            renaming.clear()
+    clean_m = run("usd-pipeline", "usd_roundtrip.py", {"objects": ["RT_USD_MatDiff"],
+                                                       "out_path": os.path.join(out_dir, "r5_matdiff", "clean.usdc")})["result"]
+    rec.check("R5 negative: without the renamer the same object round-trips ok (materials equal)",
+              clean_m["ok"], clean_m["problems"])
+    bpy.app.handlers.depsgraph_update_post.append(rename_imported)
+    try:
+        bad_m = run("usd-pipeline", "usd_roundtrip.py", {"objects": ["RT_USD_MatDiff"],
+                                                         "out_path": os.path.join(out_dir, "r5_matdiff", "bad.usdc")})["result"]
+    finally:
+        bpy.app.handlers.depsgraph_update_post.remove(rename_imported)
+    mats_pair = bad_m["per_object"].get("RT_USD_MatDiff", {}).get("materials")
+    rec.check("R5 negative: the imported material name really differs from the original",
+              bool(mats_pair) and mats_pair[0] != mats_pair[1] and mats_pair[1] == ["RT_MatDiff_Orig_Changed"], mats_pair)
+    rec.check("R5 negative: a material-name mismatch gives ok:false and a 'materials' problem naming both sides",
+              not bad_m["ok"] and any("RT_USD_MatDiff: materials" in p and "RT_MatDiff_Orig" in p for p in bad_m["problems"]),
+              bad_m["problems"])
+
 
 # ---------------------------------------------------------------- review findings (round 3)
 
@@ -1383,3 +1417,4 @@ ARGS = globals().get("ARGS") or _cli_args()
 result = main(**ARGS)
 if bpy.app.background and __name__ == "__main__":
     print(json.dumps({k: result[k] for k in ("summary", "failures")}, indent=2))
+    sys.exit(0 if not result["failures"] else 1)
