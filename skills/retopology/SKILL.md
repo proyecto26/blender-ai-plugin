@@ -140,3 +140,4 @@ ARGS: `objects`, `deforming`
 |-------|-----------|-----------|
 | Facial retopo | `references/facial-retopo.md` | Character faces |
 | Game vs cinematic | `references/game-cinematic-topo.md` | Budget decisions |
+| Hair card topology | `references/hair-card-topology.md` | Building game hair cards (placement and atlas: `hair-groom`) |

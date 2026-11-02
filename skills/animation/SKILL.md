@@ -143,3 +143,4 @@ ARGS: `target`, `frames`, `lens_mm`, `elevation_deg`, `set_active`
 |-------|-----------|-----------|
 | Walk cycle breakdown | `references/walk-cycle.md` | Locomotion |
 | Combat timing | `references/combat-animation.md` | Action games |
+| Mocap cleanup (tested recipe) | `references/mocap-cleanup.md` | Dense, noisy or flipping captured keys |

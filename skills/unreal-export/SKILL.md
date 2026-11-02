@@ -117,3 +117,4 @@ ARGS: `mesh`, `out_dir`, `strict`
 |-------|-----------|----------|
 | Unreal Checklist | `references/unreal-checklist.md` | When needed |
 | Ucx Naming | `references/ucx-naming.md` | When needed |
+| Nanite prep | `references/nanite-prep.md` | Mesh will use Nanite |

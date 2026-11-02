@@ -44,13 +44,18 @@ stage starts, and name each one in the brief.
    `references/live-session.md`. Risky experiments go into a temporary scene you remove afterwards, or to
    `execute_blender_code_for_cli` on a scratch `.blend` where that tool works. Destructive steps (apply, join, boolean apply, remesh, decimate)
    go through `blender-mcp-workflow` -> `scripts/work_copy.py`.
-4. **Leave preferences alone.** Undo and `.blend` copies do not restore them. Set the Cycles device inside the
+4. **One live session, one agent.** Never let a second agent edit the same open Blender session, even in separate
+   collections: they share one scene and one undo stack. Parallel work is allowed only on separate saved copies of the file
+   (`save_as_mainfile(copy=True)`), each in its own process, merged into the live file by you alone, who then runs that stage's
+   gate on the merged result. Say in the brief that this is unmeasured, and prefer sequential stages for a single asset.
+   Rules: `blender-director` -> `references/skill-routing.md` (section "Parallel vs Sequential").
+5. **Leave preferences alone.** Undo and `.blend` copies do not restore them. Set the Cycles device inside the
    background process, not in the open window.
-5. **No shell, network or file deletion from bpy** unless the user explicitly asks. Paid or cloud generation
+6. **No shell, network or file deletion from bpy** unless the user explicitly asks. Paid or cloud generation
    (ComfyUI cloud, partner models) needs the user's yes first.
-6. **Code you run is code the user trusts you with.** Keep each `execute_blender_code` call small, readable,
+7. **Code you run is code the user trusts you with.** Keep each `execute_blender_code` call small, readable,
    and returning a `result` dict you actually check. Write script paths with forward slashes on every OS.
-7. **Plugin files are read-only during a task.** Do not edit the plugin's scripts, skills or agents, even to fix a real
+8. **Plugin files are read-only during a task.** Do not edit the plugin's scripts, skills or agents, even to fix a real
    bug: the change would reach every later task unreviewed, and hide the bug from the people who can fix it. When a script
    is wrong, work around it in your own code for this task, and report the script, the input and what it did under
    **Not done / risks**.
