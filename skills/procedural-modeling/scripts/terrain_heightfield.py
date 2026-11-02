@@ -139,18 +139,22 @@ def main(name="GEO_Terrain", size=50.0, resolution=65, seed=0, height=5.0, frequ
     if existing is not None and existing.type != "MESH":
         raise ValueError(f"object {name!r} exists and is not a mesh")
     if existing is not None:
-        bad = [what for what, off in (
-            ("a parent", existing.parent is not None),
-            ("a non-identity scale", any(abs(v - 1.0) > 1e-6 for v in existing.scale)),
-            ("a rotation", any(abs(v) > 1e-6 for v in existing.rotation_euler)
-             or (existing.rotation_mode == "QUATERNION" and any(abs(a - b) > 1e-6 for a, b in zip(existing.rotation_quaternion, (1, 0, 0, 0))))),
-            ("a delta transform", any(abs(v) > 1e-6 for v in existing.delta_location)
-             or any(abs(v) > 1e-6 for v in existing.delta_rotation_euler)
-             or any(abs(v - 1.0) > 1e-6 for v in existing.delta_scale))) if off]
+        if existing.mode == "EDIT" or existing.data.is_editmode:
+            raise ValueError(f"object {name!r} is in Edit Mode: leave Edit Mode (Tab) and run again; nothing was changed.")
+        if existing.data.shape_keys is not None:
+            raise ValueError(f"mesh of {name!r} has shape keys: replacing its geometry would leave stale keys, so nothing was "
+                             "changed. Remove the shape keys (or delete the object) and run again.")
+        bpy.context.view_layer.update()
+        mw = existing.matrix_world
+        linear_off = max(abs(mw[i][j] - (1.0 if i == j else 0.0)) for i in range(3) for j in range(3)) > 1e-6
+        moved_off = (mw.translation - existing.location).length > 1e-6  # delta location, a constraint, a parent offset
+        bad = [what for what, off in (("a parent", existing.parent is not None),
+                                      ("a world transform other than a plain move (scale, rotation, delta transform "
+                                       "or constraint)", linear_off or moved_off)) if off]
         if bad:
             raise ValueError(f"object {name!r} has {', '.join(bad)}: replace writes world-space heights and resets only the "
-                             "location, so the terrain would land at the wrong height. Clear the parent, scale and rotation "
-                             "(or delete the object) and run again.")
+                             "location, so the terrain would land at the wrong height. Clear the parent, scale, rotation, "
+                             "delta transforms and constraints (or delete the object) and run again.")
     target_coll = bpy.data.collections.get(collection) if collection else bpy.context.scene.collection
     if target_coll is None:
         raise ValueError(f"collection {collection!r} not found")

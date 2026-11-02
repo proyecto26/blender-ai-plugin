@@ -1024,6 +1024,91 @@ def test_review5(rec, scene, out_dir):
               r["ok"], r["problems"])
 
 
+def test_review6(rec, scene, out_dir):
+    import math
+    cu = bpy.data.curves.new("CRV_RT_R6", "CURVE")
+    cu.dimensions = "3D"
+    sp = cu.splines.new("POLY")
+    sp.points.add(1)
+    for p, co in zip(sp.points, [(-8, 0, 3, 1), (8, 0, 3, 1)]):
+        p.co = co
+    scene.collection.objects.link(bpy.data.objects.new("CRV_RT_R6", cu))
+    corr = {"curve": "CRV_RT_R6", "half_width": 2.0, "falloff": 1.0}
+    args = {"size": 30, "resolution": 61, "seed": 3, "height": 3, "frequency": 0.05, "corridor": corr}
+
+    def make(nm):
+        run("procedural-modeling", "terrain_heightfield.py", {**args, "name": nm})
+        return bpy.data.objects[nm]
+
+    def bed_error(o):
+        w = np.array([tuple(o.matrix_world @ v.co) for v in o.data.vertices])
+        bed = (np.abs(w[:, 1]) <= 1.5) & (np.abs(w[:, 0]) <= 6)
+        return float(np.abs(w[bed, 2] - 3.0).max()) if bed.any() else 99.0
+
+    def axis_angle(o):
+        o.rotation_mode = "AXIS_ANGLE"
+        o.rotation_axis_angle = (math.radians(30), 0, 1, 0)
+
+    def delta_quat(o):
+        o.rotation_mode = "QUATERNION"
+        o.delta_rotation_quaternion = (math.cos(math.radians(15)), 0, math.sin(math.radians(15)), 0)
+
+    def constraint(o):
+        tgt = bpy.data.objects.new("RT_R6_Tgt", None)
+        tgt.location = (0, 0, 4)
+        scene.collection.objects.link(tgt)
+        c = o.constraints.new("COPY_LOCATION")
+        c.target = tgt
+
+    for tag, mutate in (("axis-angle rotation", axis_angle), ("delta quaternion", delta_quat), ("constraint", constraint)):
+        nm = "RT_TerrR6_" + tag.replace(" ", "").replace("-", "")
+        o = make(nm)
+        mutate(o)
+        bpy.context.view_layer.update()
+        err = raises(lambda: run("procedural-modeling", "terrain_heightfield.py", {**args, "name": nm, "replace": True}))
+        bpy.context.view_layer.update()
+        if err is not None:
+            rec.check(f"R2-review6 ({tag}): refused with a message", "replace" in err or "transform" in err, err)
+        else:
+            e = bed_error(o)
+            rec.check(f"R2-review6 ({tag}): not refused, so the bed must sit at the curve's world height", e < 1e-3, e)
+
+    # replace on a clean, translated object still works
+    o = make("RT_TerrR6_ok")
+    o.location = (4, 4, 9)
+    bpy.context.view_layer.update()
+    r = run("procedural-modeling", "terrain_heightfield.py", {**args, "name": "RT_TerrR6_ok", "replace": True})["result"]
+    bpy.context.view_layer.update()
+    rec.check("R2-review6: a terrain that is only moved is still replaced, bed at world height",
+              r["object"] == "RT_TerrR6_ok" and bed_error(o) < 1e-3, bed_error(o))
+
+    # R3: shape keys on the terrain mesh
+    o = make("RT_TerrR6_sk")
+    o.shape_key_add(name="Basis")
+    key = o.shape_key_add(name="Up")
+    for pt in key.data:
+        pt.co.z += 5.0
+    key.value = 1.0
+    n_before = len(o.data.vertices)
+    err = raises(lambda: run("procedural-modeling", "terrain_heightfield.py", {**args, "name": "RT_TerrR6_sk", "replace": True}))
+    bpy.context.view_layer.update()
+    rec.check("R3-review6: replace on a mesh with shape keys is refused with a message naming shape keys",
+              err is not None and "shape key" in err.lower(), err)
+    rec.check("R3-review6: the refused mesh keeps its shape keys and vertices",
+              o.data.shape_keys is not None and len(o.data.shape_keys.key_blocks) == 2 and len(o.data.vertices) == n_before, "")
+
+    # R3: Edit Mode
+    o = make("RT_TerrR6_edit")
+    bpy.context.view_layer.objects.active = o
+    o.select_set(True)
+    bpy.ops.object.mode_set(mode="EDIT")
+    err = raises(lambda: run("procedural-modeling", "terrain_heightfield.py", {**args, "name": "RT_TerrR6_edit", "replace": True}))
+    still_edit = o.mode == "EDIT"
+    bpy.ops.object.mode_set(mode="OBJECT")
+    rec.check("R3-review6: replace in Edit Mode is refused with a clear message naming Edit Mode, before anything changes",
+              err is not None and "Edit Mode" in err and still_edit and len(o.data.vertices) == 61 * 61, (err, still_edit))
+
+
 # ---------------------------------------------------------------- harness
 
 def run_all(out_dir):
@@ -1046,7 +1131,7 @@ def run_all(out_dir):
                              ("R3-review", test_review_r3), ("R4-review", test_review_r4),
                              ("R5-review", test_review_r5), ("review2", test_review2),
                              ("review3", test_review3), ("review4", test_review4),
-                             ("review5", test_review5)):
+                             ("review5", test_review5), ("review6", test_review6)):
                 rec.section(name, lambda r, fn=fn: fn(r, scene, out_dir))
         finally:
             if ctx:

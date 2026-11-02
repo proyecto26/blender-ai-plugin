@@ -121,7 +121,7 @@ One pending work set at a time. Details: `references/mcp-integration.md`.
 
 ## Snapshots Before Risky Edits
 
-Use `scripts/scene_snapshot.py` when you want a named restore point without File > Save As (which would make the snapshot the open file): `save` before a risky edit, `diff` afterwards to see exactly which objects were added, removed, moved or had their mesh changed, and `restore` with `objects: [...]` to bring back only what you need (copies land in `_Restored`; nothing is deleted or overwritten). Snapshots live in `<file folder>/snapshots` unless you pass `dir`. It covers objects and the data they use, not scene settings, and the mesh hash ignores modifiers and materials. For whole-asset destructive steps `work_copy.py` is still the tool; the snapshot is for scene-level history.
+Use `scripts/scene_snapshot.py` when you want a named restore point without File > Save As (which would make the snapshot the open file): `save` before a risky edit, `diff` afterwards to see exactly which objects were added, removed, moved or had their mesh changed, and `restore` with `objects: [...]` to bring back only what you need (copies land in `_Restored`; parents and rig armatures they need are kept in `_Restored_dependencies`, excluded from the view layer so they show nothing but survive save and reopen; nothing is deleted or overwritten). Snapshots live in `<file folder>/snapshots` unless you pass `dir`. It covers objects and the data they use, not scene settings, and the mesh hash ignores modifiers and materials. For whole-asset destructive steps `work_copy.py` is still the tool; the snapshot is for scene-level history.
 
 ## Working Live
 

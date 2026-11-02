@@ -44,6 +44,7 @@ import bpy
 import numpy as np
 
 RESTORED = "_Restored"
+RESTORED_DEPS = "_Restored_dependencies"
 NAME_RE = re.compile(r"^[A-Za-z0-9_.\-]+$")
 
 
@@ -247,9 +248,29 @@ def _restore(d, name, objects):
         scene.collection.children.link(coll)
     new = [o for o in bpy.data.objects if o not in before]
     got = set(requested.values())
-    for o in new:  # only what was asked for becomes visible; parents and instance sources stay reachable but unlinked
-        if o.name in got and o.name not in coll.objects:
-            coll.objects.link(o)
+    deps_coll = None
+    for o in new:  # only what was asked for becomes visible
+        if o.name in got:
+            if o.name not in coll.objects:
+                coll.objects.link(o)
+        elif not o.users_collection:
+            # a parent / armature the restored object needs: give it a real user (so it survives save and reload) in a
+            # collection that is excluded from the view layer (so it shows nothing). Instance sources already live in
+            # their own collection and keep it.
+            if deps_coll is None:
+                deps_coll = bpy.data.collections.get(RESTORED_DEPS)
+                if deps_coll is None:
+                    deps_coll = bpy.data.collections.new(RESTORED_DEPS)
+                if deps_coll.name not in coll.children:
+                    coll.children.link(deps_coll)
+            deps_coll.objects.link(o)
+    if deps_coll is not None:
+        stack = [bpy.context.view_layer.layer_collection]
+        while stack:
+            cur = stack.pop()
+            if cur.collection is deps_coll:
+                cur.exclude = True
+            stack.extend(cur.children)
     return {"restored": requested, "dependencies": sorted(o.name for o in new if o.name not in got),
             "collection": coll.name}
 

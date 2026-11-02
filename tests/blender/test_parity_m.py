@@ -856,16 +856,127 @@ def run_review_round5(out_dir, check):
     saved_world = [round(v, 4) for row in q.matrix_world for v in row]
     d7 = os.path.join(base, "parent")
     snap(action="save", dir=d7, name="p0")
-    names0 = sorted(o.name for o in bpy.context.scene.objects)
+    names0 = sorted(o.name for o in bpy.context.view_layer.objects)
     r = snap(action="restore", dir=d7, name="p0", objects=["Q"])
     bpy.context.view_layer.update()
     nq = bpy.data.objects[r["restored"]["Q"]]
     check("M3 (r5): only the requested child is linked; its parent stays out of the scene",
-          sorted(set(o.name for o in bpy.context.scene.objects) - set(names0)) == [nq.name]
-          and nq.parent is not None and nq.parent.name not in bpy.context.scene.objects
+          sorted(set(o.name for o in bpy.context.view_layer.objects) - set(names0)) == [nq.name]
+          and nq.parent is not None and nq.parent.name not in bpy.context.view_layer.objects
           and r["dependencies"] == [nq.parent.name], (r, [o.name for o in bpy.context.scene.objects]))
     check("M3 (r5): the restored child appears where it was saved",
           [round(v, 4) for row in nq.matrix_world for v in row] == saved_world, (list(nq.matrix_world), saved_world))
+
+
+def run_review_round6(out_dir, check):
+    """Restored dependencies must survive an actual save and reopen. Failed on 512e3e5 (parent purged as an orphan)."""
+    import bmesh
+    base = os.path.join(out_dir, "review6")
+    os.makedirs(base, exist_ok=True)
+    snap = lambda **kw: run("blender-mcp-workflow", "scene_snapshot.py", kw)  # noqa: E731
+
+    def reopen(tag):
+        path = os.path.join(base, tag + ".blend")
+        bpy.ops.wm.save_as_mainfile(filepath=path)
+        bpy.ops.wm.open_mainfile(filepath=path)
+
+    def eval_meshes():
+        """[(object name, rounded world-space bbox min, max)] for every visible evaluated mesh instance."""
+        dg = bpy.context.evaluated_depsgraph_get()
+        dg.update()
+        rows = []
+        for inst in dg.object_instances:
+            if inst.object.type != "MESH":
+                continue
+            me = inst.object.to_mesh()
+            pts = np.array([tuple(inst.matrix_world @ v.co) for v in me.vertices])
+            inst.object.to_mesh_clear()
+            rows.append((inst.object.original.name, tuple(np.round(pts.min(0), 3)), tuple(np.round(pts.max(0), 3))))
+        return sorted(rows)
+
+    def cube(name, loc):
+        bpy.ops.mesh.primitive_cube_add(location=loc)
+        bpy.context.active_object.name = name
+        return bpy.context.active_object
+
+    # 1. a child whose parent is not restored
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    p, q = cube("P", (0, 0, 0)), cube("Q", (0, 0, 1))
+    p.location = (5, 0, 0)
+    q.parent = p
+    q.matrix_parent_inverse = p.matrix_world.inverted()
+    bpy.context.view_layer.update()
+    d = os.path.join(base, "parent")
+    snap(action="save", dir=d, name="s")
+    r = snap(action="restore", dir=d, name="s", objects=["Q"])
+    nq_name = r["restored"]["Q"]
+    reopen("parent")
+    bpy.context.view_layer.update()
+    nq = bpy.data.objects[nq_name]
+    check("M3 (r6): after save and reopen the restored child still has its parent and sits at x=5",
+          nq.parent is not None and abs(nq.matrix_world.translation.x - 5.0) < 1e-4
+          and abs(nq.matrix_world.translation.z - 1.0) < 1e-4, (nq.parent, tuple(nq.matrix_world.translation)))
+    check("M3 (r6): the reopened parent is not visible in the view layer",
+          nq.parent is not None and nq.parent.name not in bpy.context.view_layer.objects, nq.parent)
+    check("M3 (r6): no extra visible geometry after reopen (original P, Q plus the restored Q only)",
+          len(eval_meshes()) == 3, eval_meshes())
+
+    # 2. a rigged mesh whose armature is not restored
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    bpy.ops.object.armature_add(location=(0, 0, 0))
+    arm = bpy.context.active_object
+    arm.name = "Arm"
+    m = cube("Body", (0, 0, 0))
+    m.vertex_groups.new(name="Bone").add(list(range(len(m.data.vertices))), 1.0, "REPLACE")
+    mod = m.modifiers.new("Armature", "ARMATURE")
+    mod.object = arm
+    arm.pose.bones["Bone"].location = (0, 0, 2)
+    bpy.context.view_layer.update()
+    rig_before = [x for x in eval_meshes() if x[0] == "Body"]
+    d = os.path.join(base, "rig")
+    snap(action="save", dir=d, name="s")
+    r = snap(action="restore", dir=d, name="s", objects=["Body"])
+    nb_name = r["restored"]["Body"]
+    reopen("rig")
+    bpy.context.view_layer.update()
+    nb = bpy.data.objects[nb_name]
+    check("M3 (r6): a restored rigged mesh keeps its armature after save and reopen",
+          nb.modifiers["Armature"].object is not None, nb.modifiers["Armature"].object)
+    rig_after = [x for x in eval_meshes() if x[0] == nb_name]
+    check("M3 (r6): the rig still deforms the mesh after reopen (evaluated bbox equals the original's)",
+          len(rig_after) == 1 and bool(rig_before) and rig_after[0][1:] == rig_before[0][1:], (rig_after, rig_before))
+    check("M3 (r6): the restored armature is not visible", nb.modifiers["Armature"].object is not None
+          and nb.modifiers["Armature"].object.name not in bpy.context.view_layer.objects, "")
+
+    # 3. a collection instance keeps working after reopen
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    scene = bpy.context.scene
+    src = bpy.data.collections.new("SRC")
+    cme = bpy.data.meshes.new("SRCmesh")
+    bm = bmesh.new()
+    bmesh.ops.create_cube(bm, size=1.0)
+    bm.to_mesh(cme)
+    bm.free()
+    src.objects.link(bpy.data.objects.new("SrcCube", cme))
+    inst = bpy.data.objects.new("Inst", None)
+    inst.instance_type = "COLLECTION"
+    inst.instance_collection = src
+    inst.location = (10, 0, 0)
+    scene.collection.objects.link(inst)
+    d = os.path.join(base, "inst")
+    snap(action="save", dir=d, name="s")
+    before = len(eval_meshes())
+    r = snap(action="restore", dir=d, name="s", objects=["Inst"])
+    ni_name = r["restored"]["Inst"]
+    reopen("inst")
+    ni = bpy.data.objects[ni_name]
+    rows = eval_meshes()
+    xs = sorted(round((a[1][0] + a[2][0]) / 2, 2) for a in rows)
+    check("M3 (r6): after reopen the instance still points at its collection, at X=10, with one cube per instance",
+          ni.instance_collection is not None and abs(ni.location.x - 10.0) < 1e-4 and len(rows) == before + 1
+          and xs.count(10.0) == 2, (rows, xs))
+    check("M3 (r6): the instance's source cube is not independently visible after reopen",
+          not any(o.name.startswith("SrcCube") for o in bpy.context.view_layer.objects), "")
 
 
 def run_all(out_dir):
@@ -878,7 +989,8 @@ def run_all(out_dir):
     for label, fn in (("flicker_check", run_flicker), ("scene_snapshot", run_snapshot),
                       ("surface_tools", run_surface), ("review_round1", run_review_round1),
                       ("review_round2", run_review_round2), ("review_round3", run_review_round3),
-                      ("review_round4", run_review_round4), ("review_round5", run_review_round5)):
+                      ("review_round4", run_review_round4), ("review_round5", run_review_round5),
+                      ("review_round6", run_review_round6)):
         try:
             fn(out_dir, check)
         except Exception:
