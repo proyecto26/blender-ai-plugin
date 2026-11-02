@@ -149,8 +149,12 @@ def run_flicker(out_dir, check):
           pf[4]["not_measured"])
     check("occlusion: counted in the output total", r["not_measured"]["high_residual"] >= 4 and r["not_measured"]["blocks"] >= 4,
           r["not_measured"])
-    check("occlusion: those blocks are not scored (no event, measured < total in frame 4)",
-          not r["events"] and pf[4]["measured"] <= r["total_blocks"] // r["evaluated_frames"] - 4, (r["events"][:1], pf[4]))
+    # a tile that shows other content for exactly one frame, with both neighbours agreeing there, is a dropout event
+    # (it used to pass); the blocks stay unmeasured as blocks
+    check("occlusion: a one-frame foreign tile is reported as a dropout at frame 4 over the tile, its blocks stay unmeasured",
+          r["verdict"] == "flicker" and [e["frame"] for e in r["events"]] == [4]
+          and r["events"][0]["region_px"] == [16, 16, 48, 48] and r["events"][0]["dropout_blocks"] == 4
+          and pf[4]["measured"] <= r["total_blocks"] // r["evaluated_frames"] - 4, (r["events"][:1], pf[4]))
 
     # 7. motion faster than the window: not_measured, verdict inconclusive, never pass
     fast_world = noise_world(W + N * 12 + 8, 3)
@@ -992,6 +996,7 @@ def run_all(out_dir, only=None):
                       ("review_round4", run_review_round4), ("review_round5", run_review_round5),
                       ("review_round6", run_review_round6),
                       ("review_round7", run_review_round7), ("flash_frames", run_flash_frames),
+                      ("partial_dropout", run_partial_dropout),
                       ("snapshot_duplicates", run_snapshot_duplicates)):
         if only and label not in only:
             continue
@@ -1073,6 +1078,121 @@ def run_flash_frames(out_dir, check):
     r = go("additive", fr)
     check("flash: an additive +0.15 pop at frame 4 is one global_exposure event",
           r["verdict"] == "flicker" and [(e["frame"], e["kind"]) for e in r["events"]] == [(4, "global_exposure")], r["events"][:1])
+
+
+def run_partial_dropout(out_dir, check):
+    """A region that goes black/white/other for one frame, while the frames either side agree there, is an event."""
+    base = os.path.join(out_dir, "dropout")
+    S, N = 96, 9
+
+    def tex(width, height, seed):
+        rng = np.random.default_rng(seed)
+        t = rng.random((height + 2, width + 2)).astype(np.float32)
+        s = sum(t[dy:dy + height, dx:dx + width] for dy in range(3) for dx in range(3)) / 9.0
+        return 0.05 + 0.6 * (s - s.min()) / (s.max() - s.min())
+
+    def go(name, fr, **kw):
+        return run("film-production", "flicker_check.py", {"paths": write_seq(os.path.join(base, name), fr), **kw})
+
+    def seq(grain=0.0, seed=0, world=None, n=N):
+        w = tex(S, S, 3) if world is None else world
+        rng = np.random.default_rng(seed)
+        out = []
+        for _ in range(n):
+            fr = w.copy()
+            if grain:
+                fr = fr + rng.normal(0, grain, fr.shape).astype(np.float32)
+            out.append(np.clip(fr, 0, 1).astype(np.float32))
+        return out
+
+    def at4(r, box=None):
+        ev = [e for e in r["events"] if e["frame"] == 4]
+        ok = r["verdict"] == "flicker" and [e["frame"] for e in r["events"]] == [4]
+        if box and ev:
+            x0, y0, x1, y1 = ev[0]["region_px"]
+            ok = ok and x0 <= box[2] and x1 >= box[0] and y0 <= box[3] and y1 >= box[1]
+        return ok, (r["verdict"], [(e["frame"], e["kind"], e["region_px"]) for e in r["events"]])
+
+    # positives: reported with frame and region, never a pass
+    for label, val in (("black", 0.0), ("white", 1.0)):
+        fr = seq()
+        fr[4][32:64, 32:64] = val
+        ok, d = at4(go(f"tile_{label}", fr), (32, 32, 64, 64))
+        check(f"dropout: a {label} 32x32 tile in a 96x96 frame is an event at frame 4 over the tile", ok, d)
+    for pct in (25, 40, 50):
+        for grain in (0.0, 0.01):
+            fr = seq(grain=grain, seed=2)
+            rows = S * pct // 100
+            fr[4][S - rows:, :] = 0.0
+            ok, d = at4(go(f"band{pct}_{grain}", fr), (0, S - rows, S, S))
+            check(f"dropout: a black band over {pct}% of a {'grained ' if grain else ''}frame is an event at frame 4", ok, d)
+    world = tex(S + N * 3, S, 5)
+    fr = [world[:, t * 3:t * 3 + S].copy() for t in range(N)]
+    fr[4][16:48, 40:72] = 0.0
+    ok, d = at4(go("tile_in_pan", fr), (40, 16, 72, 48))
+    check("dropout: a black tile inside a 3 px/frame pan is an event at frame 4", ok, d)
+    fr = seq()
+    fr[4][32:64, 32:64] = tex(S, S, 99)[32:64, 32:64]
+    ok, d = at4(go("tile_other", fr), (32, 32, 64, 64))
+    check("dropout: a tile that shows other texture for one frame (a jump, no brightness change) is an event", ok, d)
+
+    # very dark scene: a black frame is under the 0.03 threshold in absolute terms
+    dark = tex(S, S, 3) * 0.05
+    fr = seq(grain=0.003, seed=4, world=dark)
+    fr[4] = np.zeros_like(fr[4])
+    ok, d = at4(go("dark_black", fr))
+    check("dropout: a black frame in a very dark scene (mean ~0.02) is an event at frame 4", ok, d)
+    for g in (0.0, 0.003, 0.01):
+        r = go(f"dark_steady_{g}", seq(grain=g, seed=6, world=dark))
+        check(f"dropout: steady dark grain (std {g}) gives no event", not r["events"], (r["verdict"], r["events"][:1]))
+
+    # unchanged: no false event
+    def obj_seq(kind):
+        bg = tex(S, S, 3)
+        obj = tex(24, 24, 11) * 0.5 + 0.4
+        out = []
+        for t in range(N):
+            fr = bg.copy()
+            if kind == "move":
+                x = 8 + 5 * t
+                fr[36:60, x:x + 24] = obj
+            elif kind == "appear" and t >= 4:  # enters at frame 4 and stays
+                fr[36:60, 30:54] = obj
+            elif kind == "leave" and t < 5:  # leaves at frame 5 (disocclusion)
+                fr[36:60, 30:54] = obj
+            elif kind == "cross":  # object crossing the whole frame fast
+                x = -20 + 14 * t
+                if -24 < x < S:
+                    xa, xb = max(x, 0), min(x + 24, S)
+                    fr[36:60, xa:xb] = obj[:, xa - x:xb - x]
+            out.append(fr)
+        return out
+
+    for kind in ("move", "appear", "leave", "cross"):
+        r = go(f"obj_{kind}", obj_seq(kind))
+        check(f"dropout: no false event for an object ({kind}) over a textured background", not r["events"],
+              (r["verdict"], [(e["frame"], e["kind"], e["region_px"]) for e in r["events"]]))
+    world = tex(S + N * 6, S, 5)
+    for speed in (3, 6):
+        r = go(f"pan{speed}", [world[:, t * speed:t * speed + S].copy() for t in range(N)])
+        check(f"dropout: no false event for a {speed} px/frame pan", not r["events"], (r["verdict"], r["events"][:1]))
+    r = go("grain_steady", seq(grain=0.01, seed=8))
+    check("dropout: a steady grained sequence has no event and passes", not r["events"] and r["verdict"] == "pass",
+          (r["verdict"], r["events"][:1]))
+    other = np.clip(tex(S, S, 7) + 0.2, 0, 1)
+    r = go("cut", seq(n=5) + [other.copy() for _ in range(4)])
+    check("dropout: a hard cut has no event and stays inconclusive", not r["events"] and r["verdict"] == "inconclusive",
+          (r["verdict"], r["events"][:1]))
+    fr = seq()
+    fr[4] = np.clip(fr[4] + 0.15, 0, 1)
+    r = go("add", fr)
+    check("dropout: an additive pop is still one global_exposure event",
+          [(e["frame"], e["kind"]) for e in r["events"]] == [(4, "global_exposure")], r["events"][:1])
+    for gain in (0.7, 1.5):
+        fr = seq()
+        fr[4] = np.clip(fr[4] * gain, 0, 1)
+        r = go(f"gain{gain}", fr)
+        check(f"dropout: gain {gain} at frame 4 is still one event on frame 4", [e["frame"] for e in r["events"]] == [4], r["events"][:1])
 
 
 def run_snapshot_duplicates(out_dir, check):

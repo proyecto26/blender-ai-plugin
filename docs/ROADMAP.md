@@ -70,7 +70,6 @@ References:
 
 Reproduced by the final review and left open. The first ones can give a wrong answer.
 
-- [ ] `flicker_check.py`: a partial dropout passes. A black or white 32x32 tile in a 96x96 frame, or a black band over 25 to 50% of a textured frame, returns `pass`, because those blocks count only as high residual. A 60% band is caught. A black frame in a very dark scene (mean about 0.025) is under the 0.03 threshold
 - [ ] `score_run.py`: misses `Start-Process blender -ArgumentList "-b scene.blend -a"`, `& $blender` and `"$BLENDER"` launches; does not read escaped inline JSON paths; reads `p:/` in a URL as a Windows path; compares the first duration in a message, not the total
 - [ ] `scene_snapshot.py`: reads stale transforms when the scene was not updated; saves stale data for an armature in Edit Mode; "latest" can be wrong for two saves in the same second
 - [ ] `import_painter_textures.py`: wires a DirectX normal map without flipping it, and without a warning
