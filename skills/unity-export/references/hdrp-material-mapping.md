@@ -42,7 +42,8 @@ Normal-map green-channel convention is not covered here: check a lit preview of 
 
 Packs three grayscale images into one RGBA image in the HDRP mask-map order, inside Blender and in memory (nothing is written
 to disk). It makes small test images, checks pixel values (including the inversion and the white detail mask) and raises on
-any mismatch. To save a real map, set the image's file path and `save()` it as 8 or 16 bit PNG, and import it in Unity with
+any mismatch. Everything it creates carries a `recipe_owner` tag; re-running removes only tagged images from an earlier run,
+and images of yours with the same names are left alone (the recipe's copies get a `.001` suffix). To save a real map, set the image's file path and `save()` it as 8 or 16 bit PNG, and import it in Unity with
 sRGB off. Writing files is not part of this recipe.
 
 ```python
@@ -50,13 +51,14 @@ import bpy
 import numpy as np
 
 W = H = 4
-for name in ("T_metal", "T_ao", "T_rough", "T_Test_MaskMap"):
-    old = bpy.data.images.get(name)
-    if old:
-        bpy.data.images.remove(old)
+# Remove only images this recipe tagged on an earlier run; the recipe holds image references and never looks up by name.
+TAG, OWNER = "recipe_owner", "hdrp-material-mapping"
+for stale in [i for i in bpy.data.images if i.get(TAG) == OWNER]:
+    bpy.data.images.remove(stale)
 
 def gray(name, array):
     img = bpy.data.images.new(name, W, H, alpha=False, float_buffer=True)
+    img[TAG] = OWNER
     img.colorspace_settings.name = "Non-Color"
     rgba = np.ones((H, W, 4), dtype=np.float32)
     rgba[..., :3] = array[..., None]
@@ -64,8 +66,7 @@ def gray(name, array):
     img.update()
     return img
 
-def read_channel(name, channel=0):
-    img = bpy.data.images[name]
+def read_channel(img, channel=0):
     px = np.empty(W * H * 4, dtype=np.float32)
     img.pixels.foreach_get(px)
     return px.reshape(H, W, 4)[..., channel]
@@ -73,6 +74,7 @@ def read_channel(name, channel=0):
 def pack_mask_map(name, metal, ao, rough, detail=None):
     """R metallic, G ambient occlusion, B detail mask (white if none), A smoothness = 1 - roughness."""
     out = bpy.data.images.new(name, W, H, alpha=True, float_buffer=True)
+    out[TAG] = OWNER
     out.colorspace_settings.name = "Non-Color"
     px = np.empty((H, W, 4), dtype=np.float32)
     px[..., 0] = read_channel(metal)
@@ -88,10 +90,10 @@ metal[:, : W // 2] = 1.0                      # left half metal
 ao = np.full((H, W), 0.5, np.float32)
 rough = np.full((H, W), 0.2, np.float32)
 rough[0, :] = 0.9                             # top row rough
-gray("T_metal", metal)
-gray("T_ao", ao)
-gray("T_rough", rough)
-mask = pack_mask_map("T_Test_MaskMap", "T_metal", "T_ao", "T_rough")
+img_metal = gray("T_metal", metal)
+img_ao = gray("T_ao", ao)
+img_rough = gray("T_rough", rough)
+mask = pack_mask_map("T_Test_MaskMap", img_metal, img_ao, img_rough)
 
 px = np.empty(W * H * 4, dtype=np.float32)
 mask.pixels.foreach_get(px)
@@ -101,8 +103,8 @@ assert np.allclose(px[..., 1], 0.5), "G is not ambient occlusion"
 assert np.allclose(px[..., 2], 1.0), "B is not white when no detail mask is given"
 assert np.allclose(px[1:, :, 3], 0.8, atol=1e-6) and np.allclose(px[0, :, 3], 0.1, atol=1e-6), "A is not 1 - roughness"
 assert mask.colorspace_settings.name == "Non-Color"
-for name in ("T_metal", "T_ao", "T_rough"):
-    bpy.data.images.remove(bpy.data.images[name])
+for img in (img_metal, img_ao, img_rough):
+    bpy.data.images.remove(img)
 result = {"mask_map": mask.name, "alpha_rough_row": float(px[0, 0, 3]), "alpha_other": float(px[1, 0, 3]),
           "colorspace": mask.colorspace_settings.name}
 ```

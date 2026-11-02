@@ -38,19 +38,19 @@ decimated high-poly stage, which is judged by silhouette.
 
 Builds a dense sphere as the "scan" and a 32 by 16 sphere as the "model" at the same size, measures both ways, and checks
 that the check can fail: the same model shifted 5 cm must exceed the worst-case tolerance. It raises on any mismatch.
-Re-running removes its own objects.
+Everything it creates carries a `recipe_owner` tag; re-running removes only tagged data from an earlier run, and same-name
+objects or meshes you already have are left alone (the recipe's copies get a `.001` suffix).
 
 ```python
 import bpy
 import bmesh
 from mathutils.bvhtree import BVHTree
 
-for name in ("ScanSrc", "ScanLow", "ScanLowShifted"):
-    old = bpy.data.objects.get(name)
-    if old:
-        bpy.data.objects.remove(old)
-    if bpy.data.meshes.get(name):
-        bpy.data.meshes.remove(bpy.data.meshes[name])
+# Remove only data this recipe tagged on an earlier run; never look anything up by name.
+TAG, OWNER = "recipe_owner", "scan-match"
+for coll in (bpy.data.objects, bpy.data.meshes):
+    for stale in [d for d in coll if d.get(TAG) == OWNER]:
+        coll.remove(stale)
 
 sc = bpy.context.scene
 
@@ -64,6 +64,7 @@ def sphere(name, loc, dense):
     bm.to_mesh(me)
     bm.free()
     ob = bpy.data.objects.new(name, me)
+    ob[TAG] = me[TAG] = OWNER
     ob.location = loc
     sc.collection.objects.link(ob)
     return ob
