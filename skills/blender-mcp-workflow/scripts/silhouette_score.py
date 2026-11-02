@@ -151,7 +151,9 @@ def rasterize(tris_world, cam, depsgraph, width, height):
     mask = np.zeros((height, width), dtype=bool)
     if len(tris_world) == 0:
         return mask
-    proj = np.array(cam.calc_matrix_camera(depsgraph, x=width, y=height), dtype=np.float64)
+    rd = depsgraph.scene.render  # a render with non-square pixels (pixel_aspect_x/y) is projected with the same aspect
+    proj = np.array(cam.calc_matrix_camera(depsgraph, x=width, y=height, scale_x=float(rd.pixel_aspect_x),
+                                           scale_y=float(rd.pixel_aspect_y)), dtype=np.float64)
     view = np.array(cam.matrix_world.normalized().inverted(), dtype=np.float64)
     near, far = float(cam.data.clip_start), float(cam.data.clip_end)
     flat = np.concatenate([tris_world.reshape(-1, 3), np.ones((len(tris_world) * 3, 1))], axis=1)

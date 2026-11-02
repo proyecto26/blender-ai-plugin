@@ -190,9 +190,14 @@ def _on_surface_fraction(src, dst, tol, cap, rng):
 
 
 def _pierces(src, dst, eps):
-    """True when an edge of `src` passes through the surface of `dst` (not just ending on it)."""
+    """True when an edge of `src` passes through the surface of `dst` (not just ending on it).
+
+    Against a closed `dst` a hit in the middle of the edge only counts when part of the edge lies strictly inside
+    `dst`: an edge that runs along a face of `dst` and meets a boundary of that face (partial face contact) also hits
+    the surface midway, but both sides of it are on the surface or outside, so it is touching and not a crossing."""
     p0, p1 = src.verts[src.edges[:, 0]], src.verts[src.edges[:, 1]]
     keep = np.all(np.maximum(p0, p1) >= dst.lo - eps, 1) & np.all(np.minimum(p0, p1) <= dst.hi + eps, 1)
+    reach = float(np.linalg.norm(np.maximum(dst.hi, src.hi) - np.minimum(dst.lo, src.lo)))
     for a, b in zip(p0[keep], p1[keep]):
         d = b - a
         length = float(np.linalg.norm(d))
@@ -200,16 +205,44 @@ def _pierces(src, dst, eps):
             continue
         d = Vector(d / length)
         t = 0.0
+        cuts = []
         for _ in range(64):
             hit = dst.bvh.ray_cast(Vector(a) + d * t, d, length - t)
             if hit[0] is None:
                 break
             s = t + hit[3]
             if eps < s < length - eps:
-                return True
+                if not dst.closed:
+                    return True  # an open surface has no inside to test: any mid-edge crossing counts
+                cuts.append(s)
             t = s + 2 * eps
             if t >= length:
                 break
+        marks = [0.0] + cuts + [length]
+        for s0, s1 in zip(marks, marks[1:] if cuts else []):
+            if s1 - s0 <= 4 * eps:
+                continue
+            mid = Vector(a) + d * ((s0 + s1) / 2)
+            near = dst.bvh.find_nearest(mid)
+            if near[0] is None or near[3] <= 10 * eps:
+                continue  # on the surface: contact, not penetration
+            if _inside(dst.bvh, mid, 4 * reach + 1.0, 2 * eps):
+                return True
+    return False
+
+
+def _sample_inside(src, dst, eps, far, adv, cap, rng):
+    """True when a surface sample of `src` (vertices, edge midpoints, triangle centres, then the barycentric grid) lies
+    strictly inside the closed mesh `dst`: more than a few eps from its surface, so contact never counts."""
+    if not dst.closed:
+        return False
+    for level in (1, 2):
+        pts, _ = _samples(src, level, cap, rng)
+        sel = pts[np.all(pts >= dst.lo - eps, 1) & np.all(pts <= dst.hi + eps, 1)]
+        for p in sel:
+            near = dst.bvh.find_nearest(Vector(p))
+            if near[0] is not None and near[3] > 10 * eps and _inside(dst.bvh, p, far, adv):
+                return True
     return False
 
 
@@ -331,8 +364,13 @@ def main(objects=None, gap_max_m=0.005, min_depth_m=0.001, require_connected=Tru
                 # have every sample within min_depth_m of each other without being duplicates
                 thick = [float(np.min(r.hi - r.lo)) for r in (a, b) if r.closed]
                 dup_tol = max(tol if not thick else min(tol, 0.2 * min(thick)), eps)
-                crossing = _pierces(a, b, eps) or _pierces(b, a, eps)
                 far = 4 * diag + 1.0
+                # surfaces cross when an edge of one runs through the other, or (for overlaps whose every edge lies
+                # on the other's surface, such as two shifted equal cubes) when a surface sample is strictly inside
+                nested = any(np.all(i.lo >= o.lo - eps) and np.all(i.hi <= o.hi + eps) for i, o in ((a, b), (b, a)))
+                crossing = (_pierces(a, b, eps) or _pierces(b, a, eps)
+                            or (not nested and (_sample_inside(a, b, eps, far, adv, cap, rng)
+                                                or _sample_inside(b, a, eps, far, adv, cap, rng))))
                 if crossing:
                     joined = True
                     depth, how = 0.0, None
