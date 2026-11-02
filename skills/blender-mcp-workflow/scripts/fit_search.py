@@ -91,6 +91,7 @@ class Param:
         if self.step <= 0 or self.tol <= 0:
             raise ValueError(f"{self.label}: step and tol must be positive")
         self.original = self._raw()
+        self.accepted = False
         v = self.get()
         if not self.lo <= v <= self.hi:
             raise ValueError(f"{self.label}: start value {v} is outside [{self.lo}, {self.hi}]")
@@ -119,6 +120,15 @@ class Param:
 
     def restore(self):
         setattr(self.owner, self.name, self.original)
+        self.accepted = False
+
+    def back_to(self, value):
+        """Undo a rejected candidate. Until a value has been accepted the scored state is the untouched original:
+        for a whole-vector param that start can be non-uniform, which a uniform write of its X would destroy."""
+        if self.accepted:
+            self.set(value)
+        else:
+            self.restore()
 
 
 def _scripts_dir(given):
@@ -195,16 +205,20 @@ def main(objects=None, views=None, params=None, max_evals=60, apply=False, bg_to
                     evals += 1
                     if s > best + 1e-9:
                         x[i], best, improved = cand, s, True
+                        p.accepted = True
                         history.append({"eval": evals, "score": round(best, 5), "values": [round(v, 5) for v in x]})
                         break
-                    p.set(x[i])
+                    p.back_to(x[i])
             if not improved:
                 steps = [st / 2 for st in steps]
                 if all(st < p.tol for st, p in zip(steps, ps)):
                     converged = True
                     break
         for p, v in zip(ps, x):
-            p.set(v)
+            if p.accepted:
+                p.set(v)  # a param that never improved keeps its original, scored value (which may be non-uniform)
+            else:
+                p.restore()
         final_score = None
         if checked:
             final_score = score()  # the scene is at the best values here; the last evaluation of the budget
