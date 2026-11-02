@@ -994,6 +994,11 @@
    "file": "film-production/SKILL.md",
    "block": 2,
    "reason": "example call on user files (<project> paths, renders or reads images); the script is covered by tests/blender/test_film.py"
+  },
+  {
+   "file": "film-production/SKILL.md",
+   "block": 3,
+   "reason": "example call on user files (<project> paths, renders or reads images); the script is covered by tests/blender/test_film.py"
   }
  ]
 }

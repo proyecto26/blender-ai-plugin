@@ -41,7 +41,10 @@ Returns for continuity: g0 {max_distance, ok}, g1 {max_angle_deg, ok}, g2 {max_c
 of "G2" | "G1" | "G0" | "none" whose test and all lower ones pass. Boundaries that do not coincide (different point
 counts, or points farther than `tol` apart in either direction) are refused with a ValueError, not scored. Derivatives are
 second-order one-sided differences, so the check is accurate for smooth surfaces sampled finely enough; G2 compares the
-normal curvature across the seam only (not the twist or the tangential part).
+normal curvature of the two surfaces in the surface direction perpendicular to the seam (from the second fundamental
+form, so it does not depend on how either grid is laid out or sheared; the seam's own curvature is estimated by
+differencing it twice, so a seam sampled with fewer than 5 points gives g2.ok = null, "not_measured", and level stops
+at G1). Limit: the rows must be a smooth function of the row index; a kinked grid gives wrong derivatives.
 """
 import json
 import sys
@@ -196,6 +199,19 @@ def _frame(rows):
     return p0, tang, d1, d2
 
 
+def _normal_curvature(tang, d1, d2, n):
+    """Normal curvature of the surface at each seam point in the direction in the tangent plane perpendicular to the
+    seam. That direction is a property of the surface (not of how its grid is laid out), so two grids sampling the same
+    surface give the same value whatever their parameterisation. w = Su + c*Ss with w . Ss = 0; kn = II(w,w) / I(w,w),
+    with the second fundamental form from Suu (d2), Sus (d1 differenced along the seam) and Sss (seam differenced twice)."""
+    sus = np.gradient(d1, axis=0, edge_order=2)
+    sss = np.gradient(tang, axis=0, edge_order=2)
+    c = -(d1 * tang).sum(axis=1) / (tang * tang).sum(axis=1)
+    w = d1 + c[:, None] * tang
+    ii = (d2 * n).sum(axis=1) + 2 * c * (sus * n).sum(axis=1) + c * c * (sss * n).sum(axis=1)
+    return ii / (w * w).sum(axis=1)
+
+
 def _continuity(a, b, edge_a, edge_b, tol, g1_deg, g2_tol):
     ga, gb = _normalise(a, edge_a, True), _normalise(b, edge_b, False)
     if min(len(ga), len(gb)) < 4:
@@ -221,21 +237,27 @@ def _continuity(a, b, edge_a, edge_b, tol, g1_deg, g2_tol):
     na, nb = na / la[:, None], nb / lb[:, None]
     g0 = float(np.linalg.norm(pa - pb, axis=1).max())
     ang = np.degrees(np.arccos(np.clip((na * nb).sum(axis=1), -1.0, 1.0)))
-    ka = (sa * na).sum(axis=1) / np.einsum("ij,ij->i", da, da)
-    kb = (sb * nb).sum(axis=1) / np.einsum("ij,ij->i", db, db)
-    size = float(np.linalg.norm(pa.max(axis=0) - pa.min(axis=0))) or 1.0
-    jump = float(np.abs(ka - kb).max() * size)
-    ok0, ok1, ok2 = g0 <= tol, bool(ang.max() <= g1_deg), bool(jump <= g2_tol)
+    # G2 needs the seam differenced twice; with fewer than 5 points that is not trustworthy, so it is not measured
+    measured2 = len(pa) >= 5
+    if measured2:
+        ka = _normal_curvature(ta, da, sa, na)
+        kb = _normal_curvature(tb, db, sb, nb)
+        size = float(np.linalg.norm(pa.max(axis=0) - pa.min(axis=0))) or 1.0
+        jump = float(np.abs(ka - kb).max() * size)
+    ok0, ok1 = g0 <= tol, bool(ang.max() <= g1_deg)
+    ok2 = bool(jump <= g2_tol) if measured2 else None
     level = "none"
     if ok0:
         level = "G0"
         if ok1:
             level = "G1"
-            if ok2:
+            if ok2:  # None (not measured) stops at G1
                 level = "G2"
     return {"action": "continuity", "level": level, "boundary_points": int(len(pa)), "b_reversed": flipped,
             "g0": {"max_distance": g0, "ok": ok0}, "g1": {"max_angle_deg": float(ang.max()), "ok": ok1},
-            "g2": {"max_curvature_jump": jump, "ok": ok2}}
+            "g2": ({"max_curvature_jump": jump, "ok": ok2} if measured2 else
+                   {"max_curvature_jump": None, "ok": None,
+                    "not_measured": "needs at least 5 points along the seam"})}
 
 
 def main(action=None, sections=None, count=16, closed=False, subdiv=0, name=None, bottom=None, top=None, left=None,

@@ -77,9 +77,15 @@ def _mesh_hash(obj):
     me.vertices.foreach_get("co", co)
     corners = np.empty(len(me.loops), dtype=np.int32)
     me.loops.foreach_get("vertex_index", corners)
+    starts = np.empty(len(me.polygons), dtype=np.int32)  # polygon boundaries: the flat corner list alone cannot tell them
+    me.polygons.foreach_get("loop_start", starts)
+    edges = np.empty(len(me.edges) * 2, dtype=np.int32)  # includes loose edges, which no polygon covers
+    me.edges.foreach_get("vertices", edges)
     h = hashlib.sha1()
     h.update(np.round(co, 5).tobytes())
-    h.update(corners.tobytes())
+    for part in (corners, starts, edges):
+        h.update(len(part).to_bytes(8, "little"))
+        h.update(part.tobytes())
     return h.hexdigest()[:16]
 
 

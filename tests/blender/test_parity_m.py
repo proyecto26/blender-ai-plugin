@@ -93,7 +93,9 @@ def run_flicker(out_dir, check):
     stripes = stripes_world(W + N * 3 + 8)
     s_frames = pan(stripes, N, 3)
     naive = max(float(np.abs(s_frames[t - 1] - 2 * s_frames[t] + s_frames[t + 1]).max()) for t in range(1, N - 1))
-    check("fixture: naive second difference on a stripe pan is large (the case it gets wrong)", naive > 0.5, naive)
+    # (this one is a PIXELWISE naive metric; the block-mean case needs a period that does not divide the block, see
+    # run_review_round1)
+    check("fixture: naive pixelwise second difference on a stripe pan is large (the case it gets wrong)", naive > 0.5, naive)
 
     # 1. static scene, local flicker in frame 4 over one block-aligned region
     w0 = noise_world(W, 1)
@@ -414,6 +416,109 @@ def run_surface(out_dir, check):
     check("surface_tools: bad action refused", raises(action="explode") is not None)
 
 
+def run_review_round1(out_dir, check):
+    """Findings from the round-1 review of batch M. Each check failed on 667898c before its fix."""
+    base = os.path.join(out_dir, "review1")
+    rng = np.random.default_rng(21)
+
+    def noise(h, w):
+        t = rng.random((h + 2, w + 2)).astype(np.float32)
+        s = sum(t[dy:dy + h, dx:dx + w] for dy in range(3) for dx in range(3)) / 9.0
+        return 0.05 + 0.6 * (s - s.min()) / (s.max() - s.min())
+
+    def seq_with_bump(name, h, w, box):
+        w0 = noise(h, w)
+        fr = [w0.copy() for _ in range(9)]
+        x0, y0, x1, y1 = box
+        fr[4][y0:y1, x0:x1] += 0.15
+        return run("film-production", "flicker_check.py", {"paths": write_seq(os.path.join(base, name), fr)})
+
+    # M-A: a size that is not a multiple of the block must not hide a flicker in the leftover strip (1080 = 67*16 + 8)
+    r = seq_with_bump("strip_bottom", 72, 128, (32, 64, 64, 72))
+    check("strip: flicker confined to the 8 bottom rows (72 px high, block 16) is found",
+          r["verdict"] == "flicker" and r["events"] and r["events"][0]["frame"] == 4
+          and r["events"][0]["region_px"][3] == 72, (r["verdict"], r["events"][:1]))
+    r = seq_with_bump("strip_right", 64, 132, (128, 16, 132, 48))
+    check("strip: flicker confined to the 4 right columns (132 px wide, block 16) is found",
+          r["verdict"] == "flicker" and r["events"] and r["events"][0]["frame"] == 4
+          and r["events"][0]["region_px"][2] == 132, (r["verdict"], r["events"][:1]))
+    r = seq_with_bump("strip_clean", 72, 132, (0, 0, 0, 0))
+    check("strip: an odd-sized clean static sequence still passes", r["verdict"] == "pass" and not r["events"],
+          (r["verdict"], r["events"][:1]))
+
+    # M-B: stripes whose period (12) does not divide the block (16): block means move with the phase, so a naive
+    # block-mean second difference fails on a clean pan, and the motion-compensated check must not
+    N = 9
+    x = np.arange(W + N * 3 + 12)
+    row = np.where((x // 6) % 2 == 0, 0.9, 0.1).astype(np.float32)
+    world = np.tile(row, (H, 1))
+    fr = pan(world, N, 3)
+    bm = [f.reshape(H // 16, 16, W // 16, 16).mean(axis=(1, 3)) for f in fr]
+    naive_block = max(float(np.abs(bm[t - 1] - 2 * bm[t] + bm[t + 1]).max()) for t in range(1, N - 1))
+    check("stripes P=12 vs block 16: a naive block-mean second difference exceeds the 0.03 threshold (it would flag)",
+          naive_block > 0.1, naive_block)
+    r = run("film-production", "flicker_check.py", {"paths": write_seq(os.path.join(base, "stripes12"), fr)})
+    check("stripes P=12 vs block 16: clean pan passes", r["verdict"] == "pass" and not r["events"],
+          (r["verdict"], r["events"][:1], r["not_measured"]))
+    fr[4] = bump(fr[4], 32, 16, 64, 48, 0.15)
+    r = run("film-production", "flicker_check.py", {"paths": write_seq(os.path.join(base, "stripes12_f"), fr)})
+    check("stripes P=12: flicker inside the pan is found at frame 4",
+          r["verdict"] == "flicker" and r["events"] and r["events"][0]["frame"] == 4, (r["verdict"], r["events"][:1]))
+
+    # M-C: scene_snapshot hash must see polygon boundaries and loose edges
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    pts = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (1, 1.5, 0), (0, 1.5, 0), (-1, 1, 0)]
+    me = bpy.data.meshes.new("Topo")
+    me.from_pydata(pts, [], [(0, 1, 2), (3, 4, 5)])
+    ob = bpy.data.objects.new("Topo", me)
+    bpy.context.scene.collection.objects.link(ob)
+    me2 = bpy.data.meshes.new("Loose")
+    me2.from_pydata(pts, [], [(0, 1, 2)])
+    ob2 = bpy.data.objects.new("Loose", me2)
+    bpy.context.scene.collection.objects.link(ob2)
+    bpy.context.view_layer.update()
+    snaps = os.path.join(base, "snaps")
+    snap = lambda **kw: run("blender-mcp-workflow", "scene_snapshot.py", kw)  # noqa: E731
+    snap(action="save", dir=snaps, name="t1")
+    # same vertices, same flattened corner list, different polygon boundaries: two triangles -> one hexagon
+    me.clear_geometry()
+    me.from_pydata(pts, [], [(0, 1, 2, 3, 4, 5)])
+    # same vertices and faces, one extra loose edge
+    me2.clear_geometry()
+    me2.from_pydata(pts, [(3, 4)], [(0, 1, 2)])
+    bpy.context.view_layer.update()
+    d = snap(action="diff", dir=snaps, a="t1")
+    ch = {c["name"]: c for c in d["changed"]}
+    check("snapshot: two triangles -> one hexagon over the same vertices is reported as a mesh change",
+          ch.get("Topo", {}).get("mesh_changed") is True, d)
+    check("snapshot: an added loose edge is reported as a mesh change",
+          ch.get("Loose", {}).get("mesh_changed") is True, d)
+
+    # M-D: G2 must not depend on the grid parameterisation. One surface z = x^2; b is sampled with a sheared grid
+    ys = np.linspace(0, 1, 11)
+
+    def sg(f, x0, x1, shear, n=6):
+        return [[[x, y + shear * x, f(x)] for y in ys] for x in np.linspace(x0, x1, n)]
+    res = run("procedural-modeling", "surface_tools.py",
+              {"action": "continuity", "a_grid": sg(lambda x: x * x, -0.5, 0.0, 0.0), "b_grid": sg(lambda x: x * x, 0.0, 0.5, 1.0)})
+    check("continuity G2: the same smooth surface sampled with a sheared grid on one side is still G2",
+          res["level"] == "G2", res)
+    res = run("procedural-modeling", "surface_tools.py",
+              {"action": "continuity", "a_grid": sg(lambda x: 0.0, -0.5, 0.0, 0.0), "b_grid": sg(lambda x: x * x, 0.0, 0.5, 1.0)})
+    check("continuity G2: a real curvature jump is still caught under shear",
+          res["level"] == "G1" and res["g2"]["max_curvature_jump"] > 1.5, res)
+    res = run("procedural-modeling", "surface_tools.py",
+              {"action": "continuity", "a_grid": sg(lambda x: x * x, -0.5, 0.0, 0.7), "b_grid": sg(lambda x: x * x, 0.0, 0.5, -0.4)})
+    check("continuity G2: different shears on both sides of one smooth surface are still G2", res["level"] == "G2", res)
+    ys4 = np.linspace(0, 1, 4)
+    res = run("procedural-modeling", "surface_tools.py",
+              {"action": "continuity",
+               "a_grid": [[[x, y, 0.0] for y in ys4] for x in np.linspace(-0.5, 0, 6)],
+               "b_grid": [[[x, y, x * x] for y in ys4] for x in np.linspace(0, 0.5, 6)]})
+    check("continuity G2: a seam with only 4 points reports g2 not_measured (ok null) and stops at G1, no wrong G2 verdict",
+          res["g2"]["ok"] is None and "not_measured" in res["g2"] and res["level"] == "G1", res)
+
+
 def run_all(out_dir):
     results = []
 
@@ -422,7 +527,7 @@ def run_all(out_dir):
 
     os.makedirs(out_dir, exist_ok=True)
     for label, fn in (("flicker_check", run_flicker), ("scene_snapshot", run_snapshot),
-                      ("surface_tools", run_surface)):
+                      ("surface_tools", run_surface), ("review_round1", run_review_round1)):
         try:
             fn(out_dir, check)
         except Exception:

@@ -28,6 +28,11 @@ after subtracting each block's own mean (so a brightness change does not stop th
 is then taken between the block means at the matched places: a pan, however fast inside the window, gives 0, while
 a block that brightens or darkens only in frame t does not. Brightness is the Rec.709 luma of the encoded pixel values.
 
+Frame sizes that are not a multiple of `block`: the leftover bottom rows and right columns are analysed as thinner
+blocks (at least 4 px; a smaller remainder overlaps the main grid), so nothing is cropped away silently. Thin blocks match
+less reliably and are rejected into `not_measured` like any other. Event `blocks` are [x_px, y_px, deviation] (top-left
+corner of the block, in frame pixels).
+
 Not measured (the block is skipped and counted, never scored as a pass):
     high_residual  the best match is still poor: fast motion beyond the window, an object appearing, disappearing or
                    being occluded, or content that changes shape.
@@ -90,12 +95,10 @@ def _load_luma(path):
         bpy.data.images.remove(img)
 
 
-def _match(cur, ref, B, R, margin, ratio, mean_tol):
-    """Per block of `cur`: matched block mean in `ref`, or a reject code.
+def _match(cur, ref, y0, x0, nby, nbx, bh, bw, R, margin, ratio, mean_tol):
+    """Per block (bh x bw, nby x nbx of them from (y0, x0)) of `cur`: matched block mean in `ref`, or a reject code.
     Returns (mean[nby,nbx] with NaN when not measured, code[nby,nbx]: 0 ok, 1 high_residual, 2 ambiguous)."""
-    H, W = cur.shape
-    nby, nbx = H // B, W // B
-    C = cur.reshape(nby, B, nbx, B)
+    C = cur[y0:y0 + nby * bh, x0:x0 + nbx * bw].reshape(nby, bh, nbx, bw)
     cm = C.mean(axis=(1, 3))
     Cz = C - cm[:, None, :, None]
     dev = np.abs(Cz).mean(axis=(1, 3))
@@ -104,7 +107,7 @@ def _match(cur, ref, B, R, margin, ratio, mean_tol):
     resid = np.full((len(offs), nby, nbx), np.inf, dtype=np.float32)
     means = np.full((len(offs), nby, nbx), np.nan, dtype=np.float32)
     for k, (dy, dx) in enumerate(offs):
-        P = pad[R + dy:R + dy + nby * B, R + dx:R + dx + nbx * B].reshape(nby, B, nbx, B)
+        P = pad[R + y0 + dy:R + y0 + dy + nby * bh, R + x0 + dx:R + x0 + dx + nbx * bw].reshape(nby, bh, nbx, bw)
         pm = P.mean(axis=(1, 3))  # NaN when any pixel is outside the frame
         r = np.abs(Cz - (P - pm[:, None, :, None])).mean(axis=(1, 3))
         ok = ~np.isnan(pm)
@@ -153,49 +156,68 @@ def main(paths=None, dir=None, block=16, max_motion_px=8, flicker_threshold=0.03
     nby, nbx = H // B, W // B
     if nby < 1 or nbx < 1:
         raise ValueError(f"frames {W}x{H} are smaller than one {B}px block")
-    frames = [fr[:nby * B, :nbx * B] for fr in frames]
-    means = [fr.reshape(nby, B, nbx, B).mean(axis=(1, 3)) for fr in frames]
+    # full B x B blocks tile the frame from the top-left. A size that is not a multiple of B leaves a bottom strip and/or a
+    # right strip; they are analysed too, as thinner blocks (never below 4 px, so a 1-3 px remainder overlaps the main
+    # grid), because dropping them would let a flicker confined to the strip pass.
+    hs, ws = max(H - nby * B, 4) if H % B else 0, max(W - nbx * B, 4) if W % B else 0
+    regions = [(0, 0, nby, nbx, B, B)]  # y0, x0, rows of blocks, cols of blocks, block height, block width
+    if hs:
+        regions.append((H - hs, 0, 1, nbx, hs, B))
+    if ws:
+        regions.append((0, W - ws, nby, 1, B, ws))
+    if hs and ws:
+        regions.append((H - hs, W - ws, 1, 1, hs, ws))
 
-    per_frame, devs = {}, {}
+    per_frame = {t: {"frame": t, "file": os.path.basename(files[t]), "measured": 0,
+                     "not_measured": {"high_residual": 0, "ambiguous": 0}, "max_abs_dev": None}
+                 for t in range(1, len(frames) - 1)}
+    flagged_by_t = {t: [] for t in per_frame}  # (x0, y0, x1, y1, dev) of blocks over the threshold
     totals = {"high_residual": 0, "ambiguous": 0}
     n_meas = n_all = 0
-    for t in range(1, len(frames) - 1):
-        mp, cp = _match(frames[t], frames[t - 1], B, R, ambiguity_margin, reject_ratio, thr / 2)
-        mn, cn = _match(frames[t], frames[t + 1], B, R, ambiguity_margin, reject_ratio, thr / 2)
-        code = np.maximum(cp, cn)
-        dev = means[t] - 0.5 * (mp + mn)  # signed; NaN where not measured
-        dev[code != 0] = np.nan
-        devs[t] = dev
-        hi, amb = int((code == 1).sum()), int((code == 2).sum())
-        meas = int((code == 0).sum())
-        totals["high_residual"] += hi
-        totals["ambiguous"] += amb
-        n_meas += meas
-        n_all += code.size
-        per_frame[t] = {"frame": t, "file": os.path.basename(files[t]), "measured": meas,
-                        "not_measured": {"high_residual": hi, "ambiguous": amb},
-                        "max_abs_dev": round(float(np.nanmax(np.abs(dev))), 5) if meas else None}
+    for (ry, rx, ny, nx, bh, bw) in regions:
+        for t in range(1, len(frames) - 1):
+            mp, cp = _match(frames[t], frames[t - 1], ry, rx, ny, nx, bh, bw, R, ambiguity_margin, reject_ratio, thr / 2)
+            mn, cn = _match(frames[t], frames[t + 1], ry, rx, ny, nx, bh, bw, R, ambiguity_margin, reject_ratio, thr / 2)
+            code = np.maximum(cp, cn)
+            tmean = frames[t][ry:ry + ny * bh, rx:rx + nx * bw].reshape(ny, bh, nx, bw).mean(axis=(1, 3))
+            dev = tmean - 0.5 * (mp + mn)  # signed; NaN where not measured
+            dev[code != 0] = np.nan
+            hi, amb = int((code == 1).sum()), int((code == 2).sum())
+            meas = int((code == 0).sum())
+            totals["high_residual"] += hi
+            totals["ambiguous"] += amb
+            n_meas += meas
+            n_all += code.size
+            pf = per_frame[t]
+            pf["measured"] += meas
+            pf["not_measured"]["high_residual"] += hi
+            pf["not_measured"]["ambiguous"] += amb
+            if meas:
+                m = round(float(np.nanmax(np.abs(dev))), 5)
+                pf["max_abs_dev"] = m if pf["max_abs_dev"] is None else max(pf["max_abs_dev"], m)
+            ys, xs = np.nonzero(np.abs(dev) > thr)  # NaN compares False
+            flagged_by_t[t] += [(rx + int(x) * bw, ry + int(y) * bh, rx + int(x) * bw + bw, ry + int(y) * bh + bh,
+                                 float(dev[y, x])) for y, x in zip(ys, xs)]
 
-    peak = {t: (per_frame[t]["max_abs_dev"] or 0.0) for t in devs}
+    peak = {t: (per_frame[t]["max_abs_dev"] or 0.0) for t in per_frame}
     events = []
-    for t, dev in devs.items():
-        flagged = np.abs(dev) > thr  # NaN compares False
-        if not flagged.any():
+    for t, flagged in flagged_by_t.items():
+        if not flagged:
             continue
         # keep the frame where the deviation peaks: a one-frame bump also shows at half size in its neighbours
         if peak[t] < peak.get(t - 1, 0.0) or peak[t] < peak.get(t + 1, 0.0):
             continue
-        meas = int((~np.isnan(dev)).sum())
-        ys, xs = np.nonzero(flagged)
-        kind = "global_exposure" if flagged.sum() >= global_fraction * meas else "local"
+        meas = per_frame[t]["measured"]
+        kind = "global_exposure" if len(flagged) >= global_fraction * meas else "local"
         events.append({"frame": t, "file": os.path.basename(files[t]), "kind": kind,
-                       "mean_deviation": round(float(np.nanmean(dev[flagged])), 5),
-                       "region_px": [int(xs.min() * B), int(ys.min() * B), int((xs.max() + 1) * B), int((ys.max() + 1) * B)],
-                       "blocks_flagged": int(flagged.sum()), "blocks_measured": meas,
-                       "blocks": [[int(x), int(y), round(float(dev[y, x]), 5)] for y, x in zip(ys[:32], xs[:32])]})
+                       "mean_deviation": round(float(np.mean([f[4] for f in flagged])), 5),
+                       "region_px": [min(f[0] for f in flagged), min(f[1] for f in flagged),
+                                     max(f[2] for f in flagged), max(f[3] for f in flagged)],
+                       "blocks_flagged": len(flagged), "blocks_measured": meas,
+                       "blocks": [[f[0], f[1], round(f[4], 5)] for f in flagged[:32]]})
     share = n_meas / n_all if n_all else 0.0
     verdict = "flicker" if events else ("pass" if share >= min_measured else "inconclusive")
-    return {"verdict": verdict, "events": events, "frames": len(frames), "evaluated_frames": len(devs),
+    return {"verdict": verdict, "events": events, "frames": len(frames), "evaluated_frames": len(per_frame),
             "block_px": B, "max_motion_px": R, "flicker_threshold": thr,
             "measured_blocks": n_meas, "total_blocks": n_all, "measured_share": round(share, 4),
             "not_measured": {"blocks": n_all - n_meas, **totals},
