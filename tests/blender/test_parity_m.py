@@ -578,6 +578,77 @@ def run_review_round2(out_dir, check):
           got == os.path.normcase(os.path.abspath(tex)) and os.path.exists(got), (ri.filepath, got))
 
 
+def run_review_round3(out_dir, check):
+    """Findings from the round-3 review of batch M. Each check failed on e834bf1 before its fix."""
+    base = os.path.join(out_dir, "review3")
+
+    # M1: one flicker on a panning shot yields one event, not the flicker plus its two motion-matched echoes
+    world = noise_world(W + 9 * 16, 33)
+    fr = pan(world, 9, 16)
+    fr[4] = bump(fr[4], 32, 16, 48, 32, 0.15)
+    r = run("film-production", "flicker_check.py",
+            {"paths": write_seq(os.path.join(base, "pan16"), fr), "block": 16, "max_motion_px": 16})
+    check("flicker: one +0.15 flicker on a 16 px/frame pan reports exactly one event (frame 4)",
+          [e["frame"] for e in r["events"]] == [4], [(e["frame"], e["region_px"]) for e in r["events"]])
+
+    # same class, unaligned speeds: still one event
+    for tag, speed in (("pan5", 5), ("pan11", 11)):
+        w2 = noise_world(W + 9 * speed, 34 + speed)
+        f2 = pan(w2, 9, speed)
+        f2[4] = bump(f2[4], 32, 16, 48, 32, 0.15)
+        r = run("film-production", "flicker_check.py",
+                {"paths": write_seq(os.path.join(base, tag), f2), "block": 16, "max_motion_px": 16})
+        check(f"flicker: one flicker on a {speed} px/frame pan reports one event at frame 4",
+              [e["frame"] for e in r["events"]] == [4], [(e["frame"], e["region_px"]) for e in r["events"]])
+
+    # two independent events on adjacent frames both survive, static and panning
+    rng = np.random.default_rng(8)
+    t = rng.random((H + 2, W + 2)).astype(np.float32)
+    w0 = 0.05 + 0.6 * (sum(t[dy:dy + H, dx:dx + W] for dy in range(3) for dx in range(3)) / 9.0 - 0.3)
+    fr = [w0.copy() for _ in range(9)]
+    fr[4] = bump(fr[4], 0, 0, 16, 16, 0.2)
+    fr[5] = bump(fr[5], 96, 32, 112, 48, 0.1)
+    r = run("film-production", "flicker_check.py",
+            {"paths": write_seq(os.path.join(base, "adj_static"), fr), "block": 16, "max_motion_px": 8})
+    check("flicker: static event @4 and independent event @5 both reported",
+          sorted(e["frame"] for e in r["events"]) == [4, 5], [(e["frame"], e["region_px"]) for e in r["events"]])
+    world = noise_world(W + 9 * 16, 35)
+    fr = pan(world, 9, 16)
+    fr[4] = bump(fr[4], 32, 16, 48, 32, 0.2)
+    fr[5] = bump(fr[5], 96, 32, 112, 48, 0.1)
+    r = run("film-production", "flicker_check.py",
+            {"paths": write_seq(os.path.join(base, "adj_pan"), fr), "block": 16, "max_motion_px": 16})
+    check("flicker: two independent events on adjacent frames of a pan are both reported",
+          sorted(e["frame"] for e in r["events"]) == [4, 5], [(e["frame"], e["region_px"]) for e in r["events"]])
+
+    # M3: reserved selector and other colliding names are refused by save, and by restore
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    me = bpy.data.meshes.new("Q")
+    me.from_pydata([(0, 0, 0), (1, 0, 0), (1, 1, 0)], [], [(0, 1, 2)])
+    ob = bpy.data.objects.new("Qo", me)
+    bpy.context.scene.collection.objects.link(ob)
+    snaps = os.path.join(base, "snaps")
+    snap = lambda **kw: run("blender-mcp-workflow", "scene_snapshot.py", kw)  # noqa: E731
+
+    def refused(**kw):
+        try:
+            snap(**kw)
+        except ValueError:
+            return True
+        return False
+
+    for bad in ("current", "Current", "CURRENT", "nul", "NUL.v2", "com1", "aux", "snap.", "x" * 101):
+        check(f"snapshot: save name {bad[:12]!r} is refused", refused(action="save", dir=snaps, name=bad))
+    left = os.listdir(snaps) if os.path.isdir(snaps) else []
+    check("snapshot: nothing was written by the refused names", not left, left)
+    check("snapshot: restore from 'current' is refused", refused(action="restore", dir=snaps, name="current", objects=["Qo"]))
+    snap(action="save", dir=snaps, name="good-1.v2")
+    bpy.data.objects["Qo"].location.x = 3.0
+    bpy.context.view_layer.update()
+    d = snap(action="diff", dir=snaps, a="good-1.v2")
+    check("snapshot: diff of a normal name against the live scene still works", [c["name"] for c in d["changed"]] == ["Qo"], d)
+
+
 def run_all(out_dir):
     results = []
 
@@ -587,7 +658,7 @@ def run_all(out_dir):
     os.makedirs(out_dir, exist_ok=True)
     for label, fn in (("flicker_check", run_flicker), ("scene_snapshot", run_snapshot),
                       ("surface_tools", run_surface), ("review_round1", run_review_round1),
-                      ("review_round2", run_review_round2)):
+                      ("review_round2", run_review_round2), ("review_round3", run_review_round3)):
         try:
             fn(out_dir, check)
         except Exception:

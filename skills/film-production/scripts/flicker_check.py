@@ -97,7 +97,8 @@ def _load_luma(path):
 
 def _match(cur, ref, y0, x0, nby, nbx, bh, bw, R, margin, ratio, mean_tol):
     """Per block (bh x bw, nby x nbx of them from (y0, x0)) of `cur`: matched block mean in `ref`, or a reject code.
-    Returns (mean[nby,nbx] with NaN when not measured, code[nby,nbx]: 0 ok, 1 high_residual, 2 ambiguous)."""
+    Returns (mean[nby,nbx] with NaN when not measured, code[nby,nbx]: 0 ok, 1 high_residual, 2 ambiguous,
+    oy, ox [nby,nbx]: the matched offset of each block in `ref`, in pixels)."""
     C = cur[y0:y0 + nby * bh, x0:x0 + nbx * bw].reshape(nby, bh, nbx, bw)
     cm = C.mean(axis=(1, 3))
     Cz = C - cm[:, None, :, None]
@@ -127,7 +128,7 @@ def _match(cur, ref, y0, x0, nby, nbx, bh, bw, R, margin, ratio, mean_tol):
         rival = far & (resid[k] <= best_r + margin) & (np.abs(means[k] - best_m) > mean_tol)
         code[(code == 0) & rival] = 2
     out = np.where(code == 0, best_m, np.nan)
-    return out, code
+    return out, code, oy, ox
 
 
 def _natural_files(d):
@@ -173,12 +174,13 @@ def main(paths=None, dir=None, block=16, max_motion_px=8, flicker_threshold=0.03
                  for t in range(1, len(frames) - 1)}
     flagged_by_t = {t: [] for t in per_frame}  # (x0, y0, x1, y1, dev) of blocks over the threshold
     dev_at = {t: {} for t in per_frame}  # (x0, y0) of a block -> its signed deviation in frame t (measured blocks only)
+    foot_at = {t: {} for t in per_frame}  # (x0, y0, neighbour frame) -> (x, y, w, h) of the matched footprint there
     totals = {"high_residual": 0, "ambiguous": 0}
     n_meas = n_all = 0
     for (ry, rx, ny, nx, bh, bw) in regions:
         for t in range(1, len(frames) - 1):
-            mp, cp = _match(frames[t], frames[t - 1], ry, rx, ny, nx, bh, bw, R, ambiguity_margin, reject_ratio, thr / 2)
-            mn, cn = _match(frames[t], frames[t + 1], ry, rx, ny, nx, bh, bw, R, ambiguity_margin, reject_ratio, thr / 2)
+            mp, cp, pyo, pxo = _match(frames[t], frames[t - 1], ry, rx, ny, nx, bh, bw, R, ambiguity_margin, reject_ratio, thr / 2)
+            mn, cn, nyo, nxo = _match(frames[t], frames[t + 1], ry, rx, ny, nx, bh, bw, R, ambiguity_margin, reject_ratio, thr / 2)
             code = np.maximum(cp, cn)
             tmean = frames[t][ry:ry + ny * bh, rx:rx + nx * bw].reshape(ny, bh, nx, bw).mean(axis=(1, 3))
             dev = tmean - 0.5 * (mp + mn)  # signed; NaN where not measured
@@ -197,17 +199,30 @@ def main(paths=None, dir=None, block=16, max_motion_px=8, flicker_threshold=0.03
                 m = round(float(np.nanmax(np.abs(dev))), 5)
                 pf["max_abs_dev"] = m if pf["max_abs_dev"] is None else max(pf["max_abs_dev"], m)
             for y, x in zip(*np.nonzero(~np.isnan(dev))):
-                dev_at[t][(rx + int(x) * bw, ry + int(y) * bh)] = float(dev[y, x])
+                dev_at[t][(rx + int(x) * bw, ry + int(y) * bh, bw, bh)] = float(dev[y, x])
+                # where this block's content sits in the previous / next frame (its motion match)
+                for u, oy_, ox_ in ((t - 1, pyo, pxo), (t + 1, nyo, nxo)):
+                    foot_at[t][(rx + int(x) * bw, ry + int(y) * bh, u)] = (
+                        rx + int(x) * bw + int(ox_[y, x]), ry + int(y) * bh + int(oy_[y, x]), bw, bh)
             ys, xs = np.nonzero(np.abs(dev) > thr)  # NaN compares False
             flagged_by_t[t] += [(rx + int(x) * bw, ry + int(y) * bh, rx + int(x) * bw + bw, ry + int(y) * bh + bh,
                                  float(dev[y, x])) for y, x in zip(ys, xs)]
 
     events = []
     for t, flagged in flagged_by_t.items():
-        # a one-frame bump also shows at half size, opposite sign, in its neighbours: drop a block whose deviation is
-        # smaller than the same block's in an adjacent frame (per block, so an independent event elsewhere survives)
-        flagged = [f for f in flagged
-                   if not any(abs(dev_at.get(u, {}).get((f[0], f[1]), 0.0)) > abs(f[4]) for u in (t - 1, t + 1))]
+        # a one-frame bump also shows at half size, opposite sign, in its neighbours, at the place the motion match
+        # carries it to: drop a block whose deviation is smaller than that of a block overlapping the footprint it
+        # matched to in an adjacent frame (per block and per match, so an independent event elsewhere survives)
+        def echo(f, t=t):
+            for u in (t - 1, t + 1):
+                fx, fy, fw, fh = foot_at[t].get((f[0], f[1], u), (f[0], f[1], f[2] - f[0], f[3] - f[1]))
+                for (bx, by, bw_, bh_), d in dev_at.get(u, {}).items():
+                    ov = max(0, min(fx + fw, bx + bw_) - max(fx, bx)) * max(0, min(fy + fh, by + bh_) - max(fy, by))
+                    if ov >= 0.25 * min(fw * fh, bw_ * bh_) and abs(d) > abs(f[4]):
+                        return True
+            return False
+
+        flagged = [f for f in flagged if not echo(f)]
         if not flagged:
             continue
         meas = per_frame[t]["measured"]

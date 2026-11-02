@@ -67,9 +67,21 @@ def _snap_dir(dir_):
     raise ValueError("the open file is unsaved: pass 'dir'")
 
 
+RESERVED_SELECTORS = {"current"}  # diff reads "current" as the live scene, so it is never a snapshot name (any case)
+WIN_DEVICES = {"con", "prn", "aux", "nul", "clock$", *(f"com{i}" for i in range(1, 10)), *(f"lpt{i}" for i in range(1, 10))}
+
+
 def _check_name(name):
     if not name or not NAME_RE.match(name) or name in (".", ".."):
         raise ValueError(f"snapshot name {name!r} must use letters, digits, '_', '-' and '.' only")
+    if name.lower() in RESERVED_SELECTORS:
+        raise ValueError(f"snapshot name {name!r} is reserved (it selects the live scene in diff); pick another")
+    if name.endswith("."):  # Windows drops a trailing dot, so 'a.' and 'a' would be the same files
+        raise ValueError(f"snapshot name {name!r} must not end with '.'")
+    if name.split(".")[0].lower() in WIN_DEVICES:  # 'nul.blend' is a device on Windows
+        raise ValueError(f"snapshot name {name!r} is a reserved device name on Windows; pick another")
+    if len(name) > 100:
+        raise ValueError("snapshot name must be at most 100 characters")
 
 
 def _mesh_hash(obj):
@@ -112,7 +124,8 @@ def _manifest_path(d, name):
 def _read_manifest(d, name):
     if name == "current":
         return _manifest("current")
-    _check_name(name)
+    if not name or not NAME_RE.match(name) or name in (".", ".."):
+        raise ValueError(f"snapshot name {name!r} must use letters, digits, '_', '-' and '.' only")
     p = _manifest_path(d, name)
     if not os.path.exists(p):
         raise ValueError(f"no snapshot named {name!r} in {d}")
@@ -187,6 +200,7 @@ def _restore(d, name, objects):
         raise ValueError("restore needs 'name'")
     if not objects:
         raise ValueError("restore needs 'objects' (a non-empty list of object names)")
+    _check_name(name)  # "current" is the live scene, not a snapshot to restore from
     manifest = _read_manifest(d, name)
     missing = [o for o in objects if o not in manifest["objects"]]
     if missing:
