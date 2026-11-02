@@ -805,6 +805,43 @@ def test_fit(check, out_dir, measured):
         check(f"H3 {label} -> error before any change", msg and snapshot() == before and near(box_o.scale, (0.8, 0.8, 0.8)), msg)
     check("H3 missing reference -> error", raises(lambda: fit(objects=["Box"], views=[{"camera": "CamF", "reference": os.path.join(d, "no.png")}], params=[good])))
     check("H3 no params -> error", raises(lambda: fit(objects=["Box"], views=views, params=[])))
+
+    # round 4 H: different paths that resolve to one RNA property share one committed state
+    reset_scene()
+    cam = camera("CamF", (0, -6, 0), rot_deg=(90, 0, 0))
+    bx = box("Bev", (2, 2, 2))
+    md = bx.modifiers.new("Bevel", "BEVEL")
+    md.segments = 1
+    md.width = 0.25
+    aref = render(os.path.join(d, "bevel025.png"), cam)
+    aviews = [{"camera": "CamF", "reference": aref}]
+    md.width = 0.0
+    spec = {"object": "Bev", "min": 0.0, "max": 1.0, "step": 0.25}
+    r = fit(objects=["Bev"], views=aviews, params=[dict(spec, path="modifiers[0].width"), dict(spec, path="modifiers[\"Bevel\"].width")],
+            max_evals=4, apply=True)
+    aiou = sil(["Bev"], aviews)["views"][0]["iou"]
+    check("H3r4 aliased paths (modifiers[0] / modifiers['Bevel']): applied state scores the reported best",
+          abs(aiou - r["score_best"]) < 1e-6 and abs(r["score_checked"] - r["score_best"]) < 1e-6 and abs(md.width - 0.25) < 1e-6,
+          (md.width, aiou, r["score_best"], r["score_checked"]))
+    md.width = 0.0
+    r = fit(objects=["Bev"], views=aviews, params=[dict(spec, path="modifiers[\"Bevel\"].width"), dict(spec, path="modifiers[0].width")], max_evals=4)
+    check("H3r4 aliased paths, apply false: restored", abs(md.width) < 1e-9 and r["restored"], md.width)
+
+    # round 4 H: an integer candidate stays inside the bounds after rounding
+    bx.modifiers.remove(md)
+    sd = bx.modifiers.new("Sub", "ARRAY")
+    sd.count = 4
+    cam.location.y = -24
+    iref = render(os.path.join(d, "array4.png"), cam)
+    iviews = [{"camera": "CamF", "reference": iref}]
+    sd.count = 3
+    r = fit(objects=["Bev"], views=iviews, params=[{"object": "Bev", "path": "modifiers[\"Sub\"].count", "min": 1, "max": 3.7, "step": 1}],
+            max_evals=12, apply=True)
+    check("H3r4 integer candidate never exceeds max 3.7 after rounding", sd.count <= 3 and r["best"][0]["value"] <= 3.7, (sd.count, r["best"]))
+    sd.count = 3
+    check("H3r4 integer range with no integer inside -> error",
+          raises(lambda: fit(objects=["Bev"], views=iviews, params=[{"object": "Bev", "path": "modifiers[\"Sub\"].count", "min": 3.2, "max": 3.7}])))
+    check("H3r4 integer fit leaves count untouched on error", sd.count == 3, sd.count)
     check("H3 no images leaked", not leaked_images(), leaked_images())
 
 

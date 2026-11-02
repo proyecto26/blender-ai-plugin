@@ -18,7 +18,7 @@ ARGS:
     params      (list[dict], required) each {"object": name, "path": RNA path from that object, "min", "max",
                 optional "step" (first step, default a quarter of the range) and "tol" (stop when the step
                 is below it, default step/32)}. The path is read with the Blender data path rules, for example
-                "scale" (all three axes move together), "scale[2]", "location[0]", "modifiers['Bevel'].width".
+                "scale" (all three axes move together), "scale[2]", "location[0]", "modifiers[\"Bevel\"].width" (double quotes: single quotes do not resolve).
                 Only float and int properties that are not read-only. Everything is checked before any change.
     max_evals   (int) cap on silhouette evaluations, the first and the closing re-score of the best values included
                 (default 60); `evals` is the true count. With 1 there is no re-score and `score_checked` is null
@@ -27,6 +27,7 @@ ARGS:
     scripts_dir (str|None) folder holding silhouette_score.py; default = the folder of this script
 """
 import json
+import math
 import os
 import re
 import runpy
@@ -55,7 +56,7 @@ def _cli_args():
 class Param:
     """One searchable number: an RNA property (or one component, or all components together) of an object."""
 
-    shared = {}  # (object, owner path, property) -> committed raw value: params on one property share one state
+    shared = {}  # (resolved owner pointer, property) -> committed raw value: params on one property share one state
 
     def __init__(self, spec):
         if not isinstance(spec, dict) or not {"object", "path", "min", "max"} <= set(spec):
@@ -88,12 +89,17 @@ class Param:
         self.lo, self.hi = float(spec["min"]), float(spec["max"])
         if not self.lo < self.hi:
             raise ValueError(f"{self.label}: min must be below max")
+        if self.integer:  # candidates are rounded, so the usable bounds are the integers inside [min, max]
+            self.lo, self.hi = float(math.ceil(self.lo)), float(math.floor(self.hi))
+            if self.lo > self.hi:
+                raise ValueError(f"{self.label}: no integer lies between min and max")
         self.step = float(spec.get("step", (self.hi - self.lo) / 4))
         self.tol = float(spec.get("tol", self.step / 32))
         if self.step <= 0 or self.tol <= 0:
             raise ValueError(f"{self.label}: step and tol must be positive")
         self.original = self._raw()
-        self.key = (obj.name, parent_path or "", self.name)
+        # keyed on the resolved owner, so "modifiers[0].width" and "modifiers[\"Bevel\"].width" share one state
+        self.key = (self.owner.as_pointer(), self.name)
         self.committed = Param.shared.setdefault(self.key, [self.original])  # [raw] holder, shared across params
         v = self.get()
         if not self.lo <= v <= self.hi:
