@@ -844,6 +844,92 @@ def test_review3(rec, scene, out_dir):
               and not r["ambiguous"], (r["files"], r["ambiguous"]))
 
 
+def tree_has_image(sc):
+    t = sc.compositing_node_group
+    return t is not None and any(n.bl_idname == "CompositorNodeImage" and n.image for n in t.nodes)
+
+
+def test_review4(rec, scene, out_dir):
+    base = {"objects": [], "snap": 0, "fog": False, "texture": False, "resolution": [32, 24]}
+    # R1a: PS1 -> comp_grade -> PS1 (and the fog variant) must keep every grade node connected to the source.
+    for tag, fog in (("dither only", False), ("fog+dither", True)):
+        sc = bpy.data.scenes.new("__RT_R4_order_" + tag[:3])
+        sc.render.resolution_x, sc.render.resolution_y = 32, 24
+        in_scene(sc, lambda: run("lowpoly-style", "ps1_look.py", {**base, "fog": fog}))
+        in_scene(sc, lambda: run("compositing", "comp_grade.py", {"preset": "noir"}))
+        tree = sc.compositing_node_group
+        grade = {n.name for n in tree.nodes if n.name.startswith("SK_") and not n.name.startswith("SK_PS1_")
+                 and n.bl_idname not in ("NodeGroupOutput", "CompositorNodeRLayers")}
+        in_scene(sc, lambda: run("lowpoly-style", "ps1_look.py", {**base, "fog": fog}))
+        tree = sc.compositing_node_group
+        out = next(n for n in tree.nodes if n.bl_idname == "NodeGroupOutput")
+        up = upstream_names(tree)
+        rl = next(n for n in tree.nodes if n.bl_idname == "CompositorNodeRLayers")
+        unfed = sorted(n.name for n in tree.nodes if n.name in grade
+                       and not any(i.is_linked for i in n.inputs if i.enabled and i.type == "RGBA"))
+        rec.check(f"R1-review4: PS1 -> grade -> PS1 ({tag}): every grade node still has an image input", not unfed, unfed)
+        rec.check(f"R1-review4: PS1 -> grade -> PS1 ({tag}): Render Layers still reaches the output", rl.name in up, sorted(up))
+        last = out.inputs[0].links[0].from_node.name if out.inputs[0].is_linked else None
+        rec.check(f"R1-review4: PS1 -> grade -> PS1 ({tag}): dither is the last stage", last == "SK_PS1_DitherToLinear", last)
+        dsrc = tree.nodes["SK_PS1_DitherToSRGB"].inputs[0]
+        dfrom = dsrc.links[0].from_node.name if dsrc.is_linked else None
+        rec.check(f"R1-review4: PS1 -> grade -> PS1 ({tag}): dither is fed by the grade (or the fog stage that follows it)",
+                  dfrom in grade or (fog and dfrom == "SK_PS1_Fog"), dfrom)
+
+    # R2: rename a scene, make a new scene with the old name; its PS1 run must not delete the renamed scene's image.
+    a = bpy.data.scenes.new("__RT_R4_RenA")
+    a.render.resolution_x, a.render.resolution_y = 32, 24
+    in_scene(a, lambda: run("lowpoly-style", "ps1_look.py", base))
+    iname = a.compositing_node_group.nodes["SK_PS1_DitherThreshold"].image.name
+    a.name = "__RT_R4_RenB"
+    a2 = bpy.data.scenes.new("__RT_R4_RenA")
+    a2.render.resolution_x, a2.render.resolution_y = 32, 24
+    in_scene(a2, lambda: run("lowpoly-style", "ps1_look.py", base))
+    node = a.compositing_node_group.nodes["SK_PS1_DitherThreshold"]
+    rec.check("R2-review4: renamed scene keeps its threshold image after a same-named new scene runs PS1",
+              node.image is not None and iname in bpy.data.images and bpy.data.images[iname] == node.image
+              and node.image.size[0] == 32, iname)
+    rec.check("R2-review4: the new scene has a different image",
+              a2.compositing_node_group.nodes["SK_PS1_DitherThreshold"].image != node.image)
+    owned = lambda: sum(1 for i in bpy.data.images if i.get("sk_ps1_scene") is not None)
+    n_before = owned()
+    in_scene(a, lambda: run("lowpoly-style", "ps1_look.py", base))
+    rec.check("R2-review4: rerun in the renamed scene does not leak or delete images", owned() == n_before, (n_before, owned()))
+    in_scene(a, lambda: run("lowpoly-style", "ps1_look.py", {**base, "dither": False}))
+    rec.check("R2-review4: dither off removes the unused image of this scene", owned() == n_before - 1, (n_before, owned()))
+    rec.check("R2-review4: the other scene's image survives", tree_has_image(a2))
+
+    # R3: replace must never edit a mesh shared with another object.
+    twin_args = {"size": 10, "resolution": 9, "seed": 1, "height": 2, "name": "RT_Shared"}
+    run("procedural-modeling", "terrain_heightfield.py", twin_args)
+    obj = bpy.data.objects["RT_Shared"]
+    twin = bpy.data.objects.new("RT_SharedTwin", obj.data)
+    scene.collection.objects.link(twin)
+    before = mesh_coords(twin).copy()
+    shared_mesh = obj.data
+    try:
+        run("procedural-modeling", "terrain_heightfield.py", {**twin_args, "seed": 99, "replace": True})
+        refused = False
+    except ValueError:
+        refused = True
+    after = mesh_coords(twin)
+    rec.check("R3-review4: replacing a terrain whose mesh is shared leaves the other object's mesh untouched",
+              twin.data == shared_mesh and after.shape == before.shape and np.allclose(after, before),
+              (after.shape, before.shape))
+    rec.check("R3-review4: the shared-mesh replace either refused or gave the object its own mesh",
+              refused or obj.data != twin.data, refused)
+    run("procedural-modeling", "terrain_heightfield.py", {**twin_args, "name": "RT_Solo"})
+    solo_mesh = bpy.data.objects["RT_Solo"].data
+    run("procedural-modeling", "terrain_heightfield.py", {**twin_args, "name": "RT_Solo", "seed": 5, "replace": True})
+    rec.check("R3-review4: single-user replace still works and reuses its mesh",
+              bpy.data.objects["RT_Solo"].data == solo_mesh and solo_mesh.users == 1)
+
+    # R4 (low): doc describes trailing keywords
+    doc = open(os.path.join(SKILLS, "texture-workflow", "references", "substance-painter-handoff.md"), encoding="utf-8").read()
+    rec.check("R4-review4: doc no longer says 'any one in the file name'",
+              "any one in the file name" not in doc and "end of the file name" in doc)
+
+
 # ---------------------------------------------------------------- harness
 
 def run_all(out_dir):
@@ -865,7 +951,7 @@ def run_all(out_dir):
                              ("R1-review", test_review_r1), ("R2-review", test_review_r2),
                              ("R3-review", test_review_r3), ("R4-review", test_review_r4),
                              ("R5-review", test_review_r5), ("review2", test_review2),
-                             ("review3", test_review3)):
+                             ("review3", test_review3), ("review4", test_review4)):
                 rec.section(name, lambda r, fn=fn: fn(r, scene, out_dir))
         finally:
             if ctx:
