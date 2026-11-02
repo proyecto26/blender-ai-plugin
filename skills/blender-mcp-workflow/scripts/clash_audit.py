@@ -10,10 +10,17 @@ faces are not a clash. Nothing in the scene is changed.
 What is reported:
   clashes     pairs whose surfaces cross (an edge of one pierces the other) with an estimated penetration depth.
               Depth = the deepest sampled point of one mesh inside the other (vertices first, then edge midpoints,
-              triangle centres and a barycentric grid when the vertices alone find nothing), measured as the
-              distance to the other surface. It is a lower bound limited by the sampling, not an exact figure.
+              triangle centres and a barycentric grid when the vertices alone find nothing). The depth is the
+              shortest translation along +-X, +-Y or +-Z that carries every sampled inside point out of the other
+              mesh (per direction the largest ray distance to the surface; the smallest of the six). It is a lower
+              bound limited by the sampling, not an exact figure, and for rotated shapes an axis-aligned way out
+              is longer than the shortest one. A contained object's `depth_m` is different: the distance from its
+              deepest vertex to the nearest surface of the outer object.
               "Inside" is decided by ray parity (majority of three skew rays). Penetration up to `min_depth_m`
               counts as touching.
+  coincident  two meshes whose sampled points all lie on each other's surface (duplicate geometry in the same
+              place) are a clash with depth "coincident": nothing crosses and nothing is inside, yet they overlap
+              completely.
   contained   an object whose surfaces cross nothing but which lies inside another closed object.
   floating    connected groups of objects (contact = overlap, containment, or a gap <= `gap_max_m` measured from
               sampled points to the other surface) other than the main group. Gaps between skew edges that no
@@ -140,8 +147,12 @@ def _inside(bvh, p, far, adv):
     return votes >= 2
 
 
+AXES = [Vector(v) for v in ((1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1))]
+
+
 def _deepest(pts, other, tol, far, adv):
-    """Deepest point of `pts` inside the closed mesh `other`: (deepest depth, number of points deeper than tol)."""
+    """Deepest point of `pts` inside the closed mesh `other`, as the distance to its nearest surface:
+    (deepest depth, number of points deeper than tol). Used for containment, where there is no overlap axis."""
     sel = pts[np.all(pts >= other.lo - tol, 1) & np.all(pts <= other.hi + tol, 1)]
     best, count = 0.0, 0
     for p in sel:
@@ -151,6 +162,31 @@ def _deepest(pts, other, tol, far, adv):
                 best = max(best, float(d[3]))
                 count += d[3] > tol
     return best, count
+
+
+def _penetration(pts, other, tol, far, adv):
+    """Penetration depth of the points of one mesh found inside the closed mesh `other`: the shortest translation
+    along +-X, +-Y or +-Z that carries all of them out. Per direction it is the largest ray distance from an inside
+    point to the surface; the smallest of the six is the depth (0.0 when no point is inside)."""
+    sel = pts[np.all(pts >= other.lo - tol, 1) & np.all(pts <= other.hi + tol, 1)]
+    way = [0.0] * 6
+    found = False
+    for p in sel:
+        if not _inside(other.bvh, p, far, adv):
+            continue
+        found = True
+        o = Vector(p)
+        for k, d in enumerate(AXES):
+            h = other.bvh.ray_cast(o, d, far)
+            way[k] = max(way[k], float(h[3]) if h[0] is not None else float("inf"))
+    return (min(way) if found else 0.0), found
+
+
+def _on_surface_fraction(src, dst, tol, cap, rng):
+    """Share of src's sampled points (vertices, edge midpoints, triangle centres) within tol of dst's surface."""
+    pts, _ = _samples(src, 1, cap, rng)
+    n = sum(dst.bvh.find_nearest(Vector(p), tol)[0] is not None for p in pts)
+    return n / len(pts)
 
 
 def _pierces(src, dst, eps):
@@ -303,7 +339,7 @@ def main(objects=None, gap_max_m=0.005, min_depth_m=0.001, require_connected=Tru
                         for src, dst in measurable:
                             pts, s = _samples(src, level, cap, rng)
                             sampled_any = sampled_any or s
-                            d, _ = _deepest(pts, dst, tol, far, adv)
+                            d, _ = _penetration(pts, dst, tol, far, adv)
                             if d > depth:
                                 depth, how = d, src.name
                         if depth > tol:
@@ -320,6 +356,12 @@ def main(objects=None, gap_max_m=0.005, min_depth_m=0.001, require_connected=Tru
                                         "reason": "surfaces cross but no sample point lies inside; depth unresolved"})
                     else:
                         touching.append({"a": a.name, "b": b.name, "depth_m": round(depth, 5)})
+                elif min(_on_surface_fraction(a, b, max(tol, eps), cap, rng),
+                         _on_surface_fraction(b, a, max(tol, eps), cap, rng)) >= 0.9:
+                    joined = True  # duplicate geometry in the same place: nothing crosses, nothing is inside
+                    if frozenset((a.name, b.name)) not in ignore:
+                        clashes.append({"a": a.name, "b": b.name, "depth_m": None, "depth": "coincident",
+                                        "reason": "the two meshes occupy the same surface: duplicate geometry"})
                 else:
                     for inner, outer in ((a, b), (b, a)):
                         if not np.all(inner.lo >= outer.lo - eps) or not np.all(inner.hi <= outer.hi + eps):
