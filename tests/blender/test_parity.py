@@ -378,12 +378,12 @@ def test_clash(check, out_dir):
     t = datetime.fromisoformat(doc["time"])
     check("H1 evidence has script, UTC time, verdict, numbers",
           doc["script"] == "clash_audit.py" and doc["verdict"] == "PASS" and t.utcoffset() == timedelta(0)
-          and doc["numbers"]["clashes"] == 0 and "objects_checked" in doc["numbers"], doc)
+          and doc["summary"]["clashes"] == 0 and "objects_checked" in doc["summary"], doc)
     bpy.data.objects["B"].location.x = 0.75
     audit(objects=["A", "B"], evidence_path=ev)
     doc = json.load(open(ev, encoding="utf-8"))
     check("H1 failing audit writes verdict FAIL with the numbers",
-          doc["verdict"] == "FAIL" and doc["numbers"]["clashes"] == 1 and abs(doc["numbers"]["max_depth_m"] - 0.25) < 0.03, doc)
+          doc["verdict"] == "FAIL" and doc["summary"]["clashes"] == 1 and abs(doc["summary"]["max_depth_m"] - 0.25) < 0.03, doc)
     check("H1 evidence folder must exist", raises(lambda: audit(objects=["A", "B"], evidence_path=os.path.join(out_dir, "no_such", "e.json"))))
     foreign = os.path.join(run_dir, "other.json")
     json.dump({"script": "validate_asset.py", "verdict": "PASS"}, open(foreign, "w"))
@@ -397,6 +397,21 @@ def test_clash(check, out_dir):
     stale = json.load(open(ev))["time"]
     raises(lambda: audit(objects=["Nope"], evidence_path=ev))
     check("H1 a crashed audit leaves the earlier evidence alone", json.load(open(ev))["time"] == stale)
+
+    # the real run manifest accepts this file for `validate`, and refuses a failing one and `export`
+    manifest_py = os.path.normpath(os.path.join(SCRIPTS, "..", "..", "blender-director", "scripts", "run_manifest.py"))
+
+    def manifest(**kw):
+        return runpy.run_path(manifest_py, init_globals={"ARGS": dict(out_dir=run_dir, skill="qa-review", script="clash_audit.py", **kw)})["result"]
+
+    good = manifest(stage="validate", verdict="PASS", evidence="clash.json", result_summary={"clashes": 0})
+    check("H1 run_manifest accepts clash evidence for validate", good["gates"]["validate"] == "PASS", good)
+    check("H1 run_manifest refuses clash evidence for export",
+          raises(lambda: manifest(stage="export", verdict="PASS", evidence="clash.json", result_summary={"clashes": 0})))
+    bpy.data.objects["B"].location.x = 0.75
+    audit(objects=["A", "B"], evidence_path=ev)
+    check("H1 run_manifest refuses a failing clash file",
+          raises(lambda: manifest(stage="validate", verdict="PASS", evidence="clash.json", result_summary={"clashes": 0})))
 
 
 # ---------------------------------------------------------------- H2 silhouette_score + H3 fit_search

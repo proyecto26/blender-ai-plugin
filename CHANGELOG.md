@@ -8,6 +8,34 @@ Format: [Semantic Versioning](https://semver.org/) — `Major.Minor.Patch`
 
 ## [Unreleased]
 
+Iteration 12: example parity and the open roadmap. Plan: `docs/plans/iteration-12-parity-and-roadmap.md`.
+
+### Added
+- `blender-mcp-workflow`: `clash_audit.py` (penetration, containment, floating parts), `silhouette_score.py` (camera view
+  against a reference mask, no render), `fit_search.py` (bounded search of named properties against that score),
+  `ingest_asset.py` (local GLB, GLTF, FBX, OBJ or USD file, normalized; URLs and `.blend` refused), `scene_snapshot.py`
+  (save, list, diff, restore without removing anything)
+- `film-production`: `flicker_check.py`, motion-compensated local flicker on an image sequence; blocks it cannot match are
+  reported as not measured
+- `procedural-modeling`: `surface_tools.py` (loft, Coons patch, G0/G1/G2 check) and `terrain_heightfield.py`
+- `usd-pipeline`: new skill with a checked export and reimport
+- `texture-workflow`: `import_painter_textures.py`. Painter itself was not run, and the doc makes no claim about its presets
+- `lowpoly-style`: real ordered dither in `ps1_look.py`; the earlier hint promised one that did not exist
+- `rendering`: denoiser presets per use case in `render_preset.py`
+- References: multi-angle depth, scan match, scatter systems, clothing simulation, hair card topology, facial shape keys and
+  drivers, mocap cleanup, Nanite prep, HDRP mapping, Bloober Team. Unreal, Unity and Painter were not run for these
+- `.github/workflows/checks.yml` (unproven until it runs on a pull request), `.gitattributes`
+
+### Changed
+- **Breaking for one path:** in `run_manifest.py`, a `validate` or `export` PASS now needs `evidence`: a result file written
+  by that stage's producer script through `evidence_path`. A typed `result_summary` alone is refused. A process that can write
+  files can still forge one; this links gates to script output and stops batch typing
+- Parallel work: agents never share one live session, only separate saved copies merged by one owner. Unmeasured
+- `background_render.py` plan times a second frame when the first was short: the estimate was 2.5 to 4 times too long on short
+  Eevee jobs, and is now within 1.00 to 1.17 of real time over 15 Windows runs
+- `score_run.py` sees PowerShell launches and foreground renders, checks the duration claim, and judges the window by platform
+- `rigid_body_setup.py` rejects an invalid collision shape before changing anything
+
 Iteration 11: fixes from a measured run of the real orchestrator agent, reviewed by Codex, then from a macOS review.
 
 ### Fixed after the macOS review

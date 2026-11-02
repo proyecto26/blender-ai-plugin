@@ -54,3 +54,6 @@ evals-orchestrator/results/
 
 # scratch subsets for routing experiments
 evals-work/
+
+# Agent worktrees
+.claude/worktrees/

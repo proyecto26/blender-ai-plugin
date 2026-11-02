@@ -31,10 +31,9 @@ ARGS:
     anchor             (str|None) object whose group is the main one; default = the group with most objects, then tris
     ignore_pairs       (list[[str, str]]) pairs allowed to overlap (a bolt in its hole); they still join a group
     max_samples        (int) cap on sample points per object and direction (default 4000; sets `sampled` when hit)
-    evidence_path      (str|None) a .json file inside an existing run folder; the audit writes its own result there:
-                       script ("clash_audit.py"), time (UTC ISO), verdict ("PASS" only for a PASS, else "FAIL"),
-                       detail_verdict (PASS/WARN/FAIL) and the numbers. An existing file is only replaced when it is
-                       a clash_audit evidence file.
+    evidence_path      (str|None) a .json file inside an existing run folder; the audit writes its own result there, as
+                       script-evidence/1 (script, time, verdict PASS/WARN/FAIL, summary), which run_manifest.py reads to
+                       back a `validate` PASS. An existing file is only replaced when it is a clash_audit evidence file.
 """
 import datetime
 import json
@@ -218,9 +217,9 @@ def _write_evidence(path, result):
                "max_depth_m": max([c["depth_m"] for c in result["clashes"] + result["contained"]
                                    if c.get("depth_m") is not None] or [0.0]),
                "gap_max_m": result["params"]["gap_max_m"], "min_depth_m": result["params"]["min_depth_m"]}
-    doc = {"script": SCRIPT, "time": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
-           "verdict": "PASS" if result["verdict"] == "PASS" else "FAIL", "detail_verdict": result["verdict"],
-           "numbers": numbers}
+    doc = {"schema": "script-evidence/1", "script": SCRIPT,
+           "time": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="microseconds"),
+           "verdict": result["verdict"], "summary": numbers}
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(doc, fh, indent=2)
     return doc

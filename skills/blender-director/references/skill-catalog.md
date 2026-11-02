@@ -10,7 +10,7 @@ Stages: inspect, brief, model, look_dev, light_camera, animate, validate, export
 | Skill | Stage | Job | Scripts |
 |---|---|---|---|
 | `blender-director` | any | Plans and runs any multi-step Blender production from brief to verified export: model, look, light, camera, validate, export. | run_manifest.py |
-| `blender-mcp-workflow` | any | Safe way to drive Blender through the MCP server and write bpy code that survives Blender 5.x API removals. | capture_views.py, compare_to_refs.py, fix_asset.py, ref_board.py, scene_audit.py, setup_collections.py, validate_asset.py, work_copy.py |
+| `blender-mcp-workflow` | any | Safe way to drive Blender through the MCP server and write bpy code that survives Blender 5.x API removals. | capture_views.py, clash_audit.py, compare_to_refs.py, fit_search.py, fix_asset.py, ingest_asset.py, ref_board.py, scene_audit.py, scene_snapshot.py, setup_collections.py, silhouette_score.py, validate_asset.py, work_copy.py |
 | `qa-review` | validate | Final QA gate for Blender assets: screenshots, checklists, naming and topology audit, ship/no-ship verdict. | - |
 
 ## Production (film, AI handoff)
@@ -18,7 +18,7 @@ Stages: inspect, brief, model, look_dev, light_camera, animate, validate, export
 | Skill | Stage | Job | Scripts |
 |---|---|---|---|
 | `ai-video-handoff` | handoff | Render Blender shots as clips, masks and depth maps for Seam or ComfyUI to paint backgrounds and add motion. | render_handoff.py |
-| `film-production` | film | Make an animated short in Blender: shot list, previews, fix loop, EEVEE render, licensed audio, mp4. | assemble_edit.py, preview_frames.py, shot_list.py |
+| `film-production` | film | Make an animated short in Blender: shot list, previews, fix loop, EEVEE render, licensed audio, mp4. | assemble_edit.py, flicker_check.py, preview_frames.py, shot_list.py |
 
 ## Disciplines
 
@@ -40,7 +40,7 @@ Stages: inspect, brief, model, look_dev, light_camera, animate, validate, export
 | `lookdev` | look_dev | Look-dev loop: iterate material, light and camera against a reference until shading reads right. | - |
 | `materials` | look_dev | PBR and stylized materials: metal, wood, rust, glass, fabric, procedural shaders. | pbr_material.py |
 | `physics-sim` | animate | Rigid body, soft body and destruction sims with bakes. | rigid_body_setup.py |
-| `procedural-modeling` | model | Procedural assets from a swept curve profile: pipes, cables, rails, trim, roads. | gn_curve_profile.py |
+| `procedural-modeling` | model | Procedural assets from a swept curve profile: pipes, cables, rails, trim, roads. | gn_curve_profile.py, surface_tools.py, terrain_heightfield.py |
 | `prop-artist` | model | Prop modeling: furniture, tools, bottles, household objects, kitbash parts. | - |
 | `rendering` | light_camera | Final render setup: Cycles/Eevee sampling, denoise, resolution, color management. | background_render.py, render_preset.py |
 | `retopology` | model | Retopology: clean quad-dominant, animation-ready topology from sculpts or messy meshes. | topology_report.py |
@@ -48,7 +48,7 @@ Stages: inspect, brief, model, look_dev, light_camera, animate, validate, export
 | `scene-assembly` | model | Scene assembly: collections, linking, library overrides, collection instances. | - |
 | `sculpting` | model | Sculpting: Dyntopo, multires, brushes, wrinkles and damage detail. | - |
 | `set-dressing` | model | Set dressing: prop placement and environmental storytelling. | scatter_props.py |
-| `texture-workflow` | look_dev | Texture baking and atlases: AO, curvature, normal and roughness maps from high-poly, decals, texture memory. | bake_maps.py |
+| `texture-workflow` | look_dev | Texture baking and atlases: AO, curvature, normal and roughness maps from high-poly, decals, texture memory. | bake_maps.py, import_painter_textures.py |
 | `uv-workflow` | look_dev | Unwrap UVs: seams, packing, texel density, UDIM, lightmap UVs. | uv_unwrap_check.py |
 | `vegetation-artist` | model | Vegetation: trees, grass, bushes, ivy, leaf cards with LOD-friendly foliage. | - |
 | `vehicle-artist` | model | Vehicle modeling: cars, planes, ships, tanks, mechs with panel flow and LODs. | - |
@@ -65,6 +65,7 @@ Stages: inspect, brief, model, look_dev, light_camera, animate, validate, export
 | `lod-pipeline` | validate | LOD chains, tested scripts: LOD1..N copies, naming, screen-size switch distances. | generate_lods.py |
 | `unity-export` | export | Unity export, tested scripts: FBX axis, scale, materials, humanoid rigs. | export_unity.py |
 | `unreal-export` | export | Unreal/UE5 export, tested scripts: FBX scale, SM_/SK_ names, UCX collision, sockets. | export_unreal.py |
+| `usd-pipeline` | export | USD for film/VFX hand-offs, tested scripts: export, reimport, round-trip checks of counts, transforms, mesh sizes, material names. | usd_roundtrip.py |
 
 ## Art styles (pick at most one unless the brief mixes them)
 
