@@ -42,7 +42,7 @@ are not flat; other content showing for one frame, a fade, a cut and black bars 
 Limits, measured: (1) a very dark scene whose neighbours are themselves nearly flat black (mean about 0.01) returns `pass` for a
 black frame at the default `dropout_gap` (0.02); lower it to 0.005 to find it there, at the price of more false events in dark
 renders; (2) a dropout smaller than two cells in each direction (16 px at the default block) is not looked for; (3) a flat
-black or white object that moves more than its own width per frame (24 px at 30 px per frame was measured) is the same
+black or white object that moves fast (24 px at 30 px per frame, and about 148 px at about 90 px per frame, were measured) is the same
 shape as a dropout and is reported as one when it spans 2x2 cells (a shadow is not: the darkest flat cells in 31 clean renders, shadows included, are above 0.015
 unless the scene itself is black);
 (4) the neighbours must be a steady shift of each other: a pan that accelerates, or a dropout beside another bad frame,

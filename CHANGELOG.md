@@ -45,7 +45,7 @@ Iteration 12: example parity and the open roadmap. Plan: `docs/plans/iteration-1
 - `fit_search.py`: an integer property steps by at least 1, and `converged` means its neighbours were really tried
 - `fit_search.py`: `converged` is true only after a full sweep of every parameter at its final step found no improvement; running out of `max_evals` gives `converged: false`
 - `test_handoff.py` records an exception raised outside `check()` as a failure (report written, exit 1)
-- `flicker_check.py` reports a tile, band or whole frame that goes flat black or white for one frame (`dropout_cells`; `dropout_level`, `dropout_flat_dev`, `dropout_gap`), checked only on near-uniform near-black or near-white cells against the frames either side. Other content showing for one frame, a moving object and a cut are not events. A black frame in a very dark scene is a stated limit
+- `flicker_check.py` reports a tile, band or whole frame that goes flat black or white for one frame (`dropout_cells`; `dropout_level`, `dropout_flat_dev`, `dropout_gap`), checked only on near-uniform near-black or near-white cells against the frames either side. Textured content showing for one frame and a cut are not events; a fast flat black or white object can be reported as a dropout. A black frame in a very dark scene is a stated limit
 - The Blender suites now exit non-zero when a check fails
 
 Known open issues from the final review are listed in `docs/ROADMAP.md`.
