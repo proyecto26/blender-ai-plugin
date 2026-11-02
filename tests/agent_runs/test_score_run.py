@@ -121,6 +121,8 @@ def extra_cases():
         ]
         checks += announcement_cases(tmp)
         checks += window_cases(tmp)
+        checks += flag_cases()
+        checks += args_file_cases()
     return [(name, "", want, got) for name, got, want in checks if got != want]
 
 
@@ -169,6 +171,72 @@ def same_second_gates():
     ev = lambda stage, t: {"stage": stage, "verdict": "PASS", "time": t}
     return {"events": [ev("inspect", "2026-01-01T00:00:00.100000+00:00"), ev("model", "2026-01-01T00:00:00.300000+00:00"),
                        ev("light_camera", "2026-01-01T00:00:00.500000+00:00")]}
+
+
+def writes_then_launch(writes, command=PS_LAUNCH, say=None):
+    """Several Write calls (path, content dict) in order, then one launch."""
+    rows, t = [], T0
+    for i, (path, body) in enumerate(writes):
+        rows += [(t, assistant(tool(f"w{i}", "Write", file_path=path, content=json.dumps(body)))), (t + 1, done(f"w{i}"))]
+        t += 2
+    rows += [(t, assistant(*(([text(say)] if say else []) + [tool("j", "PowerShell", command=command)]))), (t + 1, done("j"))]
+    return replay(rows)
+
+
+def flag_cases():
+    """Every spelling of a Blender render, animation or script flag, launched silently: a job that is seen scores FLAG."""
+    quiet = lambda cmd, **kw: announce(launch_run(None, "Bash", cmd, **kw))
+    render = lambda cmd: quiet(cmd, took=90)  # a foreground run long enough to need a message
+    return [
+        ("-f 1 render, silent", render("blender -b scene.blend -f 1"), "FLAG"),
+        ("-f before -b", render("blender scene.blend -f 1 -b"), "FLAG"),
+        ("-a render, silent", render("blender -b scene.blend -a"), "FLAG"),
+        ("--render-anim, silent", render("blender --background scene.blend --render-anim"), "FLAG"),
+        ("--render-frame 1, silent", render("blender -b scene.blend --render-frame 1"), "FLAG"),
+        ("--render-frame=1, silent", render("blender -b scene.blend --render-frame=1"), "FLAG"),
+        ("combined -ba, silent", render("blender -ba scene.blend"), "FLAG"),
+        ("combined -bf 1, silent", render("blender -bf 1 scene.blend"), "FLAG"),
+        ("combined -f1, silent", render("blender -b scene.blend -f1"), "FLAG"),
+        ("-P script in the background", quiet("blender -b scene.blend -P r.py", background=True), "FLAG"),
+        ("--python-expr in the background", quiet("blender -b scene.blend --python-expr 'import bpy' &"), "FLAG"),
+        ("--python-text in the background", quiet("blender -b scene.blend --python-text Run", background=True), "FLAG"),
+        ("--python=file in the background", quiet("blender -b scene.blend --python=r.py", background=True), "FLAG"),
+        ("PowerShell -ArgumentList with -f", announce(launch_run(None, command='Start-Process blender.exe -ArgumentList "-b","a.blend","-f","1"')), "FLAG"),
+        ("second blender in a chain renders", render("blender -b a.blend --python-exit-code 1 && blender -b b.blend -f 1"), "FLAG"),
+        ("blender.exe with a quoted path", render('"C:/Program Files/Blender/blender.exe" -b a.blend -f 1'), "FLAG"),
+        # Not jobs: no background, no work, or the flag belongs to the script after `--`.
+        ("no -b: a GUI session", render("blender scene.blend -f 1"), "OK"),
+        ("-b alone", render("blender -b scene.blend"), "OK"),
+        ("-F is the render format, not -f", render("blender -b scene.blend -F PNG"), "OK"),
+        ("-B is not -b", render("blender -B scene.blend -f 1"), "OK"),
+        ("-a after -- is the script's", render("blender -b scene.blend -- -a"), "OK"),
+        ("--python-exit-code is not a script", render("blender -b scene.blend --python-exit-code 1"), "OK"),
+        ("quick -P script is not a render", quiet("blender -b scene.blend -P r.py"), "OK"),
+        ("flag text inside a quoted expression", quiet("blender -b scene.blend --python-expr 'print(\"-a\")'"), "OK"),
+        ("announced -f render", announce(launch_run(GOOD_SAY, "Bash", "blender -b scene.blend -f 1", took=90)), "OK"),
+    ]
+
+
+def args_file_cases():
+    real = ("C:\\run\\args.json", {"out_dir": "C:\\run\\out"})
+    other = ("C:\\unrelated\\args.json", {"out_dir": "C:\\unrelated\\out", "plan": True})
+    plan = ("C:\\run\\args.json", {"out_dir": "C:\\run\\out", "plan": True})
+    with_file = lambda ref: PS_LAUNCH.replace("C:\\run\\args.json", ref)
+    eq_form = PS_LAUNCH.replace('"--args-file","C:\\run\\args.json"', '"--args-file=C:\\run\\args.json"')
+    return [
+        ("same basename in another folder does not exempt a real job", announce(writes_then_launch([real, other])), "FLAG"),
+        ("same basename, forward slashes", announce(writes_then_launch(
+            [("C:/run/args.json", real[1]), ("C:/unrelated/args.json", other[1])], with_file("C:/run/args.json"))), "FLAG"),
+        ("order swapped: the plan file is the launched one", announce(writes_then_launch([other, plan])), "OK"),
+        ("only the unrelated plan file was written", announce(writes_then_launch([other])), "FLAG"),
+        ("launch names a bare file: the name decides", announce(writes_then_launch([plan], with_file("args.json"))), "OK"),
+        ("launch names .\\args.json: the name decides", announce(writes_then_launch([plan], with_file(".\\args.json"))), "OK"),
+        ("earlier write is a bare name", announce(writes_then_launch([("args.json", plan[1])])), "OK"),
+        ("relative folder tail matches the absolute write", announce(writes_then_launch([plan], with_file("run\\args.json"))), "OK"),
+        ("relative folder tail does not match another folder", announce(writes_then_launch([other], with_file("run\\args.json"))), "FLAG"),
+        ("--args-file=path form, real file last", announce(writes_then_launch([other, real], eq_form)), "FLAG"),
+        ("case and slash style differ", announce(writes_then_launch([("c:/RUN/args.json", plan[1])])), "OK"),
+    ]
 
 
 def announce(run, status=None, tmp=None):

@@ -41,9 +41,17 @@ DETACHED = r"\bnohup\b|(?<![&>|])&(?![&>])"
 # PowerShell has no trailing `&` (a leading one is the call operator); it detaches with these.
 DETACHED_PS = r"\bStart-Process\b|\bStart-Job\b|-AsJob\b|\bstart\s+/b\b"
 SHELLS = ("Bash", "PowerShell")
-BLENDER_JOB = r"blender(?:-launcher)?(?:\.exe)?[\"']?\s.*(?<![\w-])(?:-b|--background)(?![\w-])"
-BLENDER_WORK = r"--python\b|--render-anim|--render-frame|(?<!\w)-a(?!\w)"
-RENDER_JOB = r"background_render\.py|--render-anim|--render-frame|(?<!\w)-a(?!\w)"
+BLENDER_EXE = r"blender(?:-launcher)?(?:\.exe)?"
+# Blender stops reading its own flags at `--`; what follows belongs to the script. Flags are case-sensitive (`-F` is not `-f`).
+BG_FLAGS = {"-b", "--background"}
+# Work that starts a job: render animation / frame, run a script. Short and long spellings, plus the `--flag=value` forms.
+WORK_FLAGS = {"-a", "--render-anim", "-f", "--render-frame", "-P", "--python", "--python-text", "--python-expr"}
+RENDER_FLAGS = {"-a", "--render-anim", "-f", "--render-frame"}
+# Not valid Blender, but an agent may write `-ba` or `-bf 1`; scoring leans to seeing a job, so a cluster of the short
+# letters b/a/f/P (optionally ending in digits, `-f1`) counts as each flag it contains.
+SHORT_CLUSTER = r"-([bafP]+)\d*"
+TOKEN = r"\"([^\"]*)\"|'([^']*)'|([^\s,\"']+)"
+PIPE_END = {"&&", "||", ";", "|"}
 PLAN_ON = r"[\"']?plan[\"']?\s*[:=]\s*[\"']?(?:true|\$true)\b"
 DURATION = (r"(\d+(?:[.,]\d+)?)\s*(segundos?|seconds?|secs?|minutos?|minutes?|mins?|horas?|hours?|hrs?|s|h)\b")
 UNIT_SECONDS = {"s": 1, "h": 3600}
@@ -268,16 +276,78 @@ def seconds_in(text):
     return found
 
 
+def blender_segments(command):
+    """Each Blender invocation in the command, as the flags Blender itself reads (up to `--` or the next shell operator).
+    Quoted pieces and comma lists (PowerShell -ArgumentList "-b","f.blend") become separate tokens."""
+    segments, current = [], None
+    for quoted, single, bare in re.findall(TOKEN, command):
+        tok = quoted or single or bare
+        if re.fullmatch(BLENDER_EXE, tok.replace("\\", "/").rsplit("/", 1)[-1], re.I):
+            current = []
+            segments.append(current)
+        elif current is not None:
+            if tok == "--" or (bare and tok in PIPE_END):
+                current = None
+            else:
+                current.append(tok)
+    return segments
+
+
+def flag_set(tokens, wanted):
+    """Which of the wanted flags the tokens hold, in any spelling: `-f`, `--render-frame=1`, `-bf`, `-f1`."""
+    found = set()
+    for tok in tokens:
+        name = tok.split("=", 1)[0] if tok.startswith("--") else tok
+        if name in wanted:
+            found.add(name)
+        cluster = re.fullmatch(SHORT_CLUSTER, tok)
+        if cluster:
+            found |= {"-" + ch for ch in cluster.group(1) if "-" + ch in wanted}
+    return found
+
+
+def blender_job(command):
+    """None, or {'render': bool}: a background Blender invocation that renders or runs a script."""
+    job = None
+    for tokens in blender_segments(command):
+        if flag_set(tokens, BG_FLAGS) and flag_set(tokens, WORK_FLAGS):
+            job = job or {"render": False}
+            job["render"] = job["render"] or bool(flag_set(tokens, RENDER_FLAGS))
+    if job and re.search(r"background_render\.py", command):
+        job["render"] = True
+    return job
+
+
+def path_mentions(text, base):
+    """Every path in the text that ends in the file name, normalized, as written (a bare name stays bare)."""
+    flat = norm_path(text)
+    return re.findall(r"[^\s\"'`,;()=<>|&]*" + re.escape(base) + r"(?![\w.\-])", flat)
+
+
+def same_file(a, b):
+    """Whether two normalized paths can name one file. Full paths must be equal. A path with no directory (just the name)
+    gives no way to tell, so it matches by basename alone: a launch from the run folder may name the file bare, or an
+    earlier call may have written it bare. A relative path with a directory matches the tail of a longer one."""
+    if a == b or "/" not in a or "/" not in b:
+        return True
+    short, long_ = (a, b) if len(a) <= len(b) else (b, a)
+    return not re.match(r"[a-z]:/|/|~", short) and long_.endswith("/" + short)
+
+
 def related_text(call, run):
     """The launch command plus the text of the args file it names, if an earlier call wrote it."""
     command = call["input"].get("command", "")
     parts = [command]
-    for ref in re.findall(r"--args-file[\"']?[\s,]+[\"']?([^\s\"',]+)", command):
-        base = os.path.basename(norm_path(ref))
+    for ref in re.findall(r"--args-file[\"']?[\s,=]+[\"']?([^\s\"',]+)", command):
+        ref = re.sub(r"^(?:\./|\.\./)+", "", norm_path(ref))
+        base = ref.rsplit("/", 1)[-1]
+        # Match by the whole normalized path: two folders can each hold an args.json. The name alone decides only
+        # when the launch (or the earlier call) gives no directory, since then nothing else can tell them apart.
         # Only the latest earlier call that names the file: what it held when this job launched, not its history.
         # A call that only reads or mentions the file does not change it: the writer carries the out_dir.
-        earlier = [c for c in run["calls"] if c is not call and c["seq"] < call["seq"] and base in norm_path(str(c["input"]))
-                   and re.search(r"out_dir", str(c["input"]))]
+        earlier = [c for c in run["calls"] if c is not call and c["seq"] < call["seq"]
+                   and re.search(r"out_dir", str(c["input"]))
+                   and any(same_file(m, ref) for m in path_mentions(str(c["input"]), base))]
         parts += [str(c["input"]) for c in earlier[-1:]]
     return "\n".join(parts)
 
@@ -287,7 +357,8 @@ def launch_kind(call, run):
     if call["name"] not in SHELLS:
         return None
     command = call["input"].get("command", "")
-    if not (re.search(BLENDER_JOB, command, re.I | re.S) and re.search(BLENDER_WORK, command)):
+    job = blender_job(command)
+    if not job:
         return None
     if re.search(PLAN_ON, related_text(call, run), re.I):
         return None  # the plan step makes the message; it is not the job
@@ -295,7 +366,7 @@ def launch_kind(call, run):
     if call["input"].get("run_in_background") or re.search(pattern, command):
         return "detached"
     long = call["end"] is not None and call["t"] is not None and call["end"] - call["t"] > FOREGROUND_LONG_S
-    if long or re.search(RENDER_JOB, command):
+    if long or job["render"]:
         return "foreground"
     return None
 
