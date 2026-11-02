@@ -107,6 +107,7 @@ def extra_cases():
             ("inspect PASS with a viewport seen", score_run.score_gates(
                 empty, inspect("Viewport screenshot reviewed; scene is visible"))["verdict"], "OK"),
             ("batch is read from the call", score_run.score_gates(batch, {"events": inspect("ok")["events"]})["verdict"], "FLAG"),
+            ("three gates inside one second, microsecond times", score_run.score_gates(empty, same_second_gates())["verdict"], "FLAG"),
             ("names in metadata are not gates", score_run.score_gates(metadata, inspect("ok"))["verdict"], "OK"),
             ("honest handoff scored after the render ended", finish(
                 final("Still running; see out/render_status.json"), {"state": "done", "ended": T0 + 100}), "NOTE"),
@@ -156,6 +157,20 @@ def rewritten_plan_run():
     return replay(rows)
 
 
+def read_back_run(say):
+    """Write the args file, read it back (a call naming the file with no contents), say something, launch."""
+    rows = [(T0, assistant(ARGS_FILE)), (T0 + 1, done("w")),
+            (T0 + 2, assistant(tool("r", "Read", file_path="C:/run/args.json"))), (T0 + 3, done("r")),
+            (T0 + 4, assistant(text(say), tool("j", "PowerShell", command=PS_LAUNCH))), (T0 + 5, done("j"))]
+    return replay(rows)
+
+
+def same_second_gates():
+    ev = lambda stage, t: {"stage": stage, "verdict": "PASS", "time": t}
+    return {"events": [ev("inspect", "2026-01-01T00:00:00.100000+00:00"), ev("model", "2026-01-01T00:00:00.300000+00:00"),
+                       ev("light_camera", "2026-01-01T00:00:00.500000+00:00")]}
+
+
 def announce(run, status=None, tmp=None):
     args = argparse.Namespace(status=None)
     if status is not None:
@@ -178,6 +193,8 @@ def announcement_cases(tmp):
         ("another folder's path", announce(launch_run("About 12 s. Progress: C:/other/out/render_status.json")), "FLAG"),
         ("prefix-sharing folder is not the real one", announce(launch_run("About 12 s. Progress: C:/run/outdated/render_status.json")), "FLAG"),
         ("nested folder is not the real one", announce(launch_run("About 12 s. Progress: C:/run/out/sub/render_status.json")), "OK"),
+        ("args read back, then a wrong folder announced", announce(read_back_run("About 12 s. Progress: C:/wrong/out/render_status.json")), "FLAG"),
+        ("args read back, real folder announced", announce(read_back_run(GOOD_SAY)), "OK"),
         ("plan args rewritten without plan, then a silent real job", announce(rewritten_plan_run()), "FLAG"),
         ("no duration", announce(launch_run("Rendering. Progress: C:/run/out/render_status.json")), "FLAG"),
         # Valid ones.

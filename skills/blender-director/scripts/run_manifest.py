@@ -78,7 +78,7 @@ def _cli_args():
 
 
 def _now():
-    return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+    return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="microseconds")
 
 
 def _inside(out_dir, path):
@@ -135,7 +135,7 @@ def _read_evidence(out_dir, stage, script, evidence, events, warn, reason):
         raise ValueError(f"evidence {evidence} has no valid time") from exc
     index = STAGES.index(stage)
     earlier = [_parse_time(e["time"]) for e in events if STAGES.index(e["stage"]) <= index]
-    if earlier and made.replace(microsecond=0) < max(earlier):
+    if earlier and made < max(earlier):
         raise ValueError(f"evidence {evidence} is stale: written {data['time']}, before the latest earlier event "
                          f"{max(earlier).isoformat()}; run the script again")
     return {"path": rel, "sha256": _sha256(full), "bytes": os.path.getsize(full), "script": data["script"],

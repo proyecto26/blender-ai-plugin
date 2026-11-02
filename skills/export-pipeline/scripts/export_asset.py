@@ -142,9 +142,34 @@ def _write_evidence(path, verdict, summary):
     os.replace(tmp, path)
 
 
+def _evidence_clash(out_path, evidence_path):
+    """Why evidence_path may not be used, or None. Exports write sidecars next to the file (model.bin, model.mtl),
+    so the evidence must not be the export or share its name stem in the same folder."""
+    ev, out = os.path.realpath(evidence_path), os.path.realpath(out_path)
+    if os.path.normcase(ev) == os.path.normcase(out):
+        return "evidence_path must not be the same file as out_path: the result file would replace the export"
+    same_dir = os.path.normcase(os.path.dirname(ev)) == os.path.normcase(os.path.dirname(out))
+    stem = lambda p: os.path.normcase(os.path.splitext(os.path.basename(p))[0])
+    if same_dir and stem(ev) == stem(out):
+        return (f"evidence_path {os.path.basename(evidence_path)} shares the export's name ({os.path.basename(out_path)}): "
+                "exports write sidecar files with that name (.bin, .mtl); pick a different name")
+    return None
+
+
+def _stamp(path):
+    try:
+        st = os.stat(path)
+        return (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return None
+
+
 def main(out_path, objects=None, engine="generic", animation=False, evidence_path=None):
-    if evidence_path and os.path.normcase(os.path.realpath(evidence_path)) == os.path.normcase(os.path.realpath(out_path)):
-        raise ValueError("evidence_path must not be the same file as out_path: the result file would replace the export")
+    if evidence_path:
+        clash = _evidence_clash(out_path, evidence_path)
+        if clash:
+            raise ValueError(clash)
+        before = _stamp(evidence_path)
     targets = _targets(objects)
     ext = os.path.splitext(out_path)[1].lower()
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
@@ -190,6 +215,9 @@ def main(out_path, objects=None, engine="generic", animation=False, evidence_pat
     report = {"path": out_path, "exists": ok, "bytes": os.path.getsize(out_path) if ok else 0,
               "engine": engine, "objects": [o.name for o in targets],
               "verify": _verify(out_path, targets)}
+    if evidence_path and _stamp(evidence_path) != before:
+        raise ValueError(f"evidence_path {evidence_path} was created or changed by the export itself (a sidecar or texture): "
+                         "pick a name the export does not produce; nothing was written over it")
     if evidence_path:  # the stage 7 gate: the file exists and is not empty; verify.ok is judged at stage 8
         _write_evidence(evidence_path, "PASS" if report["exists"] and report["bytes"] > 0 else "FAIL",
                         {"path": out_path, "exists": report["exists"], "bytes": report["bytes"], "engine": engine,

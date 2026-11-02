@@ -237,7 +237,7 @@ def score_gates(run, manifest):
             problems.append(f"one call writes {len(stages)} gates: {stages}")
     by_time = {}
     for e in events:
-        by_time.setdefault(e["time"], []).append(e["stage"])
+        by_time.setdefault(str(e["time"])[:19], []).append(e["stage"])
     # A loop writes gates with no literal stage= in its code, so also read the manifest's own timestamps.
     problems += [f"{len(v)} gates in the same second: {v}" for v in by_time.values() if len(v) >= 3]
     last = {}
@@ -275,7 +275,9 @@ def related_text(call, run):
     for ref in re.findall(r"--args-file[\"']?[\s,]+[\"']?([^\s\"',]+)", command):
         base = os.path.basename(norm_path(ref))
         # Only the latest earlier call that names the file: what it held when this job launched, not its history.
-        earlier = [c for c in run["calls"] if c is not call and c["seq"] < call["seq"] and base in norm_path(str(c["input"]))]
+        # A call that only reads or mentions the file does not change it: the writer carries the out_dir.
+        earlier = [c for c in run["calls"] if c is not call and c["seq"] < call["seq"] and base in norm_path(str(c["input"]))
+                   and re.search(r"out_dir", str(c["input"]))]
         parts += [str(c["input"]) for c in earlier[-1:]]
     return "\n".join(parts)
 

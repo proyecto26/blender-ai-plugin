@@ -767,6 +767,12 @@ def _manifest_evidence_binding():
     out["stale"] = _expect_error(lambda: rm(stage="validate", script="validate_asset.py", verdict="PASS", evidence=ev,
                                             **summary, **warn_ok(verdict)))
     out["stale_gate"] = gates()["validate"]
+    # 4b. the same second: evidence written, then a model event less than a second later, must also be stale
+    ev, verdict = _validate_evidence(d, "stale_fast.json")
+    rm(stage="model", script="manual", verdict="PASS", **summary)
+    out["stale_fast"] = _expect_error(lambda: rm(stage="validate", script="validate_asset.py", verdict="PASS", evidence=ev,
+                                                 **summary, **warn_ok(verdict)))
+    out["event_time_fraction"] = "." in json.load(open(os.path.join(d, "run_manifest.json")))["events"][-1]["time"]
     # 5. a fresh file passes; clash_audit.py is an allowed validate producer, export_asset.py the only export producer
     ev, verdict = _validate_evidence(d, "fresh.json")
     out["fresh"] = rm(stage="validate", script="validate_asset.py", verdict="PASS", evidence=ev, **summary, **warn_ok(verdict))["gates"]["validate"]
@@ -807,7 +813,11 @@ def _export_evidence_collision():
     for label, ev in (("same", target), ("dotdot", os.path.join(d, "sub", "..", "collide.glb"))):
         err[label] = _expect_error(lambda: run("export-pipeline", "export_asset.py", {
             "objects": ["SM_Crate_01"], "engine": "web", "out_path": target, "evidence_path": ev}))
-    return {"errors": err, "written": os.path.exists(target)}
+    # a glTF export writes model.bin beside model.gltf: evidence named model.bin must be refused, not replace it
+    side = os.path.join(d, "sidecar.gltf")
+    err["sidecar"] = _expect_error(lambda: run("export-pipeline", "export_asset.py", {
+        "objects": ["SM_Crate_01"], "engine": "web", "out_path": side, "evidence_path": os.path.join(d, "sidecar.bin")}))
+    return {"errors": err, "written": os.path.exists(target), "side_written": os.path.exists(side)}
 
 
 def _manifest_validate_gate():
@@ -1143,7 +1153,8 @@ def build_cases(out_dir):
          and r["export_before_reject"] == "PASS" and "reports FAIL" in (r["rejected_after_pass"] or "")
          and r["export_after_reject"] == "NOT_CHECKED" and r["reject_event"] == ("export", "NOT_CHECKED", True, True)),
         ("export-pipeline.evidence_path_is_not_out_path", lambda: _export_evidence_collision(),
-         lambda r: all("same file" in (v or "") for v in r["errors"].values()) and not r["written"]),
+         lambda r: all(r["errors"].get(k) and "same file" in r["errors"][k] for k in ("same", "dotdot"))
+         and "shares the export's name" in (r["errors"].get("sidecar") or "") and not r["written"] and not r["side_written"]),
         ("director.run_manifest", lambda: _manifest_case(),
          lambda r: r["events"] == 2 and r["r2_events"] == 2 and r["hash"] == r["expect_hash"]
          and r["ev_hash"] == r["ev_expect"] and r["ev_script"] == "export_asset.py"
