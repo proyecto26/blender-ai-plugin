@@ -17,7 +17,8 @@ ARGS:
     views       (list[dict], required) as in silhouette_score.py: {"camera", "reference", optional "mask"}
     params      (list[dict], required) each {"object": name, "path": RNA path from that object, "min", "max",
                 optional "step" (first step, default a quarter of the range) and "tol" (stop when the step
-                is below it, default step/32)}. The path is read with the Blender data path rules, for example
+                is below it, default step/32). An integer property never steps by less than 1
+                and ignores tol: it is converged once its in-bounds neighbours were evaluated}. The path is read with the Blender data path rules, for example
                 "scale" (all three axes move together), "scale[2]", "location[0]", "modifiers[\"Bevel\"].width" (double quotes: single quotes do not resolve).
                 Only float and int properties that are not read-only. Everything is checked before any change.
     max_evals   (int) cap on silhouette evaluations, the first and the closing re-score of the best values included
@@ -95,6 +96,8 @@ class Param:
                 raise ValueError(f"{self.label}: no integer lies between min and max")
         self.step = float(spec.get("step", (self.hi - self.lo) / 4))
         self.tol = float(spec.get("tol", self.step / 32))
+        if self.integer:  # the smallest move that changes an integer is 1: a smaller step only rounds back to the start
+            self.step = max(1.0, float(round(self.step)))
         if self.step <= 0 or self.tol <= 0:
             raise ValueError(f"{self.label}: step and tol must be positive")
         self.original = self._raw()
@@ -226,8 +229,11 @@ def main(objects=None, views=None, params=None, max_evals=60, apply=False, bg_to
                         break
                     p.back_to_committed()
             if not improved:
-                steps = [st / 2 for st in steps]
-                if all(st < p.tol for st, p in zip(steps, ps)):
+                # an integer is exhausted once a full sweep at step 1 found nothing (both in-bounds neighbours were
+                # evaluated, or lie outside the bounds); a float is done when its halved step falls below tol
+                done = [st <= 1.0 if p.integer else st / 2 < p.tol for st, p in zip(steps, ps)]
+                steps = [max(1.0, float(math.ceil(st / 2))) if p.integer else st / 2 for st, p in zip(steps, ps)]
+                if all(done):
                     converged = True
                     break
         for p in ps:

@@ -845,6 +845,56 @@ def test_fit(check, out_dir, measured):
     check("H3 no images leaked", not leaked_images(), leaked_images())
 
 
+def test_fit_integer(check, out_dir, measured):
+    """Integer properties: the step is never below 1, a candidate rounding to the current value is not a try,
+    and converged means the in-bounds neighbours were really evaluated."""
+    reset_scene()
+    d = os.path.join(out_dir, "h3int")
+    os.makedirs(d, exist_ok=True)
+    cam = camera("CamF", (0, -8, 0), rot_deg=(90, 0, 0), ortho=8.0)
+    bx = box("Arr", (1, 1, 1))
+    md = bx.modifiers.new("Arr", "ARRAY")
+    md.count = 2
+    ref2 = render(os.path.join(d, "arr2.png"), cam)
+    bx.location.z = 0.6
+    ref2z = render(os.path.join(d, "arr2z.png"), cam)
+    bx.location.z = 0.0
+    v2, v2z = [{"camera": "CamF", "reference": ref2}], [{"camera": "CamF", "reference": ref2z}]
+    cnt = {"object": "Arr", "path": "modifiers[\"Arr\"].count"}
+
+    def run_case(label, start, views, params, want, max_evals=30):
+        md.count, bx.location.z = start, 0.0
+        r = fit(objects=["Arr"], views=views, params=params, max_evals=max_evals)
+        measured[f"fit_int_{label}"] = {"best": r["best"], "score_best": r["score_best"], "evals": r["evals"], "converged": r["converged"]}
+        got = r["best"][0]["value"]
+        check(f"H3int {label}: count reaches {want}", got == want and r["score_best"] > 0.97, (r["best"], r["score_best"], r["evals"]))
+        check(f"H3int {label}: budget holds and values restored", r["evals"] <= max_evals and md.count == start and r["restored"] and abs(bx.location.z) < 1e-9, (r["evals"], md.count))
+        return r
+
+    run_case("[1,2] from 1, default step", 1, v2, [dict(cnt, min=1, max=2)], 2)
+    run_case("[2,3] from 3, default step", 3, v2, [dict(cnt, min=2, max=3)], 2)
+    run_case("[1,2] from 1, small user step 0.25", 1, v2, [dict(cnt, min=1, max=2, step=0.25)], 2)
+    run_case("[1,3] from 1, small user step 0.4 and tol", 1, v2, [dict(cnt, min=1, max=3, step=0.4, tol=0.01)], 2)
+    run_case("[1,2] from 1, step 1 still works", 1, v2, [dict(cnt, min=1, max=2, step=1)], 2)
+    # mixed float and integer: the float (z shift 0.6) and the count both have to move
+    md.count, bx.location.z = 1, 0.0
+    r = fit(objects=["Arr"], views=v2z, params=[dict(cnt, min=1, max=2), {"object": "Arr", "path": "location[2]", "min": -1.0, "max": 1.0}], max_evals=80)
+    measured["fit_int_mixed"] = {"best": r["best"], "score_best": r["score_best"], "evals": r["evals"], "converged": r["converged"]}
+    got = {p["param"]: p["value"] for p in r["best"]}
+    check("H3int mixed: count 2 and z within 0.05 of 0.6", got["Arr.modifiers[\"Arr\"].count"] == 2 and abs(got["Arr.location[2]"] - 0.6) <= 0.05 and r["score_best"] > 0.97, r["best"])
+    check("H3int mixed: budget holds and values restored", r["evals"] <= 80 and md.count == 1 and abs(bx.location.z) < 1e-9, (r["evals"], md.count))
+    # converged on an integer means both in-bounds neighbours were evaluated: start at the best, bounds [1,3]
+    md.count, bx.location.z = 2, 0.0
+    r = fit(objects=["Arr"], views=v2, params=[dict(cnt, min=1, max=3)], max_evals=30)
+    check("H3int converged at the optimum evaluated both neighbours (start + 2 + closing >= 4 evals)", r["converged"] and r["best"][0]["value"] == 2 and r["evals"] >= 4, (r["evals"], r["converged"]))
+    # a tiny budget never reports converged on an integer that was not explored
+    md.count = 1
+    r = fit(objects=["Arr"], views=v2, params=[dict(cnt, min=1, max=2)], max_evals=2)
+    check("H3int tiny budget: not converged", not r["converged"] and r["evals"] <= 2, (r["evals"], r["converged"]))
+    check("H3int count restored after all runs", md.count == 1, md.count)
+    check("H3int no images leaked", not leaked_images(), leaked_images())
+
+
 # ---------------------------------------------------------------- H4 ingest_asset
 def build_source(sc_dims=100.0):
     """A two-mesh parented hierarchy at 100x scale ("centimetres"), smooth icospheres with no UVs, so that the file
@@ -1479,7 +1529,7 @@ def run_all(out_dir):
 
     os.makedirs(out_dir, exist_ok=True)
     for label, fn, wants_measured in (("clash_audit", test_clash, False), ("silhouette_score", test_silhouette, True),
-                                      ("fit_search", test_fit, True), ("ingest_asset", test_ingest, True),
+                                      ("fit_search", test_fit, True), ("fit_search integer", test_fit_integer, True), ("ingest_asset", test_ingest, True),
                                       ("round5 clash_audit", test_round5_clash, False),
                                       ("round5 silhouette_score", test_round5_silhouette, True),
                                       ("round5 ingest_asset", test_round5_ingest, True),
