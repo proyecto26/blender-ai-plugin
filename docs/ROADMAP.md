@@ -70,6 +70,7 @@ References:
 
 Reproduced by the final review and left open. The first ones can give a wrong answer.
 
+- [ ] `flicker_check.py` dropout limits: a black frame in a very dark scene (neighbours with a mean near 0.01) is not found at the default `dropout_gap`; a dropout under 16 px is not looked for; a flat black or white object that moves more than its own width per frame is reported as a dropout; on 31 clean Eevee and Cycles renders at 640x360, 14 return `flicker` at ec6c5c3 and still do (events in the 8 px bottom strip of a fast ball and in moving-light, moving-camera and rotating-object scenes)
 - [ ] `score_run.py`: misses `Start-Process blender -ArgumentList "-b scene.blend -a"`, `& $blender` and `"$BLENDER"` launches; does not read escaped inline JSON paths; reads `p:/` in a URL as a Windows path; compares the first duration in a message, not the total
 - [ ] `scene_snapshot.py`: reads stale transforms when the scene was not updated; saves stale data for an armature in Edit Mode; "latest" can be wrong for two saves in the same second
 - [ ] `import_painter_textures.py`: wires a DirectX normal map without flipping it, and without a warning

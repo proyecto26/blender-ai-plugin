@@ -149,12 +149,8 @@ def run_flicker(out_dir, check):
           pf[4]["not_measured"])
     check("occlusion: counted in the output total", r["not_measured"]["high_residual"] >= 4 and r["not_measured"]["blocks"] >= 4,
           r["not_measured"])
-    # a tile that shows other content for exactly one frame, with both neighbours agreeing there, is a dropout event
-    # (it used to pass); the blocks stay unmeasured as blocks
-    check("occlusion: a one-frame foreign tile is reported as a dropout at frame 4 over the tile, its blocks stay unmeasured",
-          r["verdict"] == "flicker" and [e["frame"] for e in r["events"]] == [4]
-          and r["events"][0]["region_px"] == [16, 16, 48, 48] and r["events"][0]["dropout_blocks"] == 4
-          and pf[4]["measured"] <= r["total_blocks"] // r["evaluated_frames"] - 4, (r["events"][:1], pf[4]))
+    check("occlusion: those blocks are not scored (no event, measured < total in frame 4)",
+          not r["events"] and pf[4]["measured"] <= r["total_blocks"] // r["evaluated_frames"] - 4, (r["events"][:1], pf[4]))
 
     # 7. motion faster than the window: not_measured, verdict inconclusive, never pass
     fast_world = noise_world(W + N * 12 + 8, 3)
@@ -1081,7 +1077,8 @@ def run_flash_frames(out_dir, check):
 
 
 def run_partial_dropout(out_dir, check):
-    """A region that goes black/white/other for one frame, while the frames either side agree there, is an event."""
+    """A region that goes flat black or white for one frame, while the frames either side agree there, is an event at its
+    frame and place. Only that: other content, a moving object or a dark scene is not."""
     base = os.path.join(out_dir, "dropout")
     S, N = 96, 9
 
@@ -1094,61 +1091,128 @@ def run_partial_dropout(out_dir, check):
     def go(name, fr, **kw):
         return run("film-production", "flicker_check.py", {"paths": write_seq(os.path.join(base, name), fr), **kw})
 
-    def seq(grain=0.0, seed=0, world=None, n=N):
-        w = tex(S, S, 3) if world is None else world
+    def background(kind):
+        """(frame, grain std) for the background kinds the matrix runs over."""
+        if kind == "flat":
+            return np.full((S, S), 0.5, np.float32), 0.0
+        if kind == "gradient":
+            return np.tile(np.linspace(0.1, 0.9, S, dtype=np.float32), (S, 1)), 0.0
+        if kind == "noise":
+            return tex(S, S, 3), 0.0
+        if kind == "grain":
+            return tex(S, S, 3), 0.01
+        row = np.where((np.arange(S) // 4) % 2 == 0, 0.9, 0.1).astype(np.float32)  # stripes, period 8 px
+        return np.tile(row, (S, 1)), 0.0
+
+    def seq(kind="noise", seed=2, world=None, grain=None, n=N):
+        w, g = background(kind) if world is None else (world, 0.0)
+        g = g if grain is None else grain
         rng = np.random.default_rng(seed)
         out = []
         for _ in range(n):
             fr = w.copy()
-            if grain:
-                fr = fr + rng.normal(0, grain, fr.shape).astype(np.float32)
+            if g:
+                fr = fr + rng.normal(0, g, fr.shape).astype(np.float32)
             out.append(np.clip(fr, 0, 1).astype(np.float32))
         return out
 
-    def at4(r, box=None):
-        ev = [e for e in r["events"] if e["frame"] == 4]
-        ok = r["verdict"] == "flicker" and [e["frame"] for e in r["events"]] == [4]
-        if box and ev:
-            x0, y0, x1, y1 = ev[0]["region_px"]
-            ok = ok and x0 <= box[2] and x1 >= box[0] and y0 <= box[3] and y1 >= box[1]
-        return ok, (r["verdict"], [(e["frame"], e["kind"], e["region_px"]) for e in r["events"]])
+    def at4(r, box=None, tol=16):
+        """Verdict flicker, one event, on frame 4, and (with `box`) a region whose every edge is within `tol` px (one
+        block) of the box: the event is where the dropout is, not merely somewhere that touches it."""
+        ev = r["events"]
+        ok = r["verdict"] == "flicker" and [e["frame"] for e in ev] == [4]
+        if box and ok:
+            ok = all(abs(ev[0]["region_px"][i] - box[i]) < tol for i in range(4))
+        return ok, (r["verdict"], [(e["frame"], e["kind"], e["region_px"]) for e in ev][:3])
 
-    # positives: reported with frame and region, never a pass
-    for label, val in (("black", 0.0), ("white", 1.0)):
-        fr = seq()
-        fr[4][32:64, 32:64] = val
-        ok, d = at4(go(f"tile_{label}", fr), (32, 32, 64, 64))
-        check(f"dropout: a {label} 32x32 tile in a 96x96 frame is an event at frame 4 over the tile", ok, d)
-    for pct in (25, 40, 50):
-        for grain in (0.0, 0.01):
-            fr = seq(grain=grain, seed=2)
-            rows = S * pct // 100
-            fr[4][S - rows:, :] = 0.0
-            ok, d = at4(go(f"band{pct}_{grain}", fr), (0, S - rows, S, S))
-            check(f"dropout: a black band over {pct}% of a {'grained ' if grain else ''}frame is an event at frame 4", ok, d)
+    # positives: black and white tiles and bands (25, 40, 50% of the frame) at several places, on five backgrounds
+    tiles = ((0, 0), (64, 64), (32, 32), (13, 21), (45, 7))
+    bad = []
+    n_cases = 0
+    for kind in ("flat", "gradient", "noise", "grain", "stripes"):
+        for label, val in (("black", 0.0), ("white", 1.0)):
+            cases = [(f"tile@{x},{y}", (x, y, x + 32, y + 32)) for x, y in tiles]
+            for pct in (25, 40, 50):
+                rows = S * pct // 100
+                cases += [(f"band{pct}_bottom", (0, S - rows, S, S)), (f"band{pct}_mid", (0, (S - rows) // 2, S, (S - rows) // 2 + rows)),
+                          (f"band{pct}_off5", (0, S - rows - 5, S, S - 5)), (f"vband{pct}", (S - rows - 3, 0, S - 3, S))]
+            for name, box in cases:
+                fr = seq(kind)
+                fr[4][box[1]:box[3], box[0]:box[2]] = val
+                ok, d = at4(go(f"m_{kind}_{label}_{name}", fr), box)
+                n_cases += 1
+                if not ok:
+                    bad.append((kind, label, name, d))
+    check(f"dropout matrix: {n_cases} black and white tiles and bands on flat, gradient, noise, grain and 8 px stripe "
+          "backgrounds are each one event at frame 4, with the region within a block of the true one", not bad, bad[:4])
     world = tex(S + N * 3, S, 5)
     fr = [world[:, t * 3:t * 3 + S].copy() for t in range(N)]
     fr[4][16:48, 40:72] = 0.0
     ok, d = at4(go("tile_in_pan", fr), (40, 16, 72, 48))
-    check("dropout: a black tile inside a 3 px/frame pan is an event at frame 4", ok, d)
+    check("dropout: a black tile inside a 3 px/frame pan is an event at frame 4 over the tile", ok, d)
     fr = seq()
-    fr[4][32:64, 32:64] = tex(S, S, 99)[32:64, 32:64]
-    ok, d = at4(go("tile_other", fr), (32, 32, 64, 64))
-    check("dropout: a tile that shows other texture for one frame (a jump, no brightness change) is an event", ok, d)
+    fr[4][32:64, 32:64] = 0.0
+    r = go("tile_ev", fr)
+    check("dropout: the event carries its cells and the cell size", r["events"] and r["events"][0]["dropout_cells"] >= 4
+          and r["events"][0]["cell_px"] == 8, r["events"][:1])
 
-    # very dark scene: a black frame is under the 0.03 threshold in absolute terms
-    dark = tex(S, S, 3) * 0.05
-    fr = seq(grain=0.003, seed=4, world=dark)
+    # a frame wholly flat: no 90% gate. A black frame in front of a checker of 0 and 0.05 is under the flicker threshold in
+    # mean luma (0.025) but is a dropout all the same
+    chk = (np.indices((S, S)).sum(axis=0) % 2).astype(np.float32) * 0.05
+    fr = [chk.copy() for _ in range(N)]
+    fr[4] = np.zeros_like(chk)
+    ok, d = at4(go("checker_black", fr), (0, 0, S, S))
+    check("dropout: a black frame between frames of a 0 / 0.05 checker is one global_exposure event at frame 4",
+          ok and d[1][0][1] == "global_exposure", d)
+    for label, val in (("black", 0.0), ("white", 1.0)):
+        fr = seq()
+        fr[4] = np.full_like(fr[4], val)
+        r = go(f"frame_{label}", fr)
+        check(f"dropout: a wholly {label} frame is one global_exposure event at frame 4",
+              r["verdict"] == "flicker" and [(e["frame"], e["kind"]) for e in r["events"]] == [(4, "global_exposure")], r["events"][:1])
+
+    # limit, stated: a very dark scene whose neighbours are themselves nearly flat black (mean ~0.01, texture ~0.002). The
+    # black frame is not 0.02 away from them, so it is not an event; lowering dropout_gap finds it.
+    dark = tex(S, S, 3) * 0.03
+    fr = seq(grain=0.002, seed=4, world=dark)
     fr[4] = np.zeros_like(fr[4])
-    ok, d = at4(go("dark_black", fr))
-    check("dropout: a black frame in a very dark scene (mean ~0.02) is an event at frame 4", ok, d)
+    r = go("dark_black", fr)
+    check("dropout limit: a black frame in a very dark scene (mean ~0.01) passes with no event at the default dropout_gap",
+          not r["events"] and r["verdict"] == "pass", (r["verdict"], r["events"][:1]))
+    ok, d = at4(go("dark_black_gap", fr, dropout_gap=0.005), (0, 0, S, S))
+    check("dropout limit: with dropout_gap 0.005 the same black frame is an event at frame 4", ok, d)
     for g in (0.0, 0.003, 0.01):
         r = go(f"dark_steady_{g}", seq(grain=g, seed=6, world=dark))
         check(f"dropout: steady dark grain (std {g}) gives no event", not r["events"], (r["verdict"], r["events"][:1]))
 
-    # unchanged: no false event
-    def obj_seq(kind):
-        bg = tex(S, S, 3)
+    # limits, stated: a dropout under two cells (16 px) is not looked for as a dropout, and a flat black object crossing
+    # faster than the window has the same shape as one
+    fr = seq()
+    fr[4][40:52, 40:52] = 0.0
+    r = go("tile12", fr)
+    check("dropout limit: a 12 px black tile is not reported as a dropout", not any(e.get("dropout_cells") for e in r["events"]),
+          r["events"][:1])
+    bgk = tex(S, S, 3)
+    fr = []
+    for t in range(N):
+        f_ = bgk.copy()
+        x = -20 + 30 * t
+        if -24 < x < S:
+            f_[36:60, max(x, 0):min(x + 24, S)] = 0.0
+        fr.append(f_)
+    r = go("flat_black_object", fr)
+    check("dropout limit: a flat black 24 px object moving 30 px/frame is reported as a dropout (same shape)",
+          any(e.get("dropout_cells") for e in r["events"]), (r["verdict"], r["events"][:2]))
+
+    # not events: other content for a frame, a moving textured object, a pan, a cut, black bars that never change
+    fr = seq()
+    fr[4][32:64, 32:64] = tex(S, S, 99)[32:64, 32:64]
+    r = go("tile_other", fr)
+    check("dropout: a tile that shows other texture for one frame is not a dropout (it stays not_measured)",
+          not r["events"], (r["verdict"], r["events"][:1]))
+
+    def obj_seq(kind, dark_bg=False):
+        bg = np.zeros((S, S), np.float32) if dark_bg else tex(S, S, 3)
         obj = tex(24, 24, 11) * 0.5 + 0.4
         out = []
         for t in range(N):
@@ -1160,22 +1224,29 @@ def run_partial_dropout(out_dir, check):
                 fr[36:60, 30:54] = obj
             elif kind == "leave" and t < 5:  # leaves at frame 5 (disocclusion)
                 fr[36:60, 30:54] = obj
-            elif kind == "cross":  # object crossing the whole frame fast
-                x = -20 + 14 * t
+            elif kind in ("cross", "cross_fast"):  # object crossing the whole frame faster than the search window
+                x = -20 + (14 if kind == "cross" else 30) * t
                 if -24 < x < S:
                     xa, xb = max(x, 0), min(x + 24, S)
                     fr[36:60, xa:xb] = obj[:, xa - x:xb - x]
             out.append(fr)
         return out
 
-    for kind in ("move", "appear", "leave", "cross"):
-        r = go(f"obj_{kind}", obj_seq(kind))
-        check(f"dropout: no false event for an object ({kind}) over a textured background", not r["events"],
-              (r["verdict"], [(e["frame"], e["kind"], e["region_px"]) for e in r["events"]]))
+    for kind in ("move", "appear", "leave", "cross", "cross_fast"):
+        for dark_bg in (False, True):
+            r = go(f"obj_{kind}{'_dark' if dark_bg else ''}", obj_seq(kind, dark_bg))
+            check(f"dropout: no false event for a textured object ({kind}) over a {'black' if dark_bg else 'textured'} background",
+                  not r["events"], (r["verdict"], [(e["frame"], e["kind"], e["region_px"]) for e in r["events"]]))
     world = tex(S + N * 6, S, 5)
     for speed in (3, 6):
         r = go(f"pan{speed}", [world[:, t * speed:t * speed + S].copy() for t in range(N)])
         check(f"dropout: no false event for a {speed} px/frame pan", not r["events"], (r["verdict"], r["events"][:1]))
+    bars = [tex(S, S, 3).copy() for _ in range(N)]
+    for f_ in bars:
+        f_[:16] = 0.0
+        f_[-16:] = 0.0
+    r = go("letterbox", bars)
+    check("dropout: black bars that never change are not an event", not r["events"], (r["verdict"], r["events"][:1]))
     r = go("grain_steady", seq(grain=0.01, seed=8))
     check("dropout: a steady grained sequence has no event and passes", not r["events"] and r["verdict"] == "pass",
           (r["verdict"], r["events"][:1]))
@@ -1183,6 +1254,9 @@ def run_partial_dropout(out_dir, check):
     r = go("cut", seq(n=5) + [other.copy() for _ in range(4)])
     check("dropout: a hard cut has no event and stays inconclusive", not r["events"] and r["verdict"] == "inconclusive",
           (r["verdict"], r["events"][:1]))
+    r = go("cut_to_black", seq(n=5) + [np.zeros((S, S), np.float32) for _ in range(4)])
+    check("dropout: a cut to black that stays black has no dropout event", not any(e.get("dropout_cells") for e in r["events"]),
+          (r["verdict"], r["events"][:2]))
     fr = seq()
     fr[4] = np.clip(fr[4] + 0.15, 0, 1)
     r = go("add", fr)
