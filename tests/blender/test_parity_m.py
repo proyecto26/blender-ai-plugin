@@ -300,6 +300,120 @@ def run_snapshot(out_dir, check):
     check("bad action refused", raises(action="explode") is not None)
 
 
+def run_surface(out_dir, check):
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+
+    def surf(**kw):
+        return run("procedural-modeling", "surface_tools.py", kw)
+
+    def raises(**kw):
+        try:
+            surf(**kw)
+        except ValueError as exc:
+            return str(exc)
+        return None
+
+    def mesh_xyz(name):
+        o = bpy.data.objects[name]
+        co = np.empty(len(o.data.vertices) * 3)
+        o.data.vertices.foreach_get("co", co)
+        return co.reshape(-1, 3)
+
+    # loft through three rings of different point counts
+    def ring(n, r, z):
+        return [[r * np.cos(2 * np.pi * k / n), r * np.sin(2 * np.pi * k / n), z] for k in range(n)]
+    secs = [ring(12, 1.0, 0.0), ring(20, 0.6, 1.0), ring(16, 0.8, 2.0)]
+    r = surf(action="loft", sections=secs, count=16, closed=True, name="L")
+    xyz = mesh_xyz(r["object"])
+    check("loft: 3 sections x 16 points, closed faces wrap", (r["vertices"], r["faces"], r["rows"]) == (48, 32, 3), r)
+    check("loft: rows sit on the section heights and radii",
+          sorted(set(np.round(xyz[:, 2], 6))) == [0.0, 1.0, 2.0]
+          and abs(np.hypot(xyz[16:32, 0], xyz[16:32, 1]).max() - 0.6) < 1e-6, sorted(set(np.round(xyz[:, 2], 6))))
+    polys = [set(p.vertices) for p in bpy.data.objects[r["object"]].data.polygons]
+    check("loft: closed ring has a face joining the last and first point, all faces are quads",
+          any({15, 0} <= p for p in polys) and all(len(p) == 4 for p in polys))
+    ro = surf(action="loft", sections=secs, count=16, closed=False, name="Lopen")
+    check("loft: open sections give 15 quads per span and no wrap face", ro["faces"] == 30 and not any(
+        {15, 0} <= set(p.vertices) for p in bpy.data.objects[ro["object"]].data.polygons), ro)
+    r2 = surf(action="loft", sections=secs, count=16, closed=True, subdiv=1, name="L2")
+    z2 = mesh_xyz(r2["object"])[:, 2]
+    check("loft: subdiv adds rows but still passes through each section", r2["rows"] == 5
+          and all(any(abs(z - h) < 1e-9 for z in z2) for h in (0.0, 1.0, 2.0)), r2)
+    check("loft: one section refused", raises(action="loft", sections=[secs[0]]) is not None)
+
+    # Coons patch with straight boundaries reproduces the bilinear surface z = x*y exactly
+    xs = np.linspace(0, 1, 21)
+    bt = [[x, 0, 0] for x in xs]
+    tp = [[x, 1, x] for x in xs]
+    lf = [[0, y, 0] for y in xs]
+    rt = [[1, y, y] for y in xs]
+    r = surf(action="patch", bottom=bt, top=tp, left=lf, right=rt, nu=11, nv=9, name="P")
+    xyz = mesh_xyz(r["object"])
+    err = float(np.abs(xyz[:, 2] - xyz[:, 0] * xyz[:, 1]).max())
+    check("patch: interior matches z = x*y", err < 1e-6 and (r["rows"], r["cols"]) == (9, 11), err)
+    # curved boundaries: the bottom row follows the parabola (points are spaced by arc length, so test the curve, not x)
+    pb_ = [[x, 0, x * x] for x in xs]
+    r = surf(action="patch", bottom=pb_, top=[[x, 1, x * x + 1] for x in xs], left=[[0, y, y * y] for y in xs],
+             right=[[1, y, 1 + y * y] for y in xs], nu=11, nv=9, name="P2")
+    xyz = mesh_xyz(r["object"])
+    check("patch: curved bottom boundary lies on the input curve", abs(xyz[:11, 2] - xyz[:11, 0] ** 2).max() < 2e-3,
+          abs(xyz[:11, 2] - xyz[:11, 0] ** 2).max())
+    bad_top = [[x + 0.3, 1, x * x + 1] for x in xs]
+    msg = raises(action="patch", bottom=bt, top=bad_top, left=lf, right=rt)
+    check("patch: mismatched corners refused, naming them", msg and "corners" in msg and "top[0] vs left[-1]" in msg, msg)
+
+    # continuity across x = 0 with grids: rows step in x (0.1), columns along y
+    ys = np.linspace(0, 1, 11)
+
+    def grid(f, x0, x1, ycols=ys, n=6):
+        return [[[x, y, f(x)] for y in ycols] for x in np.linspace(x0, x1, n)]
+
+    def cont(fa, fb, **kw):
+        return surf(action="continuity", a_grid=grid(fa, -0.5, 0.0), b_grid=grid(fb, 0.0, 0.5), **kw)
+
+    flat = cont(lambda x: 0.0, lambda x: 0.0)
+    check("continuity: coplanar surfaces are G2", flat["level"] == "G2", flat)
+    crease = cont(lambda x: 0.0, lambda x: x)
+    check("continuity: creased join passes G0 and FAILS G1 (45 degrees)",
+          crease["g0"]["ok"] and not crease["g1"]["ok"] and crease["level"] == "G0"
+          and abs(crease["g1"]["max_angle_deg"] - 45.0) < 0.5, crease)
+    jump = cont(lambda x: 0.0, lambda x: x * x)
+    check("continuity: tangent join with a curvature jump passes G1 and FAILS G2",
+          jump["g1"]["ok"] and not jump["g2"]["ok"] and jump["level"] == "G1" and jump["g2"]["max_curvature_jump"] > 1.5, jump)
+    smooth = cont(lambda x: x * x, lambda x: x * x)
+    check("continuity: one smooth parabola across the seam is G2", smooth["level"] == "G2", smooth)
+    rev = surf(action="continuity", a_grid=grid(lambda x: 0.0, -0.5, 0.0),
+               b_grid=grid(lambda x: 0.0, 0.0, 0.5, ycols=ys[::-1]))
+    check("continuity: a boundary traversed the other way is matched and reported", rev["b_reversed"] and rev["level"] == "G2", rev)
+    check("continuity: boundary shifted along the seam refused",
+          "do not coincide" in (raises(action="continuity", a_grid=grid(lambda x: 0.0, -0.5, 0.0),
+                                       b_grid=grid(lambda x: 0.0, 0.0, 0.5, ycols=ys + 0.5)) or ""))
+    check("continuity: different point counts refused",
+          "point counts" in (raises(action="continuity", a_grid=grid(lambda x: 0.0, -0.5, 0.0),
+                                    b_grid=grid(lambda x: 0.0, 0.0, 0.5, ycols=ys[:9])) or ""))
+    check("continuity: a seam that does not touch is refused",
+          raises(action="continuity", a_grid=grid(lambda x: 0.0, -0.5, -0.1), b_grid=grid(lambda x: 0.0, 0.0, 0.5)) is not None)
+
+    # continuity on mesh objects made by patch (columns run across the seam, so the seam is a column)
+    def plane(x0, x1, name, z1=0.0):
+        e = np.linspace(x0, x1, 11)
+        zs = [z1 * (x - x0) / (x1 - x0) for x in e]
+        return surf(action="patch", name=name, nu=11, nv=9,
+                    bottom=[[x, 0, z] for x, z in zip(e, zs)], top=[[x, 1, z] for x, z in zip(e, zs)],
+                    left=[[x0, y, 0] for y in np.linspace(0, 1, 9)], right=[[x1, y, z1] for y in np.linspace(0, 1, 9)])
+    pa, pb = plane(-1, 0, "PA"), plane(0, 1, "PB")
+    o = surf(action="continuity", a=pa["object"], a_shape=[9, 11], edge_a="last_col",
+             b=pb["object"], b_shape=[9, 11], edge_b="first_col")
+    check("continuity on objects: two coplanar patches are G2", o["level"] == "G2", o)
+    pc = plane(0, 1, "PC", z1=1.0)
+    o = surf(action="continuity", a=pa["object"], a_shape=[9, 11], edge_a="last_col",
+             b=pc["object"], b_shape=[9, 11], edge_b="first_col")
+    check("continuity on objects: a patch that rises 45 degrees fails G1", o["level"] == "G0" and not o["g1"]["ok"], o)
+    check("continuity: wrong shape refused",
+          raises(action="continuity", a=pa["object"], a_shape=[9, 10], b=pb["object"], b_shape=[9, 11]) is not None)
+    check("surface_tools: bad action refused", raises(action="explode") is not None)
+
+
 def run_all(out_dir):
     results = []
 
@@ -307,7 +421,8 @@ def run_all(out_dir):
         results.append({"name": name, "ok": bool(ok), "detail": str(detail)[:300]})
 
     os.makedirs(out_dir, exist_ok=True)
-    for label, fn in (("flicker_check", run_flicker), ("scene_snapshot", run_snapshot)):
+    for label, fn in (("flicker_check", run_flicker), ("scene_snapshot", run_snapshot),
+                      ("surface_tools", run_surface)):
         try:
             fn(out_dir, check)
         except Exception:
