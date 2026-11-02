@@ -289,7 +289,10 @@ def main(objects=None, snap=0.02, resolution=(320, 240), flat=False, fog=True, t
             obj = bpy.data.objects.get(name)
             if obj and obj.type == "MESH" and not any(s.material for s in obj.material_slots):
                 textured.append(_ps1_material(obj, i))
-    tree = _tree(scene) if (fog or dither) else None
+    existing = scene.compositing_node_group
+    # With both stages off, still clear this script's own nodes from an earlier run (never create a tree for that).
+    has_ours = existing is not None and any(n.name.startswith("SK_PS1_") for n in existing.nodes)
+    tree = _tree(scene) if (fog or dither or has_ours) else None
     fog_node = None
     if fog:
         colour = tuple(fog) if isinstance(fog, (list, tuple)) else (0.18, 0.2, 0.24)

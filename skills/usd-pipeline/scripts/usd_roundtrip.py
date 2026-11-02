@@ -49,10 +49,6 @@ def _cli_args():
                          "cmd/PowerShell mangle JSON quotes, so pass --args-file <path.json> instead") from exc
 
 
-def _key(name):
-    return re.sub(r"[^A-Za-z0-9_]", "_", SUFFIX_RE.sub("", name))
-
-
 def _clean_key(name):
     """USD cleans '.001' to '_001' on export; undo that for names that were suffixed in Blender."""
     return re.sub(r"[^A-Za-z0-9_]", "_", name)
@@ -83,8 +79,11 @@ def _render_levels(objs):
         bpy.context.view_layer.update()
 
 
-def _describe(obj, depsgraph):
-    mats = sorted({_key(s.material.name) for s in obj.material_slots if s.material})
+def _describe(obj, depsgraph, imported=False):
+    """`imported`: the object came from the USD import, which may add its own .001 to a name that already existed.
+    Names of the originals are kept whole (Material.001 is a real name; USD writes it as Material_001)."""
+    mats = sorted({_clean_key(SUFFIX_RE.sub("", s.material.name) if imported else s.material.name)
+                   for s in obj.material_slots if s.material})
     verts = faces = None
     if obj.type == "MESH":
         ev = obj.evaluated_get(depsgraph)
@@ -158,7 +157,7 @@ def main(out_path, objects=None, tol=1e-4, keep=False, subdivision="TESSELLATE")
         k = (o.type, _clean_key(SUFFIX_RE.sub("", o.name)))
         if k in after:
             duplicates.append(o.name)
-        after[k] = _describe(o, dg)
+        after[k] = _describe(o, dg, imported=True)
 
     problems = []
     count_before = {}
