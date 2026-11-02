@@ -274,7 +274,9 @@ def related_text(call, run):
     parts = [command]
     for ref in re.findall(r"--args-file[\"']?[\s,]+[\"']?([^\s\"',]+)", command):
         base = os.path.basename(norm_path(ref))
-        parts += [str(c["input"]) for c in run["calls"] if c is not call and c["seq"] < call["seq"] and base in norm_path(str(c["input"]))]
+        # Only the latest earlier call that names the file: what it held when this job launched, not its history.
+        earlier = [c for c in run["calls"] if c is not call and c["seq"] < call["seq"] and base in norm_path(str(c["input"]))]
+        parts += [str(c["input"]) for c in earlier[-1:]]
     return "\n".join(parts)
 
 
@@ -324,7 +326,8 @@ def score_announcements(run, args=None):
         dirs = out_dirs(c, run)
         def has_path(text):
             flat = norm_path(text)
-            return any(d in flat for d in dirs) if dirs else bool(re.search(r"render_status", text) and re.search(r"[\\/]", text))
+            # The folder as a whole path: "c:/run/outdated" is not "c:/run/out", "/x/run/out" is not "/run/out".
+            return any(re.search(r"(?<![\w./\-])" + re.escape(d) + r"(?![\w.\-])", flat) for d in dirs) if dirs else bool(re.search(r"render_status", text) and re.search(r"[\\/]", text))
         full = [x for x in before if has_path(x["text"]) and seconds_in(x["text"])]
         if not full:
             missing = []

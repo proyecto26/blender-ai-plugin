@@ -147,6 +147,15 @@ def launch_run(say, tool_name="PowerShell", command=PS_LAUNCH, args_call=ARGS_FI
     return replay(rows)
 
 
+def rewritten_plan_run():
+    """The args file first holds plan:true, then is rewritten without it; the real job launches silently."""
+    rows = [(T0, assistant(PLAN_FILE)), (T0 + 1, done("w")),
+            (T0 + 2, assistant(tool("w2", "Write", file_path="C:\\run\\args.json", content=json.dumps({"out_dir": "C:\\run\\out"})))),
+            (T0 + 3, done("w2")),
+            (T0 + 4, assistant(tool("j", "PowerShell", command=PS_LAUNCH))), (T0 + 5, done("j"))]
+    return replay(rows)
+
+
 def announce(run, status=None, tmp=None):
     args = argparse.Namespace(status=None)
     if status is not None:
@@ -167,6 +176,9 @@ def announcement_cases(tmp):
         # A message that is not the real thing is not enough.
         ("generic path, not the real out_dir", announce(launch_run("Rendering in the background, about 12 s, see render_status.json")), "FLAG"),
         ("another folder's path", announce(launch_run("About 12 s. Progress: C:/other/out/render_status.json")), "FLAG"),
+        ("prefix-sharing folder is not the real one", announce(launch_run("About 12 s. Progress: C:/run/outdated/render_status.json")), "FLAG"),
+        ("nested folder is not the real one", announce(launch_run("About 12 s. Progress: C:/run/out/sub/render_status.json")), "OK"),
+        ("plan args rewritten without plan, then a silent real job", announce(rewritten_plan_run()), "FLAG"),
         ("no duration", announce(launch_run("Rendering. Progress: C:/run/out/render_status.json")), "FLAG"),
         # Valid ones.
         ("PowerShell launch announced with path and duration", announce(launch_run(GOOD_SAY)), "OK"),

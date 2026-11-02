@@ -40,7 +40,8 @@ end; a process that can write files can still forge one, so it is no proof again
 Rules: a PASS for a stage is refused while an earlier stage's latest verdict is FAIL; a PASS for `export`
 or `verify` also needs the latest `validate` verdict to be PASS or N/A (NOT_CHECKED / missing is refused). Any PASS needs
 a non-empty `result_summary`. These guards check that evidence is present and linked, not that it is true or that a
-capture looks right. Nothing is ever deleted. Result: events count, `gates` (latest verdict per stage), `blocked_by`, `stop`, `complete`
+capture looks right. Nothing is ever deleted: a PASS refused for its evidence at a stage that was already PASS records a
+NOT_CHECKED event (`rejected: true`) before the error is raised, so the gate reads NOT_CHECKED again. Result: events count, `gates` (latest verdict per stage), `blocked_by`, `stop`, `complete`
 (every stage PASS or N/A).
 """
 import datetime
@@ -222,7 +223,18 @@ def main(out_dir, brief=None, stage=None, skill=None, script=None, args=None, re
             files.append({"path": rel, "sha256": _sha256(full), "bytes": os.path.getsize(full)})
         evidence_info = None
         if verdict == "PASS" and stage in PRODUCERS:
-            evidence_info = _read_evidence(out_dir, stage, script, evidence, manifest["events"], warn, reason)
+            try:
+                evidence_info = _read_evidence(out_dir, stage, script, evidence, manifest["events"], warn, reason)
+            except ValueError as exc:
+                # Nothing is deleted, so a gate that already PASSed stays PASS unless the refusal is itself recorded.
+                if _gates(manifest["events"])[stage] in ("PASS", "N/A"):
+                    manifest["events"].append({
+                        "stage": stage, "skill": skill, "script": script, "args": args or {}, "result_summary": {},
+                        "verdict": "NOT_CHECKED", "reason": f"PASS refused, evidence rejected: {exc}",
+                        "capture": None, "rejected": True, "time": _now()})
+                    with open(path, "w", encoding="utf-8") as fh:
+                        json.dump(manifest, fh, indent=2)
+                raise
         if verdict == "PASS":
             if stage in CAPTURE_STAGES and not capture:
                 raise ValueError(f"stage '{stage}' cannot PASS without a capture file; record NOT_CHECKED if none exists")

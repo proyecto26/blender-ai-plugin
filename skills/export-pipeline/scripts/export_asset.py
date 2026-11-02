@@ -143,6 +143,8 @@ def _write_evidence(path, verdict, summary):
 
 
 def main(out_path, objects=None, engine="generic", animation=False, evidence_path=None):
+    if evidence_path and os.path.normcase(os.path.realpath(evidence_path)) == os.path.normcase(os.path.realpath(out_path)):
+        raise ValueError("evidence_path must not be the same file as out_path: the result file would replace the export")
     targets = _targets(objects)
     ext = os.path.splitext(out_path)[1].lower()
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)

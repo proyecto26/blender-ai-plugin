@@ -787,7 +787,27 @@ def _manifest_evidence_binding():
     with open(os.path.join(d, "run_manifest.json"), encoding="utf-8") as fh:
         events = json.load(fh)["events"]
     out["recorded"] = [(e["stage"], e["evidence"]["script"], len(e["evidence"]["sha256"])) for e in events if "evidence" in e]
+    # 8. a PASS refused for its evidence must not leave an earlier PASS standing: the gate reads NOT_CHECKED again
+    out["export_before_reject"] = gates()["export"]
+    out["rejected_after_pass"] = _expect_error(lambda: rm(
+        stage="export", script="export_asset.py", verdict="PASS", evidence=forged("late_fail.json", "export_asset.py", verdict="FAIL"), **summary))
+    out["export_after_reject"] = gates()["export"]
+    with open(os.path.join(d, "run_manifest.json"), encoding="utf-8") as fh:
+        last = json.load(fh)["events"][-1]
+    out["reject_event"] = (last["stage"], last["verdict"], last.get("rejected"), "reports FAIL" in (last.get("reason") or ""))
     return out
+
+
+def _export_evidence_collision():
+    """evidence_path equal to out_path is refused before anything is written."""
+    d = os.path.join(OUT, "export_collision")
+    os.makedirs(d, exist_ok=True)
+    target = os.path.join(d, "collide.glb")
+    err = {}
+    for label, ev in (("same", target), ("dotdot", os.path.join(d, "sub", "..", "collide.glb"))):
+        err[label] = _expect_error(lambda: run("export-pipeline", "export_asset.py", {
+            "objects": ["SM_Crate_01"], "engine": "web", "out_path": target, "evidence_path": ev}))
+    return {"errors": err, "written": os.path.exists(target)}
 
 
 def _manifest_validate_gate():
@@ -1119,7 +1139,11 @@ def build_cases(out_dir):
          and "stale" in (r["stale"] or "") and r["stale_gate"] == "NOT_CHECKED"
          and r["fresh"] == "PASS" and r["clash_allowed"] == "PASS" and "must come from" in (r["clash_for_export"] or "")
          and r["export"] == "PASS"
-         and r["recorded"] == [("validate", "validate_asset.py", 64), ("validate", "clash_audit.py", 64), ("export", "export_asset.py", 64)]),
+         and r["recorded"] == [("validate", "validate_asset.py", 64), ("validate", "clash_audit.py", 64), ("export", "export_asset.py", 64)]
+         and r["export_before_reject"] == "PASS" and "reports FAIL" in (r["rejected_after_pass"] or "")
+         and r["export_after_reject"] == "NOT_CHECKED" and r["reject_event"] == ("export", "NOT_CHECKED", True, True)),
+        ("export-pipeline.evidence_path_is_not_out_path", lambda: _export_evidence_collision(),
+         lambda r: all("same file" in (v or "") for v in r["errors"].values()) and not r["written"]),
         ("director.run_manifest", lambda: _manifest_case(),
          lambda r: r["events"] == 2 and r["r2_events"] == 2 and r["hash"] == r["expect_hash"]
          and r["ev_hash"] == r["ev_expect"] and r["ev_script"] == "export_asset.py"
