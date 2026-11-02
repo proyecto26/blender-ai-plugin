@@ -23,9 +23,16 @@ ARGS:
     min_measured        (float) below this share of measured blocks, over the sequence or in any one evaluated frame,
                         the verdict is "inconclusive", never "pass" (default 0.5)
 
-Known limit: a partial dropout can pass. A black or white region covering up to about half of a textured frame counts as
-blocks with no match, not as flicker, so this check does not replace looking at the frames. A black frame in a very dark
-scene (mean under flicker_threshold) passes too.
+Dropouts: a block of frame t that the match rejects (a region gone black or white, or showing other content for one frame)
+is also checked against the frames either side. When t-1 and t+1 still match each other at that place (searched over twice
+`max_motion_px`, since two frames apart a pan moves twice as far) and t differs from both, the block is a dropout and counts
+in the event (`dropout_blocks`) with its frame and region. Objects moving over a background, disocclusion and cuts do not have
+that shape (t-1 and t+1 do not match each other there). In a very dark scene a block also flags at 40% of its neighbours'
+level (at least 0.005), not only at `flicker_threshold`, while the neighbours agree with each other.
+Limits: a dropout in a pan faster than `max_motion_px` per frame is not found as one; a dropout where the neighbours do not
+agree with each other (moving content, several bad frames in a row) is never confirmed, only left to `unmeasured_frames`;
+dropouts are only looked for when at most 90% of the blocks of the frame are rejected (a wholly different frame is judged by
+its mean luma, below).
 
 Method: each block of frame t is matched in t-1 and in t+1 inside the search window by minimising the residual
 after subtracting each block's own mean (so a brightness change does not stop the match). The second difference
@@ -185,6 +192,7 @@ def main(paths=None, dir=None, block=16, max_motion_px=8, flicker_threshold=0.03
                      "not_measured": {"high_residual": 0, "ambiguous": 0}, "max_abs_dev": None}
                  for t in range(1, len(frames) - 1)}
     flagged_by_t = {t: [] for t in per_frame}  # (x0, y0, x1, y1, dev) of blocks over the threshold
+    drops_by_t = {t: [] for t in per_frame}  # the same for dropout blocks (rejected by the match, neighbours agree)
     dev_at = {t: {} for t in per_frame}  # (x0, y0) of a block -> its signed deviation in frame t (measured blocks only)
     foot_at = {t: {} for t in per_frame}  # (x0, y0, neighbour frame) -> (x, y, w, h) of the matched footprint there
     totals = {"high_residual": 0, "ambiguous": 0}
@@ -216,9 +224,39 @@ def main(paths=None, dir=None, block=16, max_motion_px=8, flicker_threshold=0.03
                 for u, oy_, ox_ in ((t - 1, pyo, pxo), (t + 1, nyo, nxo)):
                     foot_at[t][(rx + int(x) * bw, ry + int(y) * bh, u)] = (
                         rx + int(x) * bw + int(ox_[y, x]), ry + int(y) * bh + int(oy_[y, x]), bw, bh)
-            ys, xs = np.nonzero(np.abs(dev) > thr)  # NaN compares False
+            # in a very dark scene the absolute threshold is out of reach: a block also flags when it jumps by more than
+            # 40% of its neighbours' level (at least 0.005) while the neighbours agree with each other
+            nb = 0.5 * (mp + mn)
+            eff = np.minimum(thr, np.maximum(0.005, 0.4 * nb))
+            agree = np.abs(mp - mn) < 0.25 * np.abs(dev)
+            ys, xs = np.nonzero((np.abs(dev) > thr) | ((np.abs(dev) > eff) & agree))  # NaN compares False
             flagged_by_t[t] += [(rx + int(x) * bw, ry + int(y) * bh, rx + int(x) * bw + bw, ry + int(y) * bh + bh,
                                  float(dev[y, x])) for y, x in zip(ys, xs)]
+            # blocks of frame t the match rejected: a dropout when t-1 and t+1 still match each other there and t differs
+            # from both (the search window is doubled: across two frames a pan moves twice as far)
+            rej = code != 0
+            if rej.any() and rej.mean() <= 0.9:
+                _mx, cpn, oyn, oxn = _match(frames[t - 1], frames[t + 1], ry, rx, ny, nx, bh, bw, 2 * R,
+                                            ambiguity_margin, reject_ratio, -1.0)
+                for y, x in zip(*np.nonzero(rej & (cpn == 0))):
+                    by, bx = ry + int(y) * bh, rx + int(x) * bw
+                    oy_, ox_ = int(oyn[y, x]), int(oxn[y, x])
+                    my, mx = by + int(np.rint(oy_ / 2)), bx + int(np.rint(ox_ / 2))  # where the block is in frame t
+                    if not (0 <= my <= H - bh and 0 <= mx <= W - bw):
+                        continue
+                    Pb = frames[t - 1][by:by + bh, bx:bx + bw]
+                    Nb = frames[t + 1][by + oy_:by + oy_ + bh, bx + ox_:bx + ox_ + bw]
+                    Tb = frames[t][my:my + bh, mx:mx + bw]
+                    pm_, nm_, tm_ = float(Pb.mean()), float(Nb.mean()), float(Tb.mean())
+                    rp = float(np.abs((Tb - tm_) - (Pb - pm_)).mean())
+                    rn = float(np.abs((Tb - tm_) - (Nb - nm_)).mean())
+                    unlike = (rp > max(0.01, reject_ratio * float(np.abs(Pb - pm_).mean()))
+                              and rn > max(0.01, reject_ratio * float(np.abs(Nb - nm_).mean())))
+                    nb_ = 0.5 * (pm_ + nm_)
+                    e_ = min(thr, max(0.005, 0.4 * nb_))
+                    shifted = abs(tm_ - pm_) > e_ and abs(tm_ - nm_) > e_ and (tm_ - pm_) * (tm_ - nm_) > 0
+                    if unlike or shifted:
+                        drops_by_t[t].append((mx, my, mx + bw, my + bh, tm_ - nb_))
 
     events = []
     for t, flagged in flagged_by_t.items():
@@ -235,15 +273,17 @@ def main(paths=None, dir=None, block=16, max_motion_px=8, flicker_threshold=0.03
             return False
 
         flagged = [f for f in flagged if not echo(f)]
+        drops = drops_by_t[t]
+        flagged = flagged + drops
         if not flagged:
             continue
-        meas = per_frame[t]["measured"]
+        meas = per_frame[t]["measured"] + len(drops)
         kind = "global_exposure" if len(flagged) >= global_fraction * meas else "local"
         events.append({"frame": t, "file": os.path.basename(files[t]), "kind": kind,
                        "mean_deviation": round(float(np.mean([f[4] for f in flagged])), 5),
                        "region_px": [min(f[0] for f in flagged), min(f[1] for f in flagged),
                                      max(f[2] for f in flagged), max(f[3] for f in flagged)],
-                       "blocks_flagged": len(flagged), "blocks_measured": meas,
+                       "blocks_flagged": len(flagged), "blocks_measured": meas, "dropout_blocks": len(drops),
                        "blocks": [[f[0], f[1], round(f[4], 5)] for f in flagged[:32]]})
     # Frames the block method could not judge. A frame that is pure black or white (or otherwise unlike its neighbours
     # everywhere) has no measured block in itself or in the frames beside it, and the aggregate share can still look fine
