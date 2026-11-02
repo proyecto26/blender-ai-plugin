@@ -42,6 +42,9 @@ Iteration 12: example parity and the open roadmap. Plan: `docs/plans/iteration-1
 - `hdrp-material-mapping.md`: Blender's `save()` of a float image divides RGB by alpha; the reference now gives routes checked
   by decoding the file bytes. The only correct route through Blender's writer is 8 bit; the 16-bit route writes the PNG itself
 - `scene_snapshot.py`: a repeated name in `restore` no longer crashes Blender
+- `fit_search.py`: an integer property steps by at least 1, and `converged` means its neighbours were really tried
+- `flicker_check.py` reports a one-frame partial dropout or a foreign tile, and a black frame in a very dark scene
+- The Blender suites now exit non-zero when a check fails
 
 Known open issues from the final review are listed in `docs/ROADMAP.md`.
 - `validate_asset.py` and `clash_audit.py` refuse a mesh in Edit Mode rather than judge stale data; `export_asset.py` exports the current edit

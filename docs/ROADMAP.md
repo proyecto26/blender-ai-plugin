@@ -82,6 +82,14 @@ Reproduced by the final review and left open. The first ones can give a wrong an
 - [ ] `clash_audit.py`: partial contact against an open mesh can report a false clash
 - [ ] `ingest_asset.py`: switches a scene object out of Edit Mode without saying so; the edit is kept
 - [ ] `usd_roundtrip.py`: a material slot plus a Set Material node gives a false `ok:false`
+- [ ] `score_run.py`: a shell comment such as `-a # {"plan": true}` grants the plan exemption; any slash in a message satisfies the status-path check
+- [ ] `import_painter_textures.py`: with shared mesh data, `assign_to=["A"]` also gives B the slot, and listing both adds it twice
+- [ ] `surface_tools.py`: a two-point seam raises instead of the documented G1 with G2 not measured
+- [ ] `ps1_look.py`: scenes that deliberately share a compositor group both change
+- [ ] `scatter-systems.md`: dividing by area is a soft cap, not a maximum (up to 546 at a cap of 500)
+- [ ] `scene_snapshot.py`: a user collection named `_Restored_dependencies` gets hidden on restore
+- [ ] `hdrp-material-mapping.md`: Unity's page does state the linear import rule; the attribution says otherwise
+- [ ] S3: the sentence-by-sentence evidence list the plan asks for is not in the repo
 
 ## Not planned, and why
 
