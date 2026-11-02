@@ -263,7 +263,8 @@ def score_gates(run, manifest):
 
 
 def norm_path(text):
-    return re.sub(r"/+", "/", text.replace("\\\\", "/").replace("\\", "/")).lower().rstrip("/")
+    flat = re.sub(r"/+", "/", text.replace("\\\\", "/").replace("\\", "/")).lower().rstrip("/")
+    return re.sub(r"^/([a-z])(?=/)", r"\1:", flat)  # Git Bash /c/run -> c:/run
 
 
 def seconds_in(text):
@@ -318,24 +319,40 @@ def blender_job(command):
     return job
 
 
+ARG_TOKENS = re.compile(r"\"[^\"\n]*\"|'[^'\n]*'|[^\s\"']+")
+REDIRECT = re.compile(r">>?\s*(\"[^\"\n]*\"|'[^'\n]*'|[^\s\"'|&;<>]+)")
+
+
 def path_mentions(text, base):
-    """Every path in the text that ends in the file name, normalized, as written (a bare name stays bare). A quoted
-    string is taken whole, spaces included; outside quotes a path ends at whitespace."""
-    flat = norm_path(text)
-    tail = re.escape(base) + r"(?![\w.\-])"
-    quoted = re.findall(r"[\"']([^\"'\n]*" + tail + ")", flat)
-    rest = re.sub(r"([\"'])[^\"'\n]*\1", " ", flat)
-    return quoted + re.findall(r"[^\s\"'`,;()=<>|&]*" + tail, rest)
+    """Every candidate path in the text that holds the file name itself, normalized (backslashes, Git Bash /c/x, case).
+    The name is searched for directly, not parsed out of a path: a quoted string is one candidate, spaces included, and an
+    unquoted word is cut at shell punctuation."""
+    tail = re.compile(r"(?<![\w.\-])" + re.escape(base) + r"(?![\w.\-])")
+    found = []
+    for tok in ARG_TOKENS.findall(text):
+        if len(tok) > 1 and tok[0] in "\"'" and tok[-1] == tok[0]:
+            parts = [tok[1:-1]]
+        else:
+            parts = re.split(r"[=,;()<>|&`]", tok)
+        for part in parts:
+            norm = norm_path(part.strip())
+            if tail.search(norm):
+                found.append(norm)
+    return found
+
+
+def resolved(path):
+    """A path that names one place on its own: a drive letter, and nothing left to expand."""
+    return bool(re.match(r"[a-z]:/", path)) and not re.search(r"[$%~{}*?]", path)
 
 
 def same_file(a, b):
-    """Whether two normalized paths can name one file. Full paths must be equal. A path with no directory (just the name)
-    gives no way to tell, so it matches by basename alone: a launch from the run folder may name the file bare, or an
-    earlier call may have written it bare. A relative path with a directory matches the tail of a longer one."""
-    if a == b or "/" not in a or "/" not in b:
-        return True
-    short, long_ = (a, b) if len(a) <= len(b) else (b, a)
-    return not re.match(r"[a-z]:/|/|~", short) and long_.endswith("/" + short)
+    """Whether two normalized paths can name one file. They are different files only when both are fully resolved absolute
+    paths that differ. A relative path, a ./ path or one holding a variable has the same name and could be anywhere, so
+    it counts as this file: the state is then unknown."""
+    if resolved(a) and resolved(b):
+        return a == b
+    return True
 
 
 # A shell command naming the args file is a read only when each piece naming it starts with one of these (or is the
@@ -346,12 +363,12 @@ READ_ONLY = {"cat", "type", "head", "tail", "get-content", "ls", "grep"}
 def shell_may_write(raw, ref, base):
     """True when a shell command names the args file and is not plainly read-only. Leans to True: an unknown file costs
     one announcement, a stale `plan: true` hides a real render."""
-    redirect = r">>?\s*[\"']?[^\s\"'|&;>]*" + re.escape(base)
     for piece in re.split(r"&&|\|\||[;|\n]", raw):
         if not any(same_file(m, ref) for m in path_mentions(piece, base)):
             continue
-        if re.search(redirect, norm_path(piece)):
-            return True
+        for target in REDIRECT.findall(piece):
+            if any(same_file(m, ref) for m in path_mentions(target, base)):
+                return True
         if blender_segments(piece):
             continue
         words = re.findall(TOKEN, piece.lstrip(" \t&("))

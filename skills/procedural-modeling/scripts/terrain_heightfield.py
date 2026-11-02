@@ -144,6 +144,16 @@ def main(name="GEO_Terrain", size=50.0, resolution=65, seed=0, height=5.0, frequ
         if existing.data.shape_keys is not None:
             raise ValueError(f"mesh of {name!r} has shape keys: replacing its geometry would leave stale keys, so nothing was "
                              "changed. Remove the shape keys (or delete the object) and run again.")
+        # a transform that reasserts later (keyframes, drivers, constraints) cannot be caught by comparing the current matrix
+        if existing.animation_data is not None and (existing.animation_data.action is not None
+                                                    or len(existing.animation_data.drivers)):
+            what = "an action (keyframes)" if existing.animation_data.action is not None else "a driver"
+            raise ValueError(f"object {name!r} has {what}: it would move the terrain again after replace writes world-space "
+                             "heights, so nothing was changed. Remove the animation data (or delete the object) and run again.")
+        if len(existing.constraints):
+            raise ValueError(f"object {name!r} has a constraint ({existing.constraints[0].type}): it would move the terrain "
+                             "after replace writes world-space heights, so nothing was changed. Remove the constraints "
+                             "(or delete the object) and run again.")
         bpy.context.view_layer.update()
         mw = existing.matrix_world
         linear_off = max(abs(mw[i][j] - (1.0 if i == j else 0.0)) for i in range(3) for j in range(3)) > 1e-6

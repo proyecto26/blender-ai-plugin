@@ -990,12 +990,35 @@ def run_all(out_dir):
                       ("surface_tools", run_surface), ("review_round1", run_review_round1),
                       ("review_round2", run_review_round2), ("review_round3", run_review_round3),
                       ("review_round4", run_review_round4), ("review_round5", run_review_round5),
-                      ("review_round6", run_review_round6)):
+                      ("review_round6", run_review_round6),
+                      ("review_round7", run_review_round7)):
         try:
             fn(out_dir, check)
         except Exception:
             check(f"{label}: harness crashed", False, traceback.format_exc()[-800:])
     return results
+
+
+def run_review_round7(out_dir, check):
+    """A restored dependency must be excluded in every view layer of the scene, not only the active one."""
+    base = os.path.join(out_dir, "review7")
+    os.makedirs(base, exist_ok=True)
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    for n, loc in (("P", (1, 2, 3)), ("C", (5, 0, 0))):
+        bpy.ops.mesh.primitive_cube_add(size=1, location=loc)
+        bpy.context.active_object.name = n
+    bpy.data.objects["C"].parent = bpy.data.objects["P"]
+    bpy.context.scene.view_layers.new("VL2")
+    d = os.path.join(base, "s")
+    run("blender-mcp-workflow", "scene_snapshot.py", {"action": "save", "dir": d, "name": "a"})
+    bpy.data.objects.remove(bpy.data.objects["C"])
+    bpy.data.objects.remove(bpy.data.objects["P"])
+    r = run("blender-mcp-workflow", "scene_snapshot.py", {"action": "restore", "dir": d, "name": "a", "objects": ["C"]})
+    bpy.context.view_layer.update()
+    parent = bpy.data.objects[r["dependencies"][0]]
+    seen = {vl.name: parent.name in vl.objects for vl in bpy.context.scene.view_layers}
+    check("M3 (r7): the restored parent is hidden in every view layer (two layers)",
+          len(seen) == 2 and not any(seen.values()), seen)
 
 
 def main(out_dir="/tmp/parity_m"):

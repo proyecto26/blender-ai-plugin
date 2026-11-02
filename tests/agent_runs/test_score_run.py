@@ -251,6 +251,23 @@ def plan_state_cases():
             (T0 + 2, assistant(tool("s", "Bash", command="cp a.json C:/run/args.json"))), (T0 + 3, done("s")),
             (T0 + 4, assistant(tool("w2", "Write", file_path=path, content=json.dumps(on)))), (T0 + 5, done("w2")),
             (T0 + 6, assistant(tool("j", "PowerShell", command=PS_LAUNCH))), (T0 + 7, done("j"))])), "OK"),
+        # A mutation names this file however it is escaped; only two fully resolved absolute paths that differ are two files.
+        ("sed -i on $OUT/args.json", run([sh('sed -i "s/true/false/" "$OUT/args.json"')]), "FLAG"),
+        ("sed -i on a /c/run/args.json path", run([sh("sed -i 's/true/false/' /c/run/args.json")]), "FLAG"),
+        ("cd then sed -i on ./args.json", run([sh("cd C:/run && sed -i 's/true/false/' ./args.json")]), "FLAG"),
+        ("Set-Content -Path $dir\\args.json", run([sh("Set-Content -Path $dir\\args.json -Value '{}'", "PowerShell")]), "FLAG"),
+        ("cat > quoted path with a space", announce(replay([
+            (T0, assistant(tool("w", "Write", file_path="C:/my run/args.json", content=json.dumps(on)))), (T0 + 1, done("w")),
+            (T0 + 2, assistant(tool("s", "Bash", command='cat > "C:/my run/args.json" <<X\n{}\nX'))), (T0 + 3, done("s")),
+            (T0 + 4, assistant(tool("j", "PowerShell", command=PS_LAUNCH.replace("C:\\run\\args.json", "C:\\my run\\args.json")))),
+            (T0 + 5, done("j"))])), "FLAG"),
+        ("Edit file_path /c/run/args.json, old text missing", run([edit("zzz", "yyy", "/c/run/args.json")]), "FLAG"),
+        ("Edit file_path /c/run/args.json turns plan off", run([edit("true", "false", "/c/run/args.json")]), "FLAG"),
+        ("Edit of a different absolute folder (/c/ form)", run([edit("true", "false", "/c/elsewhere/args.json")]), "OK"),
+        ("sed -i on a different absolute folder", run([sh("sed -i 's/true/false/' /c/elsewhere/args.json")]), "OK"),
+        ("cat of a /c/ path", run([sh("cat /c/run/args.json")]), "OK"),
+        ("cat of a quoted $OUT path", run([sh('cat "$OUT/args.json"')]), "OK"),
+        ("a real plan step: plan:true written, nothing else", run([]), "OK"),
         # Established state: these leave the exemption alone.
         ("Read", run([("Read", {"file_path": path})]), "OK"),
         ("cat", run([sh("cat C:/run/args.json")]), "OK"),
@@ -325,7 +342,7 @@ def args_file_cases():
         ("launch names .\\args.json: the name decides", announce(writes_then_launch([plan], with_file(".\\args.json"))), "OK"),
         ("earlier write is a bare name", announce(writes_then_launch([("args.json", plan[1])])), "OK"),
         ("relative folder tail matches the absolute write", announce(writes_then_launch([plan], with_file("run\\args.json"))), "OK"),
-        ("relative folder tail does not match another folder", announce(writes_then_launch([other], with_file("run\\args.json"))), "FLAG"),
+        ("relative launch path cannot be told from another folder: state unknown stays a plan", announce(writes_then_launch([other], with_file("run\\args.json"))), "OK"),
         ("--args-file=path form, real file last", announce(writes_then_launch([other, real], eq_form)), "FLAG"),
         ("case and slash style differ", announce(writes_then_launch([("c:/RUN/args.json", plan[1])])), "OK"),
     ] + spaced_cases() + incremental_edit_cases()

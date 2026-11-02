@@ -1131,7 +1131,7 @@ def run_all(out_dir):
                              ("R3-review", test_review_r3), ("R4-review", test_review_r4),
                              ("R5-review", test_review_r5), ("review2", test_review2),
                              ("review3", test_review3), ("review4", test_review4),
-                             ("review5", test_review5), ("review6", test_review6)):
+                             ("review5", test_review5), ("review6", test_review6), ("review7", test_review7)):
                 rec.section(name, lambda r, fn=fn: fn(r, scene, out_dir))
         finally:
             if ctx:
@@ -1148,6 +1148,60 @@ def run_all(out_dir):
                 except (ReferenceError, RuntimeError):
                     pass
     return rec.results
+
+
+def test_review7(rec, scene, out_dir):
+    # Transforms that reassert later (animation, drivers, constraints) are refused up front, whatever the current matrix.
+    cu = bpy.data.curves.new("CRV_RT_R7", "CURVE")
+    cu.dimensions = "3D"
+    sp = cu.splines.new("POLY")
+    sp.points.add(1)
+    for p, co in zip(sp.points, [(-8, 0, 3, 1), (8, 0, 3, 1)]):
+        p.co = co
+    scene.collection.objects.link(bpy.data.objects.new("CRV_RT_R7", cu))
+    args = {"size": 30, "resolution": 61, "seed": 3, "height": 3, "frequency": 0.05,
+            "corridor": {"curve": "CRV_RT_R7", "half_width": 2.0, "falloff": 1.0}}
+
+    def keyframed(o):
+        o.location = (0, 0, 5)
+        o.keyframe_insert("location", frame=1)
+        o.location = (0, 0, 0)
+
+    def driven(o):
+        fc = o.driver_add("location", 2)
+        fc.driver.type = "SCRIPTED"
+        fc.driver.expression = "5"
+
+    def limit(o):
+        o.location = (0, 0, 5)
+        c = o.constraints.new("LIMIT_LOCATION")
+        c.use_min_z = True
+        c.min_z = 5
+
+    def copy_here(o):
+        tgt = bpy.data.objects.new("RT_R7_Tgt", None)
+        tgt.location = (0, 0, 4)
+        scene.collection.objects.link(tgt)
+        o.location = (0, 0, 4)
+        c = o.constraints.new("COPY_LOCATION")
+        c.target = tgt
+
+    for tag, setup, word in (("keyframed location", keyframed, "keyframe"), ("driver on location", driven, "driver"),
+                             ("Limit Location", limit, "constraint"),
+                             ("Copy Location at own position", copy_here, "constraint")):
+        nm = "RT_TerrAn_" + tag.replace(" ", "")
+        run("procedural-modeling", "terrain_heightfield.py", {**args, "name": nm})
+        o = bpy.data.objects[nm]
+        setup(o)
+        bpy.context.view_layer.update()
+        n0 = len(o.data.vertices)
+        mesh0 = o.data
+        z0 = [v.co.z for v in mesh0.vertices][:20]
+        err = raises(lambda: run("procedural-modeling", "terrain_heightfield.py",
+                                 {**args, "name": nm, "replace": True, "seed": 9}))
+        rec.check(f"R2-review7 ({tag}): refused naming the cause", err is not None and word in err, err)
+        rec.check(f"R2-review7 ({tag}): nothing changed", o.data is mesh0 and len(o.data.vertices) == n0
+                  and [v.co.z for v in o.data.vertices][:20] == z0)
 
 
 def main(out_dir=None):

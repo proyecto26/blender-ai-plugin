@@ -265,12 +265,13 @@ def _restore(d, name, objects):
                     coll.children.link(deps_coll)
             deps_coll.objects.link(o)
     if deps_coll is not None:
-        stack = [bpy.context.view_layer.layer_collection]
-        while stack:
-            cur = stack.pop()
-            if cur.collection is deps_coll:
-                cur.exclude = True
-            stack.extend(cur.children)
+        for vl in bpy.context.scene.view_layers:  # every view layer, or the parent shows in the others
+            stack = [vl.layer_collection]
+            while stack:
+                cur = stack.pop()
+                if cur.collection is deps_coll:
+                    cur.exclude = True
+                stack.extend(cur.children)
     return {"restored": requested, "dependencies": sorted(o.name for o in new if o.name not in got),
             "collection": coll.name}
 
