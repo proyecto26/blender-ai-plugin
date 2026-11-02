@@ -102,6 +102,7 @@ def main(preset="eevee_preview", resolution_percentage=None, device=None):
             else:
                 skipped.append(f"{group}.{key}")
     if device and cfg["engine"] == "CYCLES":
+        previous["cycles.device"] = _plain(scene.cycles.device)
         scene.cycles.device = device
     vs.view_transform, vs.look = cfg["view"]
     r.resolution_percentage = resolution_percentage or cfg["pct"]

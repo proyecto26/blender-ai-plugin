@@ -5,6 +5,8 @@ R2 procedural-modeling/terrain_heightfield.py  seeded terrain + corridor along a
 R3 rendering/render_preset.py         denoiser use-case presets and the prior values they return
 R4 texture-workflow/import_painter_textures.py  synthetic maps wired by name (Painter itself is NOT tested)
 R5 usd-pipeline/usd_roundtrip.py      export, reimport, compare, clean up
+review-*  regressions for the round-1 review findings (rerun/cross-scene PS1, cyclic road, device restore, map names,
+          shared images, render-level USD, negative USD fixtures)
 
 Writes <out_dir>/roadmap_tests_report.json (summary passed/total/failed). Never saves the open file; the test scene,
 objects and datablocks it makes are removed at the end. Use a NEW out_dir each run.
@@ -455,6 +457,173 @@ def test_r5(rec, scene, out_dir):
         "objects": ["nope"], "out_path": os.path.join(out_dir, "x.usdc")})))
 
 
+# ---------------------------------------------------------------- review findings (round 1)
+# Each check below reproduces one verified review finding; it must fail on the unfixed scripts.
+
+def in_scene(scene, fn):
+    with bpy.context.temp_override(scene=scene, view_layer=scene.view_layers[0]):
+        return fn()
+
+
+def upstream_names(tree):
+    """Names of every node that feeds the group output, found by walking links backwards."""
+    out = next(n for n in tree.nodes if n.bl_idname == "NodeGroupOutput")
+    seen, todo = set(), [out]
+    while todo:
+        node = todo.pop()
+        for sock in node.inputs:
+            for lk in sock.links:
+                if lk.from_node.name not in seen:
+                    seen.add(lk.from_node.name)
+                    todo.append(lk.from_node)
+    return seen
+
+
+def test_review_r1(rec, scene, out_dir):
+    base = {"objects": [], "snap": 0, "fog": False, "texture": False, "resolution": [64, 48]}
+    sc = bpy.data.scenes.new("__RT_R1_rerun")
+    sc.render.resolution_x, sc.render.resolution_y = 64, 48
+    in_scene(sc, lambda: run("compositing", "comp_grade.py", {"preset": "noir"}))
+    tree = sc.compositing_node_group
+    grade = {n.name for n in tree.nodes if n.name.startswith("SK_") and n.bl_idname != "NodeGroupOutput"}
+    rec.check("R1-review fixture: comp_grade made grade nodes", len(grade) > 0, sorted(grade))
+    for i in (1, 2, 3):
+        in_scene(sc, lambda: run("lowpoly-style", "ps1_look.py", base))
+        up = upstream_names(sc.compositing_node_group)
+        missing = sorted(grade - up)
+        rec.check(f"R1-review: comp_grade -> PS1 run {i}: every grade node still feeds the output", not missing, missing)
+        rec.check(f"R1-review: PS1 run {i}: dither stage still feeds the output", "SK_PS1_DitherPosterize" in up, sorted(up))
+
+    a = bpy.data.scenes.new("__RT_R1_A")
+    b = bpy.data.scenes.new("__RT_R1_B")
+    for s in (a, b):
+        s.render.resolution_x, s.render.resolution_y = 32, 24
+    in_scene(a, lambda: run("lowpoly-style", "ps1_look.py", {**base, "resolution": [32, 24]}))
+    node_a = a.compositing_node_group.nodes["SK_PS1_DitherThreshold"]
+    img_a = node_a.image
+    keep_name = img_a.name if img_a else None
+    in_scene(b, lambda: run("lowpoly-style", "ps1_look.py", {**base, "resolution": [32, 24]}))
+    node_a = a.compositing_node_group.nodes["SK_PS1_DitherThreshold"]
+    rec.check("R1-review: applying PS1 in scene B leaves scene A's threshold image in use",
+              node_a.image is not None and keep_name in bpy.data.images and node_a.image.size[0] == 32, keep_name)
+    node_b = b.compositing_node_group.nodes["SK_PS1_DitherThreshold"]
+    rec.check("R1-review: scene B has its own threshold image", node_b.image is not None and node_b.image != node_a.image)
+
+
+def test_review_r2(rec, scene, out_dir):
+    cu = bpy.data.curves.new("CRV_RT_LOOP", "CURVE")
+    cu.dimensions = "3D"
+    sp = cu.splines.new("POLY")
+    sp.points.add(3)
+    for p, co in zip(sp.points, [(-10, -10, 1, 1), (10, -10, 1, 1), (10, 10, 3, 1), (-10, 10, 3, 1)]):
+        p.co = co
+    sp.use_cyclic_u = True
+    scene.collection.objects.link(bpy.data.objects.new("CRV_RT_LOOP", cu))
+    args = {"size": 40, "resolution": 81, "seed": 7, "height": 4, "frequency": 0.08}
+    run("procedural-modeling", "terrain_heightfield.py", {**args, "name": "RT_TerrLoopFree"})
+    noise_z = mesh_coords(bpy.data.objects["RT_TerrLoopFree"])[:, 2]
+    r = run("procedural-modeling", "terrain_heightfield.py",
+            {**args, "name": "RT_TerrLoop", "corridor": {"curve": "CRV_RT_LOOP", "half_width": 1.5, "falloff": 1.0}})["result"]
+    co = mesh_coords(bpy.data.objects["RT_TerrLoop"])
+    x, y, z = co[:, 0], co[:, 1], co[:, 2]
+    rec.check("R2-review: cyclic curve has four segments", r["corridor"]["curve_points"] == 5, r["corridor"])
+    # The closing edge runs (-10, 10, 3) -> (-10, -10, 1): z = 2 + y / 10 on x = -10.
+    bed = (np.abs(x + 10) <= 1.5) & (np.abs(y) <= 8)
+    err = float(np.abs(z[bed] - (2 + y[bed] / 10)).max()) if bed.any() else 99
+    rec.check("R2-review: the closing segment of a cyclic curve is flattened to the curve height (<= 1 mm)",
+              bed.sum() > 10 and err < 1e-3, f"n={bed.sum()} err={err}")
+    rec.check("R2-review: the closing segment really changed the noise",
+              float(np.abs(z[bed] - noise_z[bed]).max()) > 0.05)
+
+
+def test_review_r3(rec, scene, out_dir):
+    cy = scene.cycles
+    cy.device = "CPU"
+    res = run("rendering", "render_preset.py", {"preset": "cycles_final", "device": "GPU"})["result"]
+    rec.check("R3-review: device argument records the prior device in `previous`",
+              res["previous"].get("cycles.device") == "CPU", res["previous"].get("cycles.device"))
+    for key, value in res["previous"].items():
+        group, _, prop = key.partition(".")
+        if group == "cycles":
+            setattr(cy, prop, value)
+    rec.check("R3-review: reverting from `previous` restores the device", cy.device == "CPU", cy.device)
+
+
+def test_review_r4(rec, scene, out_dir):
+    folder = os.path.join(out_dir, "r4_review")
+    os.makedirs(folder, exist_ok=True)
+    # Name meaning: "Metal" in the asset name must not turn a normal map into a metallic map.
+    for stem in ("BaseColor", "Normal", "Roughness"):
+        save_map(os.path.join(folder, f"MetalDoor_{stem}.png"), 0.5)
+    r = run("texture-workflow", "import_painter_textures.py", {"folder": folder, "material": "MAT_RT_MetalDoor"})["result"]
+    rec.check("R4-review: MetalDoor_Normal is classified as normal", r["files"].get("normal") == "MetalDoor_Normal.png", r["files"])
+    mat = bpy.data.materials["MAT_RT_MetalDoor"]
+    bsdf = next(n for n in mat.node_tree.nodes if n.bl_idname == "ShaderNodeBsdfPrincipled")
+    rec.check("R4-review: nothing wired into Metallic from the normal map", not bsdf.inputs["Metallic"].is_linked)
+    rec.check("R4-review: normal map reaches the BSDF Normal input", bsdf.inputs["Normal"].is_linked)
+
+    # Shared image: loading a map already used by another material must not change that material's colour space.
+    shared = os.path.join(out_dir, "r4_review_shared")
+    os.makedirs(shared, exist_ok=True)
+    save_map(os.path.join(shared, "Wall_Roughness.png"), 0.5)
+    existing = bpy.data.images.load(os.path.join(shared, "Wall_Roughness.png"))
+    existing.colorspace_settings.name = "sRGB"
+    old_mat = bpy.data.materials.new("MAT_RT_OldWall")
+    old_mat.use_nodes = True
+    tex = old_mat.node_tree.nodes.new("ShaderNodeTexImage")
+    tex.image = existing
+    run("texture-workflow", "import_painter_textures.py", {"folder": shared, "material": "MAT_RT_NewWall"})
+    rec.check("R4-review: an image already used elsewhere keeps its colour space", existing.colorspace_settings.name == "sRGB",
+              existing.colorspace_settings.name)
+    new_tex = next(n for n in bpy.data.materials["MAT_RT_NewWall"].node_tree.nodes if n.bl_idname == "ShaderNodeTexImage")
+    rec.check("R4-review: the new material's roughness image is Non-Color",
+              new_tex.image.colorspace_settings.name == "Non-Color", new_tex.image.colorspace_settings.name)
+
+
+def test_review_r5(rec, scene, out_dir):
+    def cube(name, loc, subsurf=None):
+        me = bpy.data.meshes.new(name)
+        bm = bmesh.new()
+        bmesh.ops.create_cube(bm, size=1.0)
+        bm.to_mesh(me)
+        bm.free()
+        o = bpy.data.objects.new(name, me)
+        scene.collection.objects.link(o)
+        o.location = loc
+        if subsurf:
+            mod = o.modifiers.new("Subsurf", "SUBSURF")
+            mod.levels, mod.render_levels = subsurf
+        return o
+    # Viewport level 1, render level 2: the export is the render result and the comparison must measure the same.
+    cube("RT_USD_Lvl", (0, 0, 0), subsurf=(1, 2))
+    bpy.context.view_layer.update()
+    r = run("usd-pipeline", "usd_roundtrip.py", {"objects": ["RT_USD_Lvl"],
+                                                  "out_path": os.path.join(out_dir, "r5_levels", "lvl.usdc")})["result"]
+    rec.check("R5-review: viewport 1 / render 2 subdivision round-trips ok", r["ok"], r["problems"])
+    rec.check("R5-review: compared counts are the render-level result (98 vertices)",
+              r["per_object"]["RT_USD_Lvl"]["verts"] == [98, 98], r["per_object"]["RT_USD_Lvl"]["verts"])
+    mod = bpy.data.objects["RT_USD_Lvl"].modifiers["Subsurf"]
+    rec.check("R5-review: modifier levels restored after the check", (mod.levels, mod.render_levels) == (1, 2),
+              (mod.levels, mod.render_levels))
+
+    # Negative fixtures: a lossy round trip must be rejected, never reported ok.
+    objects_before = {o.name for o in bpy.data.objects}
+    cube("RT_USD_Lossy", (3, 0, 0), subsurf=(2, 2))
+    objects_before.add("RT_USD_Lossy")
+    bpy.context.view_layer.update()
+    bad = run("usd-pipeline", "usd_roundtrip.py", {"objects": ["RT_USD_Lossy"], "subdivision": "BEST_MATCH",
+                                                    "out_path": os.path.join(out_dir, "r5_lossy", "lossy.usdc")})["result"]
+    rec.check("R5 negative: subdivision written as a scheme (cage only on import) is rejected", not bad["ok"], bad["problems"])
+    rec.check("R5 negative: the rejection names the vertex/face difference",
+              any("verts/faces" in p for p in bad["problems"]), bad["problems"])
+    strict = run("usd-pipeline", "usd_roundtrip.py", {"objects": ["RT_USD_Lvl"], "tol": -1.0,
+                                                       "out_path": os.path.join(out_dir, "r5_lossy", "strict.usdc")})["result"]
+    rec.check("R5 negative: an impossible transform tolerance rejects the round trip",
+              not strict["ok"] and any("transform differs" in p for p in strict["problems"]), strict["problems"])
+    rec.check("R5 negative: a rejected round trip still removes the imported copy from the scene",
+              {o.name for o in bpy.data.objects} == objects_before, sorted({o.name for o in bpy.data.objects} ^ objects_before))
+
+
 # ---------------------------------------------------------------- harness
 
 def run_all(out_dir):
@@ -472,7 +641,10 @@ def run_all(out_dir):
         if ctx:
             ctx.__enter__()
         try:
-            for name, fn in (("R1", test_r1), ("R2", test_r2), ("R3", test_r3), ("R4", test_r4), ("R5", test_r5)):
+            for name, fn in (("R1", test_r1), ("R2", test_r2), ("R3", test_r3), ("R4", test_r4), ("R5", test_r5),
+                             ("R1-review", test_review_r1), ("R2-review", test_review_r2),
+                             ("R3-review", test_review_r3), ("R4-review", test_review_r4),
+                             ("R5-review", test_review_r5)):
                 rec.section(name, lambda r, fn=fn: fn(r, scene, out_dir))
         finally:
             if ctx:

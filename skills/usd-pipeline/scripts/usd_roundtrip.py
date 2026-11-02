@@ -23,6 +23,7 @@ transform prim and a mesh prim of the same name per mesh object, so the import y
 name: they are told apart by type. Material names are compared the same way,
 because the import renames a material that already exists. `ok` is true only when nothing differs.
 """
+import contextlib
 import json
 import os
 import re
@@ -55,6 +56,31 @@ def _key(name):
 def _clean_key(name):
     """USD cleans '.001' to '_001' on export; undo that for names that were suffixed in Blender."""
     return re.sub(r"[^A-Za-z0-9_]", "_", name)
+
+
+@contextlib.contextmanager
+def _render_levels(objs):
+    """Show modifiers as the render does (render visibility, render subdivision levels) while measuring, because the
+    export runs with evaluation_mode RENDER. Everything is put back afterwards."""
+    saved = []
+    try:
+        for o in objs:
+            for m in o.modifiers:
+                entry = [m, m.show_viewport, None, None]
+                if m.type in ("SUBSURF", "MULTIRES"):
+                    entry[2], entry[3] = m.levels, m.render_levels
+                saved.append(entry)
+                m.show_viewport = m.show_render
+                if entry[2] is not None:
+                    m.levels = m.render_levels
+        bpy.context.view_layer.update()
+        yield
+    finally:
+        for m, vis, lv, rlv in saved:
+            m.show_viewport = vis
+            if lv is not None:
+                m.levels, m.render_levels = lv, rlv
+        bpy.context.view_layer.update()
 
 
 def _describe(obj, depsgraph):
@@ -94,8 +120,9 @@ def main(out_path, objects=None, tol=1e-4, keep=False, subdivision="TESSELLATE")
     if not targets:
         raise ValueError("nothing to export")
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
-    dg = bpy.context.evaluated_depsgraph_get()
-    before = {(o.type, _clean_key(o.name)): _describe(o, dg) for o in targets}
+    with _render_levels(targets):
+        dg = bpy.context.evaluated_depsgraph_get()
+        before = {(o.type, _clean_key(o.name)): _describe(o, dg) for o in targets}
 
     snap = {coll: {i.name for i in getattr(bpy.data, coll)}
             for coll in ("objects", "meshes", "materials", "images", "collections", "cameras", "lights", "node_groups")}

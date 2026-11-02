@@ -131,9 +131,30 @@ def _tree(scene):
         scene.compositing_node_group = tree
     if not any(getattr(i, "in_out", None) == "OUTPUT" for i in tree.interface.items_tree):
         tree.interface.new_socket("Image", in_out="OUTPUT", socket_type="NodeSocketColor")
+    out = next((n for n in tree.nodes if n.bl_idname == "NodeGroupOutput"), None)
+    feed = _unwound_feed(out) if out is not None else None
     for node in [n for n in tree.nodes if n.name.startswith("SK_PS1_")]:
         tree.nodes.remove(node)
+    if feed is not None and not out.inputs[0].is_linked:
+        tree.links.new(feed, out.inputs[0])  # a rerun keeps whatever (e.g. a comp_grade) fed our first stage
     return tree
+
+
+def _unwound_feed(out):
+    """The non-PS1 socket that feeds the first SK_PS1_ stage upstream of `out`, or None when nothing PS1 is there."""
+    if not out.inputs[0].is_linked:
+        return None
+    sock, seen = out.inputs[0].links[0].from_socket, set()
+    if not sock.node.name.startswith("SK_PS1_"):
+        return None
+    while sock.node.name.startswith("SK_PS1_") and sock.node.name not in seen:
+        seen.add(sock.node.name)
+        linked = [i for i in sock.node.inputs if i.is_linked and i.enabled]
+        pick = next((i for i in linked if i.type == "RGBA"), linked[0] if linked else None)
+        if pick is None:
+            return None
+        sock = pick.links[0].from_socket
+    return None if sock.node.name.startswith("SK_PS1_") else sock
 
 
 def _ends(tree):
@@ -175,10 +196,11 @@ def _threshold_image(scene, size, steps):
     r = scene.render
     w = max(1, r.resolution_x * r.resolution_percentage // 100)
     h = max(1, r.resolution_y * r.resolution_percentage // 100)
-    old = bpy.data.images.get(DITHER_IMAGE)
+    name = f"{DITHER_IMAGE}_{scene.name}"[:63]  # one image per scene: another scene's compositor may still use its own
+    old = bpy.data.images.get(name)
     if old is not None:
         bpy.data.images.remove(old)
-    img = bpy.data.images.new(DITHER_IMAGE, w, h, alpha=False, float_buffer=True, is_data=True)
+    img = bpy.data.images.new(name, w, h, alpha=False, float_buffer=True, is_data=True)
     img.colorspace_settings.name = "Non-Color"
     m = _bayer(size)
     t = (m + 0.5) / float(size * size) / float(steps)
