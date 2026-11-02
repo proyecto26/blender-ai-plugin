@@ -979,7 +979,7 @@ def run_review_round6(out_dir, check):
           not any(o.name.startswith("SrcCube") for o in bpy.context.view_layer.objects), "")
 
 
-def run_all(out_dir):
+def run_all(out_dir, only=None):
     results = []
 
     def check(name, ok, detail=""):
@@ -991,7 +991,10 @@ def run_all(out_dir):
                       ("review_round2", run_review_round2), ("review_round3", run_review_round3),
                       ("review_round4", run_review_round4), ("review_round5", run_review_round5),
                       ("review_round6", run_review_round6),
-                      ("review_round7", run_review_round7)):
+                      ("review_round7", run_review_round7), ("flash_frames", run_flash_frames),
+                      ("snapshot_duplicates", run_snapshot_duplicates)):
+        if only and label not in only:
+            continue
         try:
             fn(out_dir, check)
         except Exception:
@@ -1021,10 +1024,92 @@ def run_review_round7(out_dir, check):
           len(seen) == 2 and not any(seen.values()), seen)
 
 
-def main(out_dir="/tmp/parity_m"):
+def run_flash_frames(out_dir, check):
+    """A black or white frame in a static noise sequence is an exposure pop (or inconclusive), never a pass."""
+    base = os.path.join(out_dir, "flash")
+    w0 = noise_world(W, 1)
+
+    def go(name, fr, **kw):
+        return run("film-production", "flicker_check.py", {"paths": write_seq(os.path.join(base, name), fr), **kw})
+
+    for n in (9, 25):
+        for label, val in (("black", 0.0), ("white", 1.0)):
+            fr = [w0.copy() for _ in range(n)]
+            fr[4] = np.full_like(w0, val)
+            r = go(f"{label}{n}", fr)
+            ev = [e for e in r["events"] if e["frame"] == 4]
+            check(f"flash: {label} frame 4 of {n} is never a pass", r["verdict"] != "pass", (r["verdict"], r["measured_share"]))
+            check(f"flash: {label} frame 4 of {n} is a global_exposure event on frame 4 and nothing else",
+                  r["verdict"] == "flicker" and len(r["events"]) == 1 and len(ev) == 1 and ev[0]["kind"] == "global_exposure",
+                  (r["verdict"], [(e["frame"], e["kind"]) for e in r["events"]]))
+    # two bad frames in a row do not have the one-frame pop shape: inconclusive, and the output names them
+    fr = [w0.copy() for _ in range(9)]
+    fr[4] = np.zeros_like(w0)
+    fr[5] = np.zeros_like(w0)
+    r = go("black_pair", fr)
+    named = {u["frame"] for u in r.get("unmeasured_frames", [])}
+    check("flash: two consecutive black frames are inconclusive and name frames 4 and 5",
+          r["verdict"] == "inconclusive" and {4, 5} <= named, (r["verdict"], sorted(named), [e["frame"] for e in r["events"]]))
+    # a hard cut (a different, brighter scene from frame 5 on) is not a pop
+    other = np.clip(noise_world(W, 7) + 0.2, 0, 1)
+    fr = [w0.copy() for _ in range(5)] + [other.copy() for _ in range(4)]
+    r = go("hardcut", fr)
+    check("flash: a hard cut is not reported as a pop", not r["events"], [(e["frame"], e["kind"]) for e in r["events"]])
+    check("flash: a hard cut is never a plain pass (its frames are unmeasured and named)",
+          r["verdict"] == "inconclusive" and {4, 5} <= {u["frame"] for u in r.get("unmeasured_frames", [])},
+          (r["verdict"], r.get("unmeasured_frames")))
+    # unchanged behaviour: gain pops at frame 4, and a steady sequence
+    for gain in (0.7, 1.2, 1.5, 2.0):
+        fr = [w0.copy() for _ in range(9)]
+        fr[4] = np.clip(fr[4] * gain, 0, 1)
+        r = go(f"gain{gain}", fr)
+        check(f"flash: gain {gain} at frame 4 is a single event on frame 4",
+              r["verdict"] == "flicker" and [e["frame"] for e in r["events"]] == [4], (r["verdict"], [e["frame"] for e in r["events"]]))
+    r = go("steady", [w0.copy() for _ in range(9)])
+    check("flash: a steady sequence passes with no unmeasured frames",
+          r["verdict"] == "pass" and not r["events"] and not r.get("unmeasured_frames"), (r["verdict"], r.get("unmeasured_frames")))
+    fr = [w0.copy() for _ in range(9)]
+    fr[4] = np.clip(fr[4] + 0.15, 0, 1)
+    r = go("additive", fr)
+    check("flash: an additive +0.15 pop at frame 4 is one global_exposure event",
+          r["verdict"] == "flicker" and [(e["frame"], e["kind"]) for e in r["events"]] == [(4, "global_exposure")], r["events"][:1])
+
+
+def run_snapshot_duplicates(out_dir, check):
+    """restore with a repeated name used to segfault Blender when the library-load context closed."""
+    base = os.path.join(out_dir, "dupnames")
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    for name, loc in (("A", (0, 0, 0)), ("B", (3, 0, 0))):
+        bpy.ops.mesh.primitive_cube_add(location=loc)
+        bpy.context.active_object.name = name
+    snap = lambda **kw: run("blender-mcp-workflow", "scene_snapshot.py", kw)  # noqa: E731
+    d = os.path.join(base, "s")
+    snap(action="save", dir=d, name="a")
+    before = {o.name for o in bpy.data.objects}
+    r = snap(action="restore", dir=d, name="a", objects=["A", "A"])
+    new = sorted({o.name for o in bpy.data.objects} - before)
+    check("restore: ['A','A'] returns without crashing and adds exactly one copy", len(new) == 1 and list(r["restored"]) == ["A"],
+          (new, r))
+    before = {o.name for o in bpy.data.objects}
+    r = snap(action="restore", dir=d, name="a", objects=["B", "A", "B", "A", "B"])
+    new = sorted({o.name for o in bpy.data.objects} - before)
+    check("restore: repeated names are deduplicated in order (B, A), one copy each",
+          list(r["restored"]) == ["B", "A"] and len(new) == 2 and set(r["restored"].values()) == set(new), (new, r))
+    before = {o.name for o in bpy.data.objects}
+    r1 = snap(action="restore", dir=d, name="a", objects=["A"])
+    r2 = snap(action="restore", dir=d, name="a", objects=["A"])
+    new = {o.name for o in bpy.data.objects} - before
+    check("restore: the same name across two calls gives two distinct copies, both in _Restored",
+          r1["restored"]["A"] != r2["restored"]["A"] and new == {r1["restored"]["A"], r2["restored"]["A"]}
+          and all(n in bpy.data.collections["_Restored"].objects for n in new), (r1, r2, sorted(new)))
+    m = bpy.data.objects[r["restored"]["A"]]
+    check("restore: the copy is at its saved place", tuple(round(v, 4) for v in m.location) == (0.0, 0.0, 0.0), tuple(m.location))
+
+
+def main(out_dir="/tmp/parity_m", only=None):
     os.makedirs(out_dir, exist_ok=True)
     try:
-        results = run_all(out_dir)
+        results = run_all(out_dir, only)
     except Exception:
         results = [{"name": "harness", "ok": False, "detail": traceback.format_exc()[-800:]}]
     failures = [r for r in results if not r["ok"]]

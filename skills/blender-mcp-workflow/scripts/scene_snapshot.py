@@ -14,6 +14,7 @@ ARGS:
     a, b     (str) diff: two snapshot names, or "current" for the live scene. Defaults: a = latest snapshot,
              b = "current".
     objects  (list[str]) restore: names of objects to bring back (required, and each must exist in the snapshot).
+             A name listed more than once is restored once (order of first appearance kept).
     tol      (float) diff: largest matrix-element change still counted as unchanged (default 1e-5).
 
 save:    writes <dir>/<name>.blend (the scene's objects and the data they use, via bpy.data.libraries.write, a
@@ -225,6 +226,9 @@ def _restore(d, name, objects):
         raise ValueError("restore needs 'name'")
     if not objects:
         raise ValueError("restore needs 'objects' (a non-empty list of object names)")
+    # A repeated name must never reach data_to.objects: Blender segfaults when the bpy.data.libraries.load context
+    # closes with the same name listed twice (no Python error, the process dies). First occurrence wins, order kept.
+    objects = list(dict.fromkeys(objects))
     _check_name(name)  # "current" is the live scene, not a snapshot to restore from
     manifest = _read_manifest(d, name)
     missing = [o for o in objects if o not in manifest["objects"]]

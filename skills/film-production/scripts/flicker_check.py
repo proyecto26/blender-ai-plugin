@@ -20,8 +20,8 @@ ARGS:
                         best counts as a rival (default 0.02)
     global_fraction     (float) an event is "global_exposure" when at least this share of its measured blocks
                         flicker (default 0.6)
-    min_measured        (float) below this share of measured blocks the verdict is "inconclusive", never "pass"
-                        (default 0.5)
+    min_measured        (float) below this share of measured blocks, over the sequence or in any one evaluated frame,
+                        the verdict is "inconclusive", never "pass" (default 0.5)
 
 Method: each block of frame t is matched in t-1 and in t+1 inside the search window by minimising the residual
 after subtracting each block's own mean (so a brightness change does not stop the match). The second difference
@@ -43,9 +43,17 @@ guaranteed to be the true one. The brightness measured is still right when every
 (plain stripes, checkers); when rivals differ in mean the block is "ambiguous" and not measured. A flicker that
 changes the pattern itself (not just its brightness) can also land in high_residual. A sequence in which fewer
 than `min_measured` of the blocks are measured has verdict "inconclusive".
+The same holds per frame: a pure black or white frame has no matchable block in itself or its neighbours, which a long
+sequence can hide in the aggregate share. Such a frame is judged on its whole-frame mean luma: if it jumps by more than
+`flicker_threshold` while the frames either side agree with each other (they differ from each other by less than a
+quarter of the jump), it is reported as a "global_exposure" event with source "frame_luma" (its neighbours, matched
+against it, are explained by it). A hard cut does not have that shape (the neighbours differ), and neither do several
+bad frames in a row; those frames are listed in `unmeasured_frames` and the verdict is "inconclusive". A bad first
+or last frame cannot be judged (no second difference); the frame beside it is the one listed.
 
 Returns verdict ("flicker" | "pass" | "inconclusive"), events (frame, kind "local" | "global_exposure", signed
-deviation, region box in px, blocks), per-frame counts, and `not_measured` totals by reason. The first and last frame
+deviation, region box in px, blocks), `unmeasured_frames` (frames with too few measured blocks that no event explains),
+per-frame counts, and `not_measured` totals by reason. The first and last frame
 have no second difference and are not evaluated. Loads frames into temporary images and removes them.
 """
 import json
@@ -233,9 +241,40 @@ def main(paths=None, dir=None, block=16, max_motion_px=8, flicker_threshold=0.03
                                      max(f[2] for f in flagged), max(f[3] for f in flagged)],
                        "blocks_flagged": len(flagged), "blocks_measured": meas,
                        "blocks": [[f[0], f[1], round(f[4], 5)] for f in flagged[:32]]})
+    # Frames the block method could not judge. A frame that is pure black or white (or otherwise unlike its neighbours
+    # everywhere) has no measured block in itself or in the frames beside it, and the aggregate share can still look fine
+    # on a longer sequence. So each evaluated frame is checked on its own: below `min_measured` it is "unmeasured". On
+    # those frames (and their neighbours) the whole-frame mean luma is read as well: a frame whose mean jumps while the
+    # two frames around it agree with each other is an exposure pop even when no block could be matched. A hard cut does
+    # not have that shape (the two neighbours differ), and neither do several bad frames in a row.
+    gm = [float(fr.mean()) for fr in frames]
+    unmeasured = []
+    for t, pf in per_frame.items():
+        total_t = pf["measured"] + pf["not_measured"]["high_residual"] + pf["not_measured"]["ambiguous"]
+        pf["measured_share"] = round(pf["measured"] / total_t, 4) if total_t else 0.0
+        if total_t and pf["measured"] < min_measured * total_t:
+            unmeasured.append(t)
+    have_event = {e["frame"] for e in events}
+    pops = set()
+    for t in sorted({u + d for u in unmeasured for d in (-1, 0, 1)} & set(per_frame)):
+        if t in have_event:
+            continue
+        dev = gm[t] - 0.5 * (gm[t - 1] + gm[t + 1])
+        if abs(dev) > thr and abs(gm[t - 1] - gm[t + 1]) < 0.25 * abs(dev):
+            pops.add(t)
+            events.append({"frame": t, "file": os.path.basename(files[t]), "kind": "global_exposure",
+                           "source": "frame_luma", "mean_deviation": round(dev, 5),
+                           "region_px": [0, 0, W, H], "blocks_flagged": 0, "blocks_measured": per_frame[t]["measured"],
+                           "blocks": []})
+    events.sort(key=lambda e: e["frame"])
+    # a pop explains the unmeasured frame itself and the frames either side of it (they were matched against it)
+    unexplained = [t for t in unmeasured if not ({t - 1, t, t + 1} & pops)]
+    unmeasured_frames = [{"frame": t, "file": os.path.basename(files[t]), "measured_share": per_frame[t]["measured_share"]}
+                         for t in unexplained]
     share = n_meas / n_all if n_all else 0.0
-    verdict = "flicker" if events else ("pass" if share >= min_measured else "inconclusive")
-    return {"verdict": verdict, "events": events, "frames": len(frames), "evaluated_frames": len(per_frame),
+    verdict = "flicker" if events else ("pass" if share >= min_measured and not unmeasured_frames else "inconclusive")
+    return {"verdict": verdict, "events": events, "unmeasured_frames": unmeasured_frames,
+            "frames": len(frames), "evaluated_frames": len(per_frame),
             "block_px": B, "max_motion_px": R, "flicker_threshold": thr,
             "measured_blocks": n_meas, "total_blocks": n_all, "measured_share": round(share, 4),
             "not_measured": {"blocks": n_all - n_meas, **totals},
