@@ -23,6 +23,8 @@ ARGS:
                 Only float and int properties that are not read-only. Everything is checked before any change.
     max_evals   (int) cap on silhouette evaluations, the first and the closing re-score of the best values included
                 (default 60); `evals` is the true count. With 1 there is no re-score and `score_checked` is null
+                `converged` in the result is true only when a full sweep of every parameter at its final step
+                found no improvement; a stop on this cap is `converged: false`
     apply       (bool) keep the best values (default false: all values are restored)
     bg_tol      (float) as in silhouette_score.py
     scripts_dir (str|None) folder holding silhouette_score.py; default = the folder of this script
@@ -207,9 +209,11 @@ def main(objects=None, views=None, params=None, max_evals=60, apply=False, bg_to
         converged = False
         while evals < budget:
             improved = False
+            complete = True  # false once the budget cut this sweep short: a candidate was left untried
             for i, p in enumerate(ps):
                 for sign in (1, -1):
                     if evals >= budget:
+                        complete = False
                         break
                     cand = min(p.hi, max(p.lo, x[i] + sign * steps[i]))
                     if p.integer:
@@ -229,6 +233,8 @@ def main(objects=None, views=None, params=None, max_evals=60, apply=False, bg_to
                         break
                     p.back_to_committed()
             if not improved:
+                if not complete:
+                    break  # the budget ended the search mid-sweep: not converged
                 # an integer is exhausted once a full sweep at step 1 found nothing (both in-bounds neighbours were
                 # evaluated, or lie outside the bounds); a float is done when its halved step falls below tol
                 done = [st <= 1.0 if p.integer else st / 2 < p.tol for st, p in zip(steps, ps)]

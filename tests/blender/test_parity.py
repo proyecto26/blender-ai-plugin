@@ -895,6 +895,48 @@ def test_fit_integer(check, out_dir, measured):
     check("H3int no images leaked", not leaked_images(), leaked_images())
 
 
+def test_fit_budget_converged(check, out_dir, measured):
+    """converged is true only when a full sweep of every parameter at its final step found no improvement; a stop
+    on the evaluation budget is never convergence."""
+    reset_scene()
+    d = os.path.join(out_dir, "h3conv")
+    os.makedirs(d, exist_ok=True)
+    cam = camera("CamF", (0, -8, 0), rot_deg=(90, 0, 0), ortho=8.0)
+    bx = box("Arr", (1, 1, 1))
+    md = bx.modifiers.new("Arr", "ARRAY")
+    md.count = 3
+    ref3 = render(os.path.join(d, "arr3.png"), cam)
+    md.count = 2
+    ref2 = render(os.path.join(d, "arr2.png"), cam)
+    v3, v2 = [{"camera": "CamF", "reference": ref3}], [{"camera": "CamF", "reference": ref2}]
+    cnt = {"object": "Arr", "path": "modifiers[\"Arr\"].count"}
+    zloc = {"object": "Arr", "path": "location[2]", "min": -1.0, "max": 1.0}
+
+    def go(label, start, views, params, max_evals):
+        md.count, bx.location.z = start, 0.0
+        r = fit(objects=["Arr"], views=views, params=params, max_evals=max_evals)
+        measured[f"fit_conv_{label}"] = {"best": r["best"], "score_best": r["score_best"], "evals": r["evals"], "converged": r["converged"]}
+        return r
+
+    r = go("array_5_to_3_budget3", 5, v3, [dict(cnt, min=1, max=8, step=1)], 3)
+    check("H3conv array 5->3, max_evals 3: budget stop is not converged", not r["converged"] and r["score_best"] < 0.97, (r["converged"], r["best"], r["score_best"], r["evals"]))
+    r = go("array_5_to_3_budget6", 5, v3, [dict(cnt, min=1, max=8, step=1)], 6)
+    check("H3conv array 5->3, max_evals 6: reaches IoU 1.0", r["best"][0]["value"] == 3 and r["score_best"] > 0.99, (r["best"], r["score_best"], r["evals"]))
+    r = go("array_5_to_3_full", 5, v3, [dict(cnt, min=1, max=8, step=1)], 30)
+    check("H3conv array 5->3, generous budget: converged", r["converged"] and r["best"][0]["value"] == 3, (r["converged"], r["best"], r["evals"]))
+    r = go("int_bounds_reject_exhausts", 2, v2, [dict(cnt, min=1, max=3, step=1)], 3)
+    check("H3conv int [1,3] from 2, max_evals 3: neighbour 1 skipped, not converged", not r["converged"], (r["converged"], r["evals"]))
+    r = go("two_params_second_unevaluated", 2, v2, [dict(cnt, min=1, max=3, step=1), dict(zloc, step=0.1, tol=0.09)], 4)
+    check("H3conv two params, second never evaluated: not converged", not r["converged"], (r["converged"], r["evals"]))
+    r = go("float_budget", 2, v2, [dict(zloc, step=0.1, tol=0.09)], 3)
+    check("H3conv float step .1 tol .09, max_evals 3: not converged", not r["converged"], (r["converged"], r["evals"]))
+    r = go("float_normal", 2, v2, [dict(zloc, step=0.25, tol=0.05)], 60)
+    check("H3conv float normal convergence still true", r["converged"] and abs(r["best"][0]["value"]) < 0.06, (r["converged"], r["best"], r["evals"]))
+    r = go("mixed_normal", 2, v2, [dict(cnt, min=1, max=3, step=1), dict(zloc, step=0.25, tol=0.05)], 80)
+    check("H3conv int plus float normal convergence still true", r["converged"], (r["converged"], r["best"], r["evals"]))
+    check("H3conv no images leaked", not leaked_images(), leaked_images())
+
+
 # ---------------------------------------------------------------- H4 ingest_asset
 def build_source(sc_dims=100.0):
     """A two-mesh parented hierarchy at 100x scale ("centimetres"), smooth icospheres with no UVs, so that the file
@@ -1529,7 +1571,7 @@ def run_all(out_dir):
 
     os.makedirs(out_dir, exist_ok=True)
     for label, fn, wants_measured in (("clash_audit", test_clash, False), ("silhouette_score", test_silhouette, True),
-                                      ("fit_search", test_fit, True), ("fit_search integer", test_fit_integer, True), ("ingest_asset", test_ingest, True),
+                                      ("fit_search", test_fit, True), ("fit_search integer", test_fit_integer, True), ("fit_search converged", test_fit_budget_converged, True), ("ingest_asset", test_ingest, True),
                                       ("round5 clash_audit", test_round5_clash, False),
                                       ("round5 silhouette_score", test_round5_silhouette, True),
                                       ("round5 ingest_asset", test_round5_ingest, True),

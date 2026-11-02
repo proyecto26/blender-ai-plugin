@@ -43,6 +43,8 @@ Iteration 12: example parity and the open roadmap. Plan: `docs/plans/iteration-1
   by decoding the file bytes. The only correct route through Blender's writer is 8 bit; the 16-bit route writes the PNG itself
 - `scene_snapshot.py`: a repeated name in `restore` no longer crashes Blender
 - `fit_search.py`: an integer property steps by at least 1, and `converged` means its neighbours were really tried
+- `fit_search.py`: `converged` is true only after a full sweep of every parameter at its final step found no improvement; running out of `max_evals` gives `converged: false`
+- `test_handoff.py` records an exception raised outside `check()` as a failure (report written, exit 1)
 - `flicker_check.py` reports a one-frame partial dropout or a foreign tile, and a black frame in a very dark scene
 - The Blender suites now exit non-zero when a check fails
 
