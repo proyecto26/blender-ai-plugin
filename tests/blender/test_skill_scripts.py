@@ -243,17 +243,41 @@ def _expect_error(fn):
     return None
 
 
+def _validate_evidence(d, name="validate_ev.json", obj="SM_EvidenceOk"):
+    """A genuine result file from validate_asset.py, written fresh. Returns (path relative to d, verdict)."""
+    if "SM_EvidenceOk" not in bpy.data.objects:
+        _cube("SM_EvidenceOk", 1.0, loc=(60, 60, 0)).data.materials.append(bpy.data.materials.new("MAT_EvidenceOk"))
+    res = run("blender-mcp-workflow", "validate_asset.py", {"objects": [obj], "evidence_path": os.path.join(d, name)})
+    return name, res["verdict"]
+
+
+def _failing_validate_evidence(d, name="validate_fail.json"):
+    """A genuine validate_asset.py result that FAILs: a mesh with no SM_ prefix and an unapplied scale."""
+    if "BadEvidence" not in bpy.data.objects:
+        _cube("BadEvidence", 1.0, loc=(62, 60, 0)).scale = (2, 1, 1)
+    res = run("blender-mcp-workflow", "validate_asset.py", {"objects": ["BadEvidence"], "evidence_path": os.path.join(d, name)})
+    assert res["verdict"] == "FAIL", res["verdict"]
+    return name
+
+
+def _export_evidence(d, name="export_ev.json", glb="model.glb"):
+    """A genuine result file from export_asset.py, written fresh, next to the exported file."""
+    run("export-pipeline", "export_asset.py", {"objects": ["SM_Crate_01"], "engine": "web", "out_path": os.path.join(d, glb),
+                                               "evidence_path": os.path.join(d, name)})
+    return name
+
+
 def _manifest_case():
     import hashlib
     d = os.path.join(OUT, "manifest_run")
     os.makedirs(d, exist_ok=True)
-    with open(os.path.join(d, "model.glb"), "wb") as fh:
-        fh.write(b"abc")
     base = {"out_dir": d, "skill": "blender-mcp-workflow", "script": "validate_asset.py", "args": {"objects": ["SM_Crate_01"]}}
     rm = lambda **kw: run("blender-director", "run_manifest.py", dict(base, **kw))
     run("blender-director", "run_manifest.py", {"out_dir": d, "brief": {"asset": "SM_Crate_01"}})
-    rm(stage="validate", verdict="PASS", result_summary={"fails": 0})
-    r2 = rm(stage="export", verdict="PASS", exports=["model.glb"], result_summary={"exists": True})
+    ev, verdict = _validate_evidence(d)
+    rm(stage="validate", verdict="PASS", result_summary={"fails": 0}, evidence=ev, warn=verdict == "WARN", reason="crate WARN accepted")
+    r2 = rm(stage="export", verdict="PASS", exports=["model.glb"], result_summary={"exists": True}, script="export_asset.py",
+            evidence=_export_evidence(d))
     outside = _expect_error(lambda: rm(stage="verify", verdict="PASS", exports=[os.path.join(d, "..", "x.glb")]))
     outside_cap = _expect_error(lambda: rm(stage="verify", verdict="PASS", capture="../shot.png"))
     with open(os.path.join(d, "run_manifest.json"), encoding="utf-8") as fh:
@@ -269,7 +293,9 @@ def _manifest_case():
     need_cause = _expect_error(lambda: rm(stage="validate", verdict="FAIL", reason="n-gons again"))
     stopped = rm(stage="validate", verdict="FAIL", reason="n-gons again", cause="geometry")
     return {"events": len(m["events"]), "r2_events": r2["events"], "hash": m["events"][1]["exports"][0]["sha256"],
-            "expect_hash": hashlib.sha256(b"abc").hexdigest(), "outside": outside, "outside_cap": outside_cap,
+            "expect_hash": hashlib.sha256(open(os.path.join(d, "model.glb"), "rb").read()).hexdigest(),
+            "ev_hash": m["events"][1]["evidence"]["sha256"], "ev_script": m["events"][1]["evidence"]["script"],
+            "ev_expect": hashlib.sha256(open(os.path.join(d, "export_ev.json"), "rb").read()).hexdigest(), "outside": outside, "outside_cap": outside_cap,
             "keys_ok": keys_ok, "enums_ok": enums_ok, "blocked": blocked, "need_cause": need_cause,
             "stop": stopped["stop"], "blocked_by": stopped["blocked_by"], "final_events": stopped["events"]}
 
@@ -654,6 +680,9 @@ def _background_render():
         plan_dir = d + "_plan"
         plan = run("rendering", "background_render.py", dict(args, out_dir=plan_dir, plan=True))
         plan_saved = json.load(open(os.path.join(plan_dir, "render_plan.json"), encoding="utf-8"))
+        # Two frames: the first pays the start-up cost, so the second is timed too and the estimate adds the first once.
+        plan_math = abs(plan["expected_s"] - (plan["first_frame_s"] + plan["seconds_per_frame"]) ) <= 0.06
+        one = run("rendering", "background_render.py", dict(args, out_dir=d + "_plan1", frame_end=1, plan=True))
         plan_clean = not os.path.exists(os.path.join(plan_dir, "render_status.json")) and not os.listdir(os.path.join(plan_dir, "frames"))
         after_plan = run("rendering", "background_render.py", dict(args, out_dir=plan_dir))["state"]
         plan_done = _expect_error(lambda: run("rendering", "background_render.py", dict(args, plan=True)))
@@ -666,7 +695,7 @@ def _background_render():
                 "bad_error": bad_state["error"], "kept_error": kept_error, "kept_state": kept_state, "refused_later": refused_later,
                 "unreadable": unreadable, "busy": busy, "died": died, "held": held, "held_no_status": held_no_status,
                 "held_over": held_over, "held_kept": held_kept, "held_reason": held_reason, "after_held": after_held,
-                "plan": plan, "plan_saved": plan_saved, "plan_clean": plan_clean, "after_plan": after_plan, "plan_done": plan_done,
+                "plan": plan, "plan_saved": plan_saved, "plan_math": plan_math, "one": one, "plan_clean": plan_clean, "after_plan": after_plan, "plan_done": plan_done,
                 "plan_bad": plan_bad, "plan_bad_clean": plan_bad_clean,
                 "busy_state": busy_state, "no_backend": no_backend, "strays": strays, "movie": movie, "handlers_kept": len(bpy.app.handlers.render_post) == handlers}
     finally:
@@ -676,20 +705,108 @@ def _background_render():
         scene.frame_set(saved[8])
 
 
+def _rigid_shapes():
+    """The collision shape asked for is the one Blender holds, and a bad shape changes nothing."""
+    names = {"box": "SM_RB_Box", "sphere": "SM_RB_Sphere", "hull": "SM_RB_Hull", "mesh": "SM_RB_Mesh", "bad": "SM_RB_Bad"}
+    for i, n in enumerate(names.values()):
+        _cube(n, 0.5, loc=(40 + 2 * i, 40, 0))
+    base = {"material": "wood", "frames": 3}
+    out = {}
+    for key, shape in (("box", "BOX"), ("sphere", "SPHERE"), ("hull", "CONVEX_HULL")):
+        rep = run("physics-sim", "rigid_body_setup.py", dict(base, active=[names[key]], shape=shape))
+        out[key] = (rep["active"][names[key]]["shape"], bpy.data.objects[names[key]].rigid_body.collision_shape)
+    mesh = run("physics-sim", "rigid_body_setup.py", dict(base, active=[names["mesh"]], shape="MESH"))
+    out["mesh_active"] = bpy.data.objects[names["mesh"]].rigid_body.collision_shape
+    out["bad_error"] = _expect_error(lambda: run("physics-sim", "rigid_body_setup.py", dict(base, active=[names["bad"]], shape="TRIANGLES")))
+    out["bad_untouched"] = bpy.data.objects[names["bad"]].rigid_body is None
+    out["box_mass"] = bpy.data.objects[names["box"]].rigid_body.mass
+    out["sphere_mass"] = bpy.data.objects[names["sphere"]].rigid_body.mass
+    return out
+
+
+def _manifest_evidence_binding():
+    """validate and export PASS only on the right producer's fresh, passing result file."""
+    import time
+    d = os.path.join(OUT, "manifest_binding")
+    os.makedirs(d, exist_ok=True)
+    base = {"out_dir": d, "skill": "blender-mcp-workflow"}
+    rm = lambda **kw: run("blender-director", "run_manifest.py", dict(base, **kw))
+    gates = lambda: rm()["gates"]
+    summary = {"result_summary": {"fails": 0}}
+    warn_ok = lambda v: {"warn": True, "reason": "crate WARN accepted"} if v == "WARN" else {}
+
+    def forged(name, script, verdict="PASS", when=None, schema="script-evidence/1"):
+        import datetime
+        stamp = when or datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="microseconds")
+        with open(os.path.join(d, name), "w", encoding="utf-8") as fh:
+            json.dump({"schema": schema, "script": script, "verdict": verdict, "summary": {}, "time": stamp}, fh)
+        return name
+
+    out = {}
+    # 1. only a typed summary
+    out["summary_only"] = _expect_error(lambda: rm(stage="validate", script="validate_asset.py", verdict="PASS", **summary))
+    out["summary_only_gate"] = gates()["validate"]
+    # 2. a failing file
+    out["failing"] = _expect_error(lambda: rm(stage="validate", script="validate_asset.py", verdict="PASS",
+                                              evidence=_failing_validate_evidence(d), **summary))
+    out["failing_gate"] = gates()["validate"]
+    # 3. another script's file: an export file cannot back a validate PASS, nor an unknown or malformed one
+    out["export_for_validate"] = _expect_error(lambda: rm(
+        stage="validate", script="export_asset.py", verdict="PASS", evidence=_export_evidence(d, "genuine_export.json"), **summary))
+    out["unknown_script"] = _expect_error(lambda: rm(
+        stage="validate", script="made_up.py", verdict="PASS", evidence=forged("other.json", "made_up.py"), **summary))
+    out["not_evidence"] = _expect_error(lambda: rm(
+        stage="validate", script="validate_asset.py", verdict="PASS", evidence=forged("schema.json", "validate_asset.py", schema="x"), **summary))
+    out["outside"] = _expect_error(lambda: rm(
+        stage="validate", script="validate_asset.py", verdict="PASS", evidence="../genuine_export.json", **summary))
+    out["gates_after_refusals"] = (gates()["validate"], gates()["export"])
+    # 4. a stale file: the model was recorded after the script wrote it
+    ev, verdict = _validate_evidence(d, "stale.json")
+    time.sleep(1.2)
+    rm(stage="model", script="manual", verdict="PASS", **summary)
+    out["stale"] = _expect_error(lambda: rm(stage="validate", script="validate_asset.py", verdict="PASS", evidence=ev,
+                                            **summary, **warn_ok(verdict)))
+    out["stale_gate"] = gates()["validate"]
+    # 5. a fresh file passes; clash_audit.py is an allowed validate producer, export_asset.py the only export producer
+    ev, verdict = _validate_evidence(d, "fresh.json")
+    out["fresh"] = rm(stage="validate", script="validate_asset.py", verdict="PASS", evidence=ev, **summary, **warn_ok(verdict))["gates"]["validate"]
+    out["clash_allowed"] = rm(stage="validate", script="clash_audit.py", verdict="PASS",
+                              evidence=forged("clash.json", "clash_audit.py"), **summary)["gates"]["validate"]
+    # 6. validate is PASS now, so an export refusal below is about the evidence and nothing else
+    ev, _ = _validate_evidence(d, "genuine_validate.json")
+    out["validate_for_export"] = _expect_error(lambda: rm(
+        stage="export", script="export_asset.py", verdict="PASS", evidence=ev, **summary))
+    out["validate_for_export_script"] = _expect_error(lambda: rm(
+        stage="export", script="validate_asset.py", verdict="PASS", evidence=ev, **summary))
+    out["clash_for_export"] = _expect_error(lambda: rm(stage="export", script="clash_audit.py", verdict="PASS",
+                                                        evidence=forged("clash2.json", "clash_audit.py"), **summary))
+    out["export_gate_after_refusals"] = gates()["export"]
+    out["export"] = rm(stage="export", script="export_asset.py", verdict="PASS", evidence=_export_evidence(d, "ok_export.json"),
+                       **summary)["gates"]["export"]
+    # 7. the stored record carries the file's hash and the producer
+    with open(os.path.join(d, "run_manifest.json"), encoding="utf-8") as fh:
+        events = json.load(fh)["events"]
+    out["recorded"] = [(e["stage"], e["evidence"]["script"], len(e["evidence"]["sha256"])) for e in events if "evidence" in e]
+    return out
+
+
 def _manifest_validate_gate():
     d = os.path.join(OUT, "manifest_gate")
     os.makedirs(d, exist_ok=True)
     base = {"out_dir": d, "skill": "blender-mcp-workflow", "script": "validate_asset.py"}
     rm = lambda **kw: run("blender-director", "run_manifest.py", dict(base, **kw))
     ok = {"result_summary": {"fails": 0}}
+    # Valid export evidence in every call, so only the validate gate can be the reason for a refusal.
+    exp = lambda: dict(ok, script="export_asset.py", evidence=_export_evidence(d))
     rm(stage="model", verdict="PASS", **ok)
-    missing = _expect_error(lambda: rm(stage="export", verdict="PASS"))
+    missing = _expect_error(lambda: rm(stage="export", verdict="PASS", **exp()))
     rm(stage="validate", verdict="NOT_CHECKED", reason="not run yet")
-    not_checked = _expect_error(lambda: rm(stage="export", verdict="PASS"))
+    not_checked = _expect_error(lambda: rm(stage="export", verdict="PASS", **exp()))
     verify_nc = _expect_error(lambda: rm(stage="verify", verdict="PASS"))
     rm(stage="validate", verdict="N/A", reason="no mesh output")
-    ok_na = rm(stage="export", verdict="PASS", **ok)
-    rm(stage="validate", verdict="PASS", **ok)
+    ok_na = rm(stage="export", verdict="PASS", **exp())
+    ev, verdict = _validate_evidence(d)
+    rm(stage="validate", verdict="PASS", evidence=ev, warn=verdict == "WARN", reason="crate WARN accepted", **ok)
     ok_verify = rm(stage="verify", verdict="PASS", **ok)
     return {"missing": missing, "not_checked": not_checked, "verify_nc": verify_nc,
             "export_after_na": ok_na["gates"]["export"], "verify_after_pass": ok_verify["gates"]["verify"]}
@@ -870,6 +987,10 @@ def build_cases(out_dir):
         ("physics-sim.rigid_body_setup", lambda: run("physics-sim", "rigid_body_setup.py", {
             "active": ["SM_Rock_B"], "passive": ["SM_Crate_01"], "material": "stone", "frames": 20, "bake": True}),
          lambda r: r["active"]["SM_Rock_B"]["mass_kg"] > 0 and r.get("baked") is True),
+        ("physics-sim.rigid_body_shapes_applied", lambda: _rigid_shapes(),
+         lambda r: r["box"] == ("BOX", "BOX") and r["sphere"] == ("SPHERE", "SPHERE") and r["hull"] == ("CONVEX_HULL", "CONVEX_HULL")
+         and r["mesh_active"] == "CONVEX_HULL" and r["bad_error"] and "shape" in r["bad_error"] and r["bad_untouched"]
+         and r["box_mass"] > r["sphere_mass"] > 0),
         ("cloth-sim.cloth_setup", lambda: run("cloth-sim", "cloth_setup.py", {
             "cloth": "SM_Flag", "fabric": "silk", "pin_group": "Pin", "colliders": ["SM_Crate_01"]}),
          lambda r: r["pinned"] and r["colliders"] == ["SM_Crate_01"]),
@@ -982,11 +1103,26 @@ def build_cases(out_dir):
          and "outside this frame range" in (r["strays"] or "") and "image format" in (r["movie"] or "")
          and r["plan"] == r["plan_saved"] and r["plan"]["frames_total"] == 2 and r["plan"]["expected_s"] > 0
          and r["plan"]["status_path"] in r["plan"]["tell_user"] and "2 frames" in r["plan"]["tell_user"]
+         and r["plan"]["measured_frames"] == 2 and r["plan"]["first_frame_s"] > 0 and r["plan_math"]
+         and r["one"]["measured_frames"] == 1 and abs(r["one"]["expected_s"] - r["one"]["first_frame_s"]) <= 0.06
          and r["plan_clean"] and r["after_plan"] == "done" and "already exist" in (r["plan_done"] or "")
          and "device" in (r["plan_bad"] or "") and r["plan_bad_clean"]
          and r["handlers_kept"]),
+        ("director.evidence_binds_producers", lambda: _manifest_evidence_binding(),
+         lambda r: "without evidence" in (r["summary_only"] or "") and r["summary_only_gate"] == "NOT_CHECKED"
+         and "reports FAIL" in (r["failing"] or "") and r["failing_gate"] == "NOT_CHECKED"
+         and "must come from" in (r["validate_for_export"] or "") and "export_asset.py" in (r["validate_for_export"] or "")
+         and "must come from" in (r["validate_for_export_script"] or "")
+         and "must come from" in (r["export_for_validate"] or "")
+         and "must come from" in (r["unknown_script"] or "") and "script-evidence/1" in (r["not_evidence"] or "")
+         and "outside" in (r["outside"] or "") and list(r["gates_after_refusals"]) == ["NOT_CHECKED", "NOT_CHECKED"] and r["export_gate_after_refusals"] == "NOT_CHECKED"
+         and "stale" in (r["stale"] or "") and r["stale_gate"] == "NOT_CHECKED"
+         and r["fresh"] == "PASS" and r["clash_allowed"] == "PASS" and "must come from" in (r["clash_for_export"] or "")
+         and r["export"] == "PASS"
+         and r["recorded"] == [("validate", "validate_asset.py", 64), ("validate", "clash_audit.py", 64), ("export", "export_asset.py", 64)]),
         ("director.run_manifest", lambda: _manifest_case(),
          lambda r: r["events"] == 2 and r["r2_events"] == 2 and r["hash"] == r["expect_hash"]
+         and r["ev_hash"] == r["ev_expect"] and r["ev_script"] == "export_asset.py"
          and r["outside"] and "outside" in r["outside"] and r["outside_cap"] and "outside" in r["outside_cap"]
          and r["keys_ok"] and r["enums_ok"] and r["blocked"] and "blocked" in r["blocked"]
          and r["need_cause"] and "cause" in r["need_cause"] and r["stop"] is True

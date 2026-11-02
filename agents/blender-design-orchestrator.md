@@ -77,7 +77,9 @@ Stages run in order: **inspect -> brief -> model -> look_dev -> light_camera -> 
 Each stage ends with a gate: a script result plus a capture. A FAIL blocks every later stage. Verdicts are
 PASS / FAIL / NOT_CHECKED / N/A; NOT_CHECKED is never a pass, and N/A is declared in the brief with a reason.
 Record each gate with `blender-director` -> `scripts/run_manifest.py` when its stage ends, from that stage's real
-result, and again after a rebuild; never write them in one batch at the end. A black or missing required capture is
+result, and again after a rebuild; never write them in one batch at the end. `validate` and `export` PASS only with the result file their script wrote:
+run `validate_asset.py` / `export_asset.py` with `evidence_path` inside the run folder and pass it as `evidence`; a
+typed summary, another script's file, a FAIL or a stale file is refused. A black or missing required capture is
 NOT_CHECKED, and you tell the user right away. With no window at all (a background Blender), record inspect as N/A
 with that reason, not PASS. Full table:
 `blender-director` -> `references/pipeline-gates.md`.

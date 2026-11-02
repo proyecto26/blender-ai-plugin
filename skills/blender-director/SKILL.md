@@ -67,7 +67,8 @@ FAIL blocks every later stage:
 Verdicts: **PASS / FAIL / NOT_CHECKED / N/A**. NOT_CHECKED (e.g. `verify.checked: false`) is never a pass.
 N/A is declared in the brief with a reason (relight-only tasks skip model and export). The same gate
 failing twice: stop, classify the cause (geometry / materials / lighting / camera / export / tool-error),
-report it; no third blind retry. Record each gate with `scripts/run_manifest.py`. Details:
+report it; no third blind retry. Record each gate with `scripts/run_manifest.py`; validate and export need the result file
+of their script (`evidence_path` -> `evidence`). Details:
 `references/pipeline-gates.md`. Which skills may run in parallel and which never: `references/skill-routing.md`
 (section "Parallel vs Sequential"). Before a destructive step (apply, join, boolean apply, remesh, decimate)
 use the `blender-mcp-workflow` skill → `scripts/work_copy.py`.

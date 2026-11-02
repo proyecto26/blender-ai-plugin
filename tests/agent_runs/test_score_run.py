@@ -73,7 +73,7 @@ GOOD = [
     (T0 + 1, done("s")),
     (T0 + 2, assistant(text("Se congelara unos 10 s."), tool("a", score_run.LIVE_CODE, code="import bpy"))),
     (T0 + 12, done("a")),
-    (T0 + 20, assistant(text("Render en marcha, estado en out/render_status.json."),
+    (T0 + 20, assistant(text("Render en marcha, unos 40 s, estado en out/render_status.json."),
                         tool("b", "Bash", command="blender -b f.blend --python r.py", run_in_background=True))),
     (T0 + 21, done("b")),
     (T0 + 22, {"type": "result", "subtype": "success", "result": "Sigue en curso."}),
@@ -94,8 +94,7 @@ def extra_cases():
     inspect = lambda reason: {"events": [{"stage": "inspect", "verdict": "PASS", "time": "t", "reason": reason}]}
     batch = {"calls": [{"name": "Bash", "input": {"command": "run_manifest.py stage='model' stage='look_dev' stage='validate'"}, "t": None}]}
     metadata = {"calls": [{"name": "Bash", "input": {"command": "run_manifest.py brief='model look_dev validate'"}, "t": None}]}
-    bash = lambda command: {"calls": [{"name": "Bash", "input": {"command": command}, "t": T0, "end": T0 + 1}],
-                            "results": [], "texts": []}
+    bash = lambda command: replay([(T0, assistant(tool("x", "Bash", command=command))), (T0 + 1, done("x"))])
     with tempfile.TemporaryDirectory() as tmp:
         def finish(run, status):
             path = os.path.join(tmp, "s.json")
@@ -119,7 +118,81 @@ def extra_cases():
                 bash("blender -b f.blend --python r.py > log.txt 2>&1 && echo ok"))["verdict"], "OK"),
             ("raw trace has no timings", finish(final("Done.", None), {"state": "done", "ended": T0}), "SKIP"),
         ]
+        checks += announcement_cases(tmp)
+        checks += window_cases(tmp)
     return [(name, "", want, got) for name, got, want in checks if got != want]
+
+
+def replay(rows):
+    """A run as score_run reads it, built from the same events a recorded session holds."""
+    return score_run.collect(rows)
+
+
+PS_LAUNCH = ('Start-Process -FilePath "C:\\Users\\u\\AppData\\Local\\Microsoft\\WindowsApps\\blender-launcher.exe" '
+             '-ArgumentList "-b","C:\\run\\f.blend","--python","C:\\s\\background_render.py","--","--args-file","C:\\run\\args.json"')
+FG_LAUNCH = 'blender-launcher.exe -b C:\\run\\f.blend --python C:\\s\\background_render.py -- --args-file C:\\run\\args.json'
+ARGS_FILE = tool("w", "Write", file_path="C:\\run\\args.json", content=json.dumps({"out_dir": "C:\\run\\out"}))
+PLAN_FILE = tool("w", "Write", file_path="C:\\run\\args.json", content=json.dumps({"out_dir": "C:\\run\\out", "plan": True}))
+GOOD_SAY = "Rendering 4 frames in a separate Blender process, about 12 s. Progress: C:/run/out/render_status.json"
+
+
+def launch_run(say, tool_name="PowerShell", command=PS_LAUNCH, args_call=ARGS_FILE, took=None, background=None):
+    """A session: write the args file, optionally say something, launch the job."""
+    inp = {"command": command}
+    if background:
+        inp["run_in_background"] = True
+    rows = [(T0, assistant(args_call)), (T0 + 1, done("w"))]
+    rows.append((T0 + 2, assistant(*(([text(say)] if say else []) + [tool("j", tool_name, **inp)]))))
+    rows.append((T0 + 2 + (took or 1), done("j")))
+    return replay(rows)
+
+
+def announce(run, status=None, tmp=None):
+    args = argparse.Namespace(status=None)
+    if status is not None:
+        args.status = os.path.join(tmp, "st.json")
+        json.dump(status, open(args.status, "w", encoding="utf-8"))
+    return score_run.score_announcements(run, args)["verdict"]
+
+
+def announcement_cases(tmp):
+    slow = {"started": T0, "ended": T0 + 120}
+    return [
+        # Baselines that told the user nothing must be FLAG, not merely "not OK".
+        ("PowerShell Start-Process, no message", announce(launch_run(None)), "FLAG"),
+        ("Bash nohup job, no message", announce(launch_run(None, "Bash", "nohup blender -b f.blend --python r.py > log.txt 2>&1 &")), "FLAG"),
+        ("run_in_background job, no message", announce(launch_run(None, "Bash", "blender -b f.blend --python r.py", background=True)), "FLAG"),
+        ("foreground render of 90 s, no message", announce(launch_run(None, "Bash", FG_LAUNCH, took=90)), "FLAG"),
+        ("foreground background_render.py, no message, untimed", announce(launch_run(None, "Bash", FG_LAUNCH)), "FLAG"),
+        # A message that is not the real thing is not enough.
+        ("generic path, not the real out_dir", announce(launch_run("Rendering in the background, about 12 s, see render_status.json")), "FLAG"),
+        ("another folder's path", announce(launch_run("About 12 s. Progress: C:/other/out/render_status.json")), "FLAG"),
+        ("no duration", announce(launch_run("Rendering. Progress: C:/run/out/render_status.json")), "FLAG"),
+        # Valid ones.
+        ("PowerShell launch announced with path and duration", announce(launch_run(GOOD_SAY)), "OK"),
+        ("backslash path in the message", announce(launch_run("About 12 s. Progress: C:\\run\\out\\render_status.json")), "OK"),
+        ("minutes are a duration", announce(launch_run("About 2 minutos. Progress: C:/run/out/render_status.json")), "OK"),
+        ("foreground render announced", announce(launch_run(GOOD_SAY, "Bash", FG_LAUNCH, took=90)), "OK"),
+        ("the plan step needs no message", announce(launch_run(None, "Bash", FG_LAUNCH, args_call=PLAN_FILE, took=60)), "OK"),
+        ("a quick script is not a render job", announce(launch_run(None, "PowerShell", '& "blender-launcher.exe" -b f.blend --python r.py')), "OK"),
+        # The duration said must match what the render took.
+        ("said 12 s, took 120 s", announce(launch_run(GOOD_SAY), slow, tmp), "FLAG"),
+        ("said 110 s, took 120 s", announce(launch_run(GOOD_SAY.replace("12 s", "110 s")), slow, tmp), "OK"),
+    ]
+
+
+def window_cases(tmp):
+    mon = os.path.join(tmp, "m.csv")
+    open(mon, "w", encoding="utf-8").write("time,pid,minimized\n" + f"{score_run.local_clock(T0)},1,True\n")
+    silent_win = replay([(T0, assistant(tool("a", "PowerShell", command="Get-Date"))), (T0 + 1, done("a"))])
+    silent_mac = replay([(T0, assistant(tool("a", "Bash", command="ls /Users/me/proj"))), (T0 + 1, done("a"))])
+    window = lambda run, platform: score_run.score_window(run, argparse.Namespace(monitor=mon, platform=platform), None)["verdict"]
+    return [
+        ("minimized, never told, Windows", window(silent_win, "windows"), "FLAG"),
+        ("minimized, never told, macOS: the image decides", window(silent_mac, "macos"), "NOTE"),
+        ("minimized, platform read from Windows paths", window(silent_win, "auto"), "FLAG"),
+        ("minimized, platform read from macOS paths", window(silent_mac, "auto"), "NOTE"),
+    ]
 
 
 def main():

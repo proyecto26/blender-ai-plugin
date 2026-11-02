@@ -17,10 +17,11 @@ Iteration 11: fixes from a measured run of the real orchestrator agent, reviewed
   same moment both rendered before, and `overwrite` no longer gets past a run that is still going.
   `tests/blender/race_background_render.py` starts two real processes to check it
 - `animation` -> `turntable.py`: frames by the narrower view angle, so a tall subject is no longer cropped at 16:9
-- Docs: black captures of a minimized window are Windows-only, `BLENDER_PATH` is optional, and the `*_for_cli` timeout
-  kills a directly started Blender
+- Docs: black captures of a minimized window were seen on Windows only (a macOS review reported a minimized window still
+  captured), `BLENDER_PATH` is optional, and a macOS review reported that the `*_for_cli` timeout kills a directly started
+  Blender (not re-run since)
 - `tests/blender/test_skill_scripts.py`: the rigid body case collides with the crate, not `GEO_Ground`, which scatters
-  `COL_Rocks`; the dependency cycle crashed Blender on macOS (exit 139) in 2 of 3 suite runs
+  `COL_Rocks`; the dependency cycle crashed Blender on macOS (exit 139) in 2 of 3 suite runs, as reported by the macOS review
 - `score_run.py`: announcements also sees a background render started with `nohup` or a trailing `&`
 - `collision-proxy` -> `make_collision.py`: a convex proxy is now a closed hull. It kept the source's faces beside the hull
   (a 14-sided cylinder gave 104 faces and 50 non-manifold edges). A flat mesh is now an error that points to `shape: box`

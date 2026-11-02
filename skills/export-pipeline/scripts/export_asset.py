@@ -11,11 +11,14 @@ ARGS:
     engine   (str) unreal | unity | godot | web | generic
     out_path (str, required) file path; extension decides the format (.fbx .glb .gltf .usd/.usdc/.usda .obj)
     animation (bool) include animation (default False)
+    evidence_path (str|None) write this run's result there (script-evidence/1: script, time, verdict, summary) so
+                  run_manifest.py can back an `export` PASS with it. Use a path inside the run folder.
 
 glTF/GLB exports use the active scene only and return `verify` (the file is read back):
 {checked, nodes, joints, missing, no_geometry, leaked, ok}. Other formats return {"checked": False}.
 The scene camera and the mode the active object was in are restored (the glTF exporter changes both).
 """
+import datetime
 import json
 import os
 import struct
@@ -128,7 +131,18 @@ def _restore_state(camera, active, mode):
         print(f"export: could not restore camera/mode: {exc}", file=sys.stderr)
 
 
-def main(out_path, objects=None, engine="generic", animation=False):
+def _write_evidence(path, verdict, summary):
+    """Write the result file the run manifest reads. Atomic, so a reader never sees half of it."""
+    record = {"schema": "script-evidence/1", "script": "export_asset.py", "verdict": verdict, "summary": summary,
+              "time": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="microseconds")}
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    tmp = f"{path}.{os.getpid()}.tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(record, fh, indent=2)
+    os.replace(tmp, path)
+
+
+def main(out_path, objects=None, engine="generic", animation=False, evidence_path=None):
     targets = _targets(objects)
     ext = os.path.splitext(out_path)[1].lower()
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
@@ -171,9 +185,14 @@ def main(out_path, objects=None, engine="generic", animation=False):
         view_layer.objects.active = prev_active
         _restore_state(prev_camera, prev_active, prev_mode)
     ok = os.path.exists(out_path)
-    return {"path": out_path, "exists": ok, "bytes": os.path.getsize(out_path) if ok else 0,
-            "engine": engine, "objects": [o.name for o in targets],
-            "verify": _verify(out_path, targets)}
+    report = {"path": out_path, "exists": ok, "bytes": os.path.getsize(out_path) if ok else 0,
+              "engine": engine, "objects": [o.name for o in targets],
+              "verify": _verify(out_path, targets)}
+    if evidence_path:  # the stage 7 gate: the file exists and is not empty; verify.ok is judged at stage 8
+        _write_evidence(evidence_path, "PASS" if report["exists"] and report["bytes"] > 0 else "FAIL",
+                        {"path": out_path, "exists": report["exists"], "bytes": report["bytes"], "engine": engine,
+                         "objects": report["objects"], "verify_ok": report["verify"].get("ok")})
+    return report
 
 
 ARGS = globals().get("ARGS") or _cli_args()

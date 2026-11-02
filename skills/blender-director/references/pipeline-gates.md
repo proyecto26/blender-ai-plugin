@@ -24,8 +24,8 @@ A `validate_asset.py` WARN passes only with a recorded reason (`warn: true` + `r
 | 3 | model | blockout, then modeling; destructive steps via `work_copy.py` | `validate_asset.py` has no FAIL on transforms, n-gons, manifold, loose geo | front / 3/4 / side views |
 | 4 | look_dev | UVs, materials | validate: UVs and materials PASS; no missing textures | 3/4 view with materials |
 | 5 | light_camera | `light_rig.py`, `camera_rig.py` | `camera_rig` result `occluded_by == []` and `visible_fraction` near 1.0; `eye_height` set for first-person views | camera render |
-| 6 | validate | full `validate_asset.py` on the export set | verdict PASS (WARN only with a reason); tri budget met | final views |
-| 7 | export | engine export script | `exists` true and bytes > 0; export only after stage 6 PASS | none |
+| 6 | validate | full `validate_asset.py` on the export set, with `evidence_path` | verdict PASS (WARN only with a reason); tri budget met; result file passed as `evidence` | final views |
+| 7 | export | `export_asset.py`, with `evidence_path` | `exists` true and bytes > 0; export only after stage 6 PASS; result file passed as `evidence` | none |
 | 8 | verify | read the export's `verify` | `verify.ok == true` (no `missing`, no `no_geometry`, no `leaked`); `checked: false` is NOT_CHECKED | none |
 
 ## Recording
@@ -35,6 +35,17 @@ light_camera, animate, film, handoff, validate, export, verify; animate, film an
 and stay N/A until a verdict is recorded). The script refuses a PASS after an earlier FAIL, a PASS with an
 empty `result_summary`, and a PASS for look_dev or light_camera with no capture file. It hashes exports and
 captures, and keeps every path inside `out_dir`.
+
+**validate and export are backed by a result file, not typed in.** Run the producer with `evidence_path` set inside the run
+folder (`validate_asset.py` or `clash_audit.py` for validate, `export_asset.py` for export; each writes a
+`script-evidence/1` file with its name, time and verdict) and pass that path as `evidence`. The manifest reads the file,
+stores its sha256 and refuses a PASS when: there is no file, only a `result_summary`; the file names another stage's
+script (a validate file cannot pass an export) or not the `script` you passed; it reports FAIL; or it is stale, older
+than the latest earlier event of this or an earlier stage, so a rebuilt model needs a new run. A refusal leaves the
+gate NOT_CHECKED. A WARN passes only with `warn: true` and a reason. Stages judged by eye (look_dev, light_camera)
+keep the capture rule; the other stages are unchanged. This is a breaking change for validate and export. Limit: a
+process that can write files can forge such a file, so this ties a gate to real script output and stops gates typed
+in a batch at the end; it is no proof against someone trying to cheat.
 
 Record each gate when its stage ends, from that stage's real result, and record it again after a rebuild. The script
 cannot tell whether a summary is true or a capture looks right, so never write verdicts from memory in one batch.

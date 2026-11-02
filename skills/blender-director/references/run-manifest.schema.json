@@ -26,6 +26,19 @@
           "capture_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
           "capture_bytes": {"type": "integer"},
           "time": {"type": "string"},
+          "evidence": {
+            "description": "The producer's result file that backed a validate or export PASS (script-evidence/1).",
+            "type": "object",
+            "required": ["path", "sha256", "bytes", "script", "time", "verdict"],
+            "properties": {
+              "path": {"type": "string"},
+              "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+              "bytes": {"type": "integer"},
+              "script": {"enum": ["validate_asset.py", "clash_audit.py", "export_asset.py"]},
+              "time": {"type": "string"},
+              "verdict": {"enum": ["PASS", "WARN"]}
+            }
+          },
           "cause": {"enum": ["geometry", "materials", "lighting", "camera", "export", "tool-error"]},
           "stopped": {"type": "boolean"},
           "exports": {

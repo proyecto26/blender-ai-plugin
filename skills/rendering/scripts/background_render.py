@@ -26,10 +26,17 @@ applies when its `time` is later than the status's `started`, and an old `done` 
 Exit 1 with no new refusal file means the arguments themselves were wrong, such as a misspelled name.
 
 Before a long render, run this once with plan=true, in the foreground, with the same arguments. It writes
-`<out_dir>/render_plan.json`: `time`, `frames_total`, `seconds_per_frame`, `expected_s`, `status_path`, `device`, `samples` and
-`tell_user`, one line to send the user before starting the job, and `next_step`. It leaves no status and no frames, so the real run can use
-the same out_dir, and a refusal goes to `render_refused.json`. The estimate comes from that one frame, so it is rough, and
-frames of very different cost make it wrong. Check `time` before trusting an older plan file.
+`<out_dir>/render_plan.json`: `time`, `frames_total`, `seconds_per_frame`, `expected_s`, `first_frame_s`, `measured_frames`,
+`status_path`, `device`, `samples` and `tell_user`, one line to send the user before starting the job, and `next_step`. It leaves
+no status and no frames, so the real run can use the same out_dir, and a refusal goes to `render_refused.json`.
+The estimate is rough: frames of very different cost make it wrong, and it leaves out the 2 s or so a new Blender process
+takes to start and load the file. The first frame of a process is slower than the rest (shader compilation, device
+start-up), so when it took under 10 s and the range has a second frame, the plan renders that one too and estimates the job as the
+first frame plus the second for each remaining frame (`measured_frames` is 2; `first_frame_s` keeps the first). Measured on
+this machine (Windows, Blender 5.2.3, 320x180 to 480x270, 4 and 12 frames, 3 repeats): with n times the first frame, real
+time over the estimate was 0.88 to 1.03 for Cycles on the CPU (16 and 64 samples) but 0.24 to 0.40 for Eevee, whose first
+frame took 1.0 s and the rest 0.1 to 0.4 s; using only the second frame gave 1.7 to 3.3 for Eevee. With the first frame
+added once, as now, the ratio was 1.00 to 1.17 in all 15 runs: the estimate still runs a little short, by the process start. Check `time` before trusting an older plan file.
 The real run prints nothing useful for this: its output usually goes to a log, and the Microsoft Store launcher drops it.
 
 One process owns an out_dir at a time, through an OS lock on `<out_dir>/render.lock`. The operating system drops the lock
@@ -50,6 +57,7 @@ else:
 
 GPU_TYPES = ("OPTIX", "CUDA", "HIP", "ONEAPI", "METAL")
 LOCK_BUSY = (errno.EACCES, errno.EAGAIN, errno.EWOULDBLOCK)
+WARM_UP_LIMIT_S = 10  # a first frame slower than this is long enough that start-up cost no longer skews the estimate
 
 
 def _cli_args():
@@ -149,15 +157,26 @@ def _duration(seconds):
     return f"{max(1, round(seconds))} s" if seconds < 90 else f"{seconds / 60:.0f} min"
 
 
-def _plan(out_dir, status, frames, path):
-    """Measure one frame, and write what the user should hear before the job starts."""
-    scene = bpy.context.scene
-    scene.frame_set(frames[0])
+def _timed_render(frame):
+    """Render one frame without saving it and return how long it took."""
+    bpy.context.scene.frame_set(frame)
     begun = time.time()
     if "FINISHED" not in bpy.ops.render.render(write_still=False):
-        raise RuntimeError(f"the test render of frame {frames[0]} did not finish")
-    each = time.time() - begun
-    plan = {"time": time.time(), "frames_total": len(frames), "seconds_per_frame": round(each, 2), "expected_s": round(each * len(frames), 1),
+        raise RuntimeError(f"the test render of frame {frame} did not finish")
+    return time.time() - begun
+
+
+def _plan(out_dir, status, frames, path):
+    """Measure the render, and write what the user should hear before the job starts. The first frame of a process also
+    pays for shader compilation and device start-up (about 1 s in Eevee), so
+    n times the first frame overstates a short job 2.5 to 4 times. When that frame was fast and a second one exists, the
+    estimate is the first frame plus the second frame for each remaining frame."""
+    first = _timed_render(frames[0])
+    each, measured = first, 1
+    if len(frames) > 1 and first < WARM_UP_LIMIT_S:
+        each, measured = _timed_render(frames[1]), 2
+    plan = {"time": time.time(), "frames_total": len(frames), "seconds_per_frame": round(each, 2), "expected_s": round(first + each * (len(frames) - 1), 1),
+            "first_frame_s": round(first, 2), "measured_frames": measured,
             "status_path": path.replace("\\", "/"), "device": status["device"], "samples": status["samples"]}
     plan["tell_user"] = (f"Rendering {len(frames)} frames in a separate Blender process, about "
                          f"{_duration(plan['expected_s'])}. Your Blender window stays free. Progress: {plan['status_path']}")

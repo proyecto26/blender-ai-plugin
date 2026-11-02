@@ -1,43 +1,73 @@
 # Roadmap
 
-Planned improvements for the Blender AI Plugin. v2.0.0 shipped the official Blender MCP migration, tested scripts, the orchestrator agent, evals and validators.
+State of the Blender AI Plugin 2.0.0 (Blender 5.2+ only) and what is still open. Nothing here carries a version number
+for a release that did not happen: the old v1.2 to v1.5 labels were removed, and each open item names its plan id.
 
-## v1.2.0 — Reference & Photogrammetry
+The plan with the acceptance test of every item is `docs/plans/iteration-12-parity-and-roadmap.md`. An item is ticked only
+when it is merged and its test passes; the iteration 12 work is on branch `feat/parity-and-roadmap` and none of it is
+merged yet, so every iteration 12 box below is open.
 
-- [ ] `references/photogrammetry-cleanup.md` — scan mesh cleanup workflow
-- [ ] `references/reference-image-depth.md` — multi-angle reference triangulation
-- [ ] `realistic-style` — scan-match material workflow (Quixel-style)
-- [ ] Deeper `rendering` SKILL.md — Cycles denoiser presets per use-case
+## Shipped
 
-## v1.3.0 — Procedural Systems
+- Official Blender MCP integration, live work in the open window as the default, background renders for long work
+- Skills with tested scripts (`tests/blender/`), a recipe runner, a routing eval and an orchestrator agent
+- Validators: `scripts/validate_skills.py`, `scripts/check-manifests.sh`
+- Stage gates with a run manifest, `work_copy.py` for destructive steps, `background_render.py`, `generate_lods.py`,
+  `geometry-nodes/scripts/scatter_points.py`, the Blender 5.x API notes
+- `tests/agent_runs/score_run.py`, which compares an agent run's claims with its trace
 
-- [ ] `geometry-nodes` — advanced scatter system reference
-- [ ] `procedural-modeling` — terrain + road generation reference
-- [x] Blender 5.x geometry nodes API (`geometry-nodes/scripts/scatter_points.py`)
+## Iteration 12, open
 
-## v1.4.0 — Character & Creature Pipeline
+### S. Follow-ups from PR #9 (first batch)
 
-- [ ] `character-artist` — clothing simulation reference
-- [ ] `retopology` — hair card topology reference
-- [ ] `rigging` — shape key + driver reference for facial rigs
-- [ ] `animation` — mocap cleanup workflow
+- [ ] **S1** Scorer sees PowerShell launches, foreground renders and real paths, and checks the duration claim
+- [ ] **S2** `.gitattributes` keeps `*.sh` at LF
+- [ ] **S3** Wording that stated a measured result beyond what was run
+- [ ] **S4** The rigid body test fails on a bad collision shape
+- [ ] **S5** Render time estimate: first-frame overhead measured and corrected
+- [ ] **S6** GitHub Actions run `validate_skills.py` and `check-manifests.sh` on pull requests (unproven until pushed)
+- [ ] **S7** Window check made platform-aware (a minimized window is a Windows problem)
+- [ ] **S8** `validate` and `export` gates backed by the producer script's result file
+- [ ] **S9** This roadmap, and the README credit line
 
-## v1.5.0 — Engine Export Polish
+### H. High value
 
-- [ ] `export-pipeline` — Unreal 5 Nanite prep reference
-- [ ] `export-pipeline` — Unity HDRP material mapping reference
-- [x] `lod-pipeline` — automated LOD generation (`scripts/generate_lods.py`)
+- [ ] **H1** `clash_audit.py`: penetration, containment and floating parts
+- [ ] **H2** `silhouette_score.py`: compare a camera view with a reference mask
+- [ ] **H3** `fit_search.py`: search named properties against the silhouette score
+- [ ] **H4** `ingest_asset.py`: import a local GLB/GLTF/FBX/OBJ/USD file and normalize it
 
-## v2.0.0 — Multi-Agent Orchestration
+### M. Medium value
 
-- [ ] Parallel skill execution (Blender Director routes to multiple agents simultaneously)
-- [ ] Blender + Substance Painter bridge (material handoff workflow)
-- [ ] USD pipeline skill (OpenUSD for film/VFX)
+- [ ] **M1** `film-production/scripts/flicker_check.py`
+- [ ] **M2** `procedural-modeling/scripts/surface_tools.py` (loft, patch, continuity)
+- [ ] **M3** `blender-mcp-workflow/scripts/scene_snapshot.py`
 
-## Backlog
+### R. Older roadmap items, still open
 
-- [x] Validation script (`scripts/validate_skills.py`) — next: wire into GitHub Actions
-- GitHub Actions for SKILL.md schema lint on PRs
-- [x] Blender 5.x API notes (`skills/blender-mcp-workflow/references/blender-5-api-notes.md`)
-- `horror-style` — expanded Silent Hill / Bloober Team analysis reference
-- `lowpoly-style` — PS1 dithering shader for Blender
+Scripts:
+- [ ] **R1** Real ordered dithering for the PS1 look (`lowpoly-style`)
+- [ ] **R2** Terrain heightfield and road corridor (`procedural-modeling`)
+- [ ] **R3** Cycles denoiser presets per use case (`rendering`)
+- [ ] **R4** Substance Painter texture handoff (`texture-workflow`)
+- [ ] **R5** `usd-pipeline` skill with a round-trip script
+
+References:
+- [ ] **R6** Multi-angle reference triangulation (`blender-mcp-workflow`)
+- [ ] **R7** Scan-match material workflow (`realistic-style`)
+- [ ] **R8** Scatter systems: instancing, density masks, collision-aware scatter (`geometry-nodes`; a shorter
+  `scatter-systems.md` exists today)
+- [ ] **R9** Clothing simulation reference (`character-artist`)
+- [ ] **R10** Hair card topology reference (`retopology`)
+- [ ] **R11** Facial shape keys and drivers (`rigging`)
+- [ ] **R12** Mocap cleanup (`animation`)
+- [ ] **R13** Unreal Nanite prep (`unreal-export`)
+- [ ] **R14** Unity HDRP material mapping (`unity-export`)
+- [ ] **R15** Bloober Team analysis (`indie-horror-aesthetics`)
+- [ ] **R16** Parallel work rule: agents never share one live session; stated as unmeasured
+
+## Not planned, and why
+
+- Needs consent or hardware: a paid orchestrator run, ComfyUI generation (credits), Godot import (not installed), Mac runs
+- Low value: mask-to-mesh, segmentation, Scenario-style generation
+- Three.js is a non-goal. Downloading assets from inside Blender is banned; fetching stays outside `bpy`

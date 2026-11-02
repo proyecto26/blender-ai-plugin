@@ -20,11 +20,22 @@ ARGS:
     verdict         (str) PASS | FAIL | NOT_CHECKED | N/A   (NOT_CHECKED is never a pass)
     reason          (str) required for FAIL, N/A, NOT_CHECKED and for a PASS that accepts a WARN (warn=true)
     warn            (bool) PASS accepted despite a WARN (needs reason)
+    evidence        (str) result file a producer script wrote (its `evidence_path` argument), inside out_dir. `validate` and
+                    `export` need one to PASS. See "Evidence" below.
     capture         (str|None) screenshot / render file inside out_dir (relative paths resolve there); it must
                     exist, and its sha256 and size are recorded. look_dev and light_camera need one to PASS.
     exports         (list[str]) files inside out_dir; their sha256 and size are recorded
     cause           (str) geometry | materials | lighting | camera | export | tool-error; required on the
                     second consecutive FAIL of the same stage (stop and report, no third blind retry)
+
+Evidence (breaking for the `validate` and `export` stages: a typed `result_summary` alone is refused). The file must come
+from the stage's own producer: `validate` from validate_asset.py or clash_audit.py, `export` from export_asset.py; each writes
+{schema: "script-evidence/1", script, time, verdict, summary} when given `evidence_path`. The manifest reads the file, records
+its sha256, and refuses a PASS when the file names another script (or not the `script` you passed), says FAIL, or is older
+than the latest earlier event of this or an earlier stage (stale: the model changed after it was written). A WARN verdict
+passes only with warn=true and a reason. This links a gate to real script output and stops gates typed in a batch at the
+end; a process that can write files can still forge one, so it is no proof against an adversary. Stages judged by eye
+(look_dev, light_camera) keep the capture rule; the other stages are unchanged.
 
 Rules: a PASS for a stage is refused while an earlier stage's latest verdict is FAIL; a PASS for `export`
 or `verify` also needs the latest `validate` verdict to be PASS or N/A (NOT_CHECKED / missing is refused). Any PASS needs
@@ -43,6 +54,9 @@ STAGES = ["inspect", "brief", "model", "look_dev", "light_camera", "animate", "f
 OPTIONAL = {"animate", "film", "handoff"}  # tracks most asset runs never enter; N/A until a verdict is recorded
 VERDICTS = ["PASS", "FAIL", "NOT_CHECKED", "N/A"]
 CAPTURE_STAGES = ("look_dev", "light_camera")
+# The only scripts whose result file may back a PASS at these stages. clash_audit.py is allow-listed ahead of the script.
+PRODUCERS = {"validate": ("validate_asset.py", "clash_audit.py"), "export": ("export_asset.py",)}
+EVIDENCE_SCHEMA = "script-evidence/1"
 CAUSES = ["geometry", "materials", "lighting", "camera", "export", "tool-error"]
 NAME = "run_manifest.json"
 
@@ -83,6 +97,50 @@ def _sha256(full):
     return h.hexdigest()
 
 
+def _parse_time(text):
+    when = datetime.datetime.fromisoformat(text)
+    return when if when.tzinfo else when.replace(tzinfo=datetime.timezone.utc)
+
+
+def _read_evidence(out_dir, stage, script, evidence, events, warn, reason):
+    """Check a producer's result file for a PASS at `stage`; return the record to store."""
+    producers = PRODUCERS[stage]
+    if not evidence:
+        raise ValueError(f"stage '{stage}' cannot PASS without evidence: run {' or '.join(producers)} with "
+                         "evidence_path inside out_dir and pass it as evidence (a typed result_summary is not enough)")
+    full, rel = _inside(out_dir, evidence)
+    if not os.path.isfile(full):
+        raise ValueError(f"evidence file not found: {evidence}")
+    try:
+        with open(full, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except ValueError as exc:
+        raise ValueError(f"evidence file is not JSON: {evidence}") from exc
+    if not isinstance(data, dict) or data.get("schema") != EVIDENCE_SCHEMA:
+        raise ValueError(f"evidence file {evidence} is not a {EVIDENCE_SCHEMA} result written by a script")
+    if data.get("script") not in producers:
+        raise ValueError(f"evidence for '{stage}' must come from {list(producers)}, but {evidence} names {data.get('script')!r}")
+    if os.path.basename(script) != data["script"]:
+        raise ValueError(f"script {script!r} does not match the evidence, which names {data['script']!r}")
+    if data.get("verdict") not in ("PASS", "WARN", "FAIL"):
+        raise ValueError(f"evidence {evidence} has no usable verdict")
+    if data["verdict"] == "FAIL":
+        raise ValueError(f"evidence {evidence} reports FAIL: stage '{stage}' cannot PASS")
+    if data["verdict"] == "WARN" and not (warn and reason):
+        raise ValueError(f"evidence {evidence} reports WARN: pass warn=true with a reason to accept it")
+    try:
+        made = _parse_time(data["time"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(f"evidence {evidence} has no valid time") from exc
+    index = STAGES.index(stage)
+    earlier = [_parse_time(e["time"]) for e in events if STAGES.index(e["stage"]) <= index]
+    if earlier and made.replace(microsecond=0) < max(earlier):
+        raise ValueError(f"evidence {evidence} is stale: written {data['time']}, before the latest earlier event "
+                         f"{max(earlier).isoformat()}; run the script again")
+    return {"path": rel, "sha256": _sha256(full), "bytes": os.path.getsize(full), "script": data["script"],
+            "time": data["time"], "verdict": data["verdict"]}
+
+
 def _gates(events):
     latest = {}
     for e in events:
@@ -108,7 +166,7 @@ def _summary(manifest, extra=None):
 
 
 def main(out_dir, brief=None, stage=None, skill=None, script=None, args=None, result_summary=None,
-         verdict=None, reason=None, warn=False, capture=None, exports=None, cause=None):
+         verdict=None, reason=None, warn=False, capture=None, exports=None, cause=None, evidence=None):
     if not out_dir:
         raise ValueError("out_dir is required")
     os.makedirs(out_dir, exist_ok=True)
@@ -162,6 +220,9 @@ def main(out_dir, brief=None, stage=None, skill=None, script=None, args=None, re
             if not os.path.isfile(full):
                 raise ValueError(f"export file not found: {f}")
             files.append({"path": rel, "sha256": _sha256(full), "bytes": os.path.getsize(full)})
+        evidence_info = None
+        if verdict == "PASS" and stage in PRODUCERS:
+            evidence_info = _read_evidence(out_dir, stage, script, evidence, manifest["events"], warn, reason)
         if verdict == "PASS":
             if stage in CAPTURE_STAGES and not capture:
                 raise ValueError(f"stage '{stage}' cannot PASS without a capture file; record NOT_CHECKED if none exists")
@@ -174,6 +235,8 @@ def main(out_dir, brief=None, stage=None, skill=None, script=None, args=None, re
         event.update(cap_info)
         if warn:
             event["warn"] = True
+        if evidence_info:
+            event["evidence"] = evidence_info
         if files:
             event["exports"] = files
         if cause:
