@@ -136,15 +136,22 @@ path of this installed script and their ARGS. Don't inline or rewrite the script
 
 | Script | What it does |
 |--------|--------------|
-| `scripts/ps1_look.py` | Apply a PS1/PSX-era look: low internal resolution, nearest-neighbour texture filtering, vertex snapping (geometry nodes, per object), flat or Gouraud shading, compositor distance fog from the mist pass, 32px posterized textures for untextured meshes, and Standard view transform. |
+| `scripts/ps1_look.py` | Apply a PS1/PSX-era look: low internal resolution, nearest-neighbour texture filtering, vertex snapping (geometry nodes, per object), flat or Gouraud shading, compositor distance fog from the mist pass, an ordered Bayer dither with reduced colour levels as the last compositor stage, 32px posterized textures for untextured meshes, and Standard view transform. |
 
 ```python
 import runpy
 result = runpy.run_path("<skill_dir>/scripts/ps1_look.py", init_globals={"ARGS": {...}})["result"]
 ```
 
-ARGS: `objects`, `snap`, `resolution`, `flat`, `fog` (bool or RGB fog colour), `texture`. For a whole scene pass
+ARGS: `objects`, `snap`, `resolution`, `flat`, `fog` (bool or RGB fog colour), `texture`, `dither` (default true),
+`color_levels` (default 32 per channel), `dither_size` (2, 4 or 8; default 4). For a whole scene pass
 every mesh: `{"objects": [all mesh names], "flat": true}`; untextured meshes get a PS1 texture.
+
+Dither: the compositor adds a Bayer threshold in display space, then posterizes, so the 8-bit render has exactly
+`color_levels` values per channel in an ordered pattern (a test compares rendered pixels with an independent numpy
+version). It is a Bayer matrix, not a copy of the console's own table. The threshold is an image the size of the render:
+run the script again after changing the resolution. Run `compositing` `comp_grade` first, then this script, so the dither
+stays last; `comp_grade` itself does not dither. The script sets the scene's `dither_intensity` to 0.
 
 ## Reference Guide
 

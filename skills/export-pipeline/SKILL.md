@@ -185,6 +185,8 @@ result = runpy.run_path("<skill_dir>/scripts/export_asset.py", init_globals={"AR
 
 ARGS: `objects`, `engine`, `out_path`, `animation`
 
+USD for a pipeline hand-off: this script does not read USD back (`verify.checked: false`). Use the `usd-pipeline` skill, whose `usd_roundtrip.py` exports, reimports and compares counts, transforms and material names.
+
 glTF/GLB exports use the active scene only and read the file back: check `verify.ok` after every export (`nodes`, `missing`, `no_geometry`, `leaked` explain a failure). `verify.checked: false` (FBX, USD, OBJ) means NOT_CHECKED, never a pass.
 
 ## Reference Guide
