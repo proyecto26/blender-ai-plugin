@@ -1131,7 +1131,9 @@ def run_all(out_dir):
                              ("R3-review", test_review_r3), ("R4-review", test_review_r4),
                              ("R5-review", test_review_r5), ("review2", test_review2),
                              ("review3", test_review3), ("review4", test_review4),
-                             ("review5", test_review5), ("review6", test_review6), ("review7", test_review7)):
+                             ("review5", test_review5), ("review6", test_review6), ("review7", test_review7),
+                             ("USD scene state", test_usd_scene_state),
+                             ("HDRP saved mask map", test_hdrp_saved_mask_map)):
                 rec.section(name, lambda r, fn=fn: fn(r, scene, out_dir))
         finally:
             if ctx:
@@ -1215,6 +1217,150 @@ def test_review7(rec, scene, out_dir):
         rec.check(f"R2-review7 ({tag}): refused naming the cause", err is not None and word in err, err)
         rec.check(f"R2-review7 ({tag}): nothing changed", o.data is mesh0 and len(o.data.vertices) == n0
                   and [v.co.z for v in o.data.vertices][:20] == z0)
+
+
+def world_state(sc):
+    w = sc.world
+    tree = None
+    if w is not None and w.node_tree is not None:
+        bg = w.node_tree.nodes.get("Background")
+        tree = {"nodes": sorted((n.name, n.bl_idname) for n in w.node_tree.nodes),
+                "links": sorted((l.from_node.name, l.from_socket.identifier, l.to_node.name, l.to_socket.identifier)
+                                for l in w.node_tree.links),
+                "color": [round(v, 5) for v in bg.inputs[0].default_value] if bg else None,
+                "strength": round(bg.inputs[1].default_value, 5) if bg else None}
+    return {"world": w.name if w else None, "tree": tree, "worlds": sorted(x.name for x in bpy.data.worlds)}
+
+
+def time_state(sc):
+    return {"start": sc.frame_start, "end": sc.frame_end, "step": sc.frame_step, "current": sc.frame_current,
+            "fps": sc.render.fps, "fps_base": sc.render.fps_base}
+
+
+def test_usd_scene_state(rec, scene, out_dir):
+    # A round trip must leave the world, frame range, fps and current frame as they were: on success, with keep,
+    # and when the run fails or is refused.
+    me = bpy.data.meshes.new("RT_USDS_Cube")
+    bm = bmesh.new()
+    bmesh.ops.create_cube(bm, size=1.0)
+    bm.to_mesh(me)
+    bm.free()
+    scene.collection.objects.link(bpy.data.objects.new("RT_USDS_Cube", me))
+    scene.frame_start, scene.frame_end, scene.frame_step, scene.frame_current = 20, 100, 2, 37
+    scene.render.fps, scene.render.fps_base = 48, 1.001
+    world = bpy.data.worlds.new("RT_USDS_World")
+    world.use_nodes = True
+    tree = world.node_tree
+    sky = tree.nodes.new("ShaderNodeTexSky")
+    tree.links.new(sky.outputs["Color"], tree.nodes["Background"].inputs["Color"])
+    tree.nodes["Background"].inputs["Strength"].default_value = 0.7
+    scene.world = world
+    bpy.context.view_layer.update()
+    t0, w0 = time_state(scene), world_state(scene)
+    rec.check("USD-state fixture: non-default range, real node-based world",
+              t0["start"] == 20 and t0["end"] == 100 and len(w0["tree"]["links"]) == 2, (t0, w0))
+
+    def same(label):
+        t1, w1 = time_state(scene), world_state(scene)
+        rec.check(f"USD-state ({label}): frame range, step, fps and current frame unchanged", t1 == t0, (t0, t1))
+        rec.check(f"USD-state ({label}): the scene's world, its nodes and links, and the world list unchanged",
+                  w1 == w0 and scene.world is world, (set(w1["worlds"]) ^ set(w0["worlds"]), w1["tree"] == w0["tree"]))
+
+    path = os.path.join(out_dir, "r5_state", "state.usdc")
+    r = run("usd-pipeline", "usd_roundtrip.py", {"objects": ["RT_USDS_Cube"], "out_path": path})["result"]
+    rec.check("USD-state: the round trip itself is ok", r["ok"], r["problems"])
+    same("success")
+
+    k = run("usd-pipeline", "usd_roundtrip.py", {"objects": ["RT_USDS_Cube"], "keep": True,
+                                                 "out_path": os.path.join(out_dir, "r5_state", "keep.usdc")})["result"]
+    t1 = time_state(scene)
+    rec.check("USD-state (keep=True): frame range, fps and current frame unchanged", t1 == t0 and k["ok"], (t0, t1))
+    rec.check("USD-state (keep=True): the scene's world is still the original", scene.world is world, scene.world)
+    for o in [o for o in bpy.data.objects if o.name.startswith("RT_USDS_Cube") and o.name != "RT_USDS_Cube"]:
+        bpy.data.objects.remove(o)
+    for w in [w for w in bpy.data.worlds if w is not world and w.name not in w0["worlds"]]:
+        bpy.data.worlds.remove(w)
+
+    err = raises(lambda: run("usd-pipeline", "usd_roundtrip.py", {"objects": ["nope"], "out_path": path}))
+    rec.check("USD-state: a missing object is refused", err is not None, err)
+    err = raises(lambda: run("usd-pipeline", "usd_roundtrip.py", {"objects": ["RT_USDS_Cube"],
+                                                                  "out_path": path[:-5] + ".fbx"}))
+    rec.check("USD-state: a bad extension is refused", err is not None, err)
+    same("refused")
+
+    # a failure once the export has started: the target path is an existing directory
+    bad = os.path.join(out_dir, "r5_state", "isdir.usdc")
+    os.makedirs(bad, exist_ok=True)
+    err = raises(lambda: run("usd-pipeline", "usd_roundtrip.py", {"objects": ["RT_USDS_Cube"], "out_path": bad}),
+                 Exception)
+    rec.check("USD-state: writing to a directory path fails with an error", err is not None, err)
+    same("failed run")
+
+
+def decode_png_bytes(path):
+    """Independent PNG decoder for the test: returns (bit depth, float array [rows top first, W, 4])."""
+    import struct
+    import zlib
+    with open(path, "rb") as fh:
+        data = fh.read()
+    pos, idat, head = 8, b"", None
+    while pos < len(data):
+        size, kind = struct.unpack(">I4s", data[pos:pos + 8])
+        body = data[pos + 8:pos + 8 + size]
+        pos += 12 + size
+        if kind == b"IHDR":
+            head = struct.unpack(">IIBBBBB", body)
+        elif kind == b"IDAT":
+            idat += body
+    w, h, depth, ctype = head[:4]
+    assert ctype == 6, ctype
+    bpp, stride, raw = 4 * depth // 8, w * 4 * depth // 8, zlib.decompress(idat)
+    out, prev = bytearray(), bytearray(stride)
+    for y in range(h):
+        f = raw[y * (stride + 1)]
+        line = bytearray(raw[y * (stride + 1) + 1:(y + 1) * (stride + 1)])
+        for i in range(stride):
+            a = line[i - bpp] if i >= bpp else 0
+            b = prev[i]
+            c = prev[i - bpp] if i >= bpp else 0
+            if f == 1:
+                line[i] = (line[i] + a) & 255
+            elif f == 2:
+                line[i] = (line[i] + b) & 255
+            elif f == 3:
+                line[i] = (line[i] + ((a + b) >> 1)) & 255
+            elif f == 4:
+                pa, pb, pc = abs(b - c), abs(a - c), abs(a + b - 2 * c)
+                line[i] = (line[i] + (a if pa <= pb and pa <= pc else (b if pb <= pc else c))) & 255
+        out += line
+        prev = line
+    arr = np.frombuffer(bytes(out), np.uint8 if depth == 8 else ">u2").astype(np.float64) / (255.0 if depth == 8 else 65535.0)
+    return depth, arr.reshape(h, w, 4)
+
+
+def test_hdrp_saved_mask_map(rec, scene, out_dir):
+    # Runs the reference's own recipe, then decodes the FILES it names with this test's own decoder and compares them with
+    # known constants (metal left half, occlusion 0.5, white detail, smoothness 0.1 / 0.8 / 0.5 / 0.0 per row).
+    import re
+    md = os.path.join(SKILLS, "unity-export", "references", "hdrp-material-mapping.md")
+    code = re.findall(r"```python\n(.*?)```", open(md, encoding="utf-8").read(), re.S)[0]
+    g = {"__name__": "__mcp__"}
+    exec(compile(code, "hdrp-material-mapping.md#0", "exec"), g)  # maintainer test tool: runs the repo's documented recipe
+    files = (g.get("result") or {}).get("files")
+    rec.check("HDRP: the recipe saves files and names them in its result", bool(files) and len(files) == 2, files)
+    if not files:
+        return
+    smooth_rows_top_first = [0.0, 0.5, 0.8, 0.1]       # file rows run top to bottom; Blender's row 0 is the bottom
+    for path, depth_expected in zip(files, (8, 16)):
+        depth, dec = decode_png_bytes(path)
+        tol = (0.5 / 255 if depth == 8 else 0.5 / 65535) + 1e-6
+        rec.check(f"HDRP {depth}-bit file: depth is {depth_expected}", depth == depth_expected, depth)
+        for row, a in enumerate(smooth_rows_top_first):
+            px = dec[row]
+            rec.check(f"HDRP {depth}-bit file: alpha {a} row keeps R metallic, G 0.5, B white",
+                      abs(px[:, 3] - a).max() <= tol and abs(px[:2, 0] - 1.0).max() <= tol and abs(px[2:, 0]).max() <= tol
+                      and abs(px[:, 1] - 0.5).max() <= tol and abs(px[:, 2] - 1.0).max() <= tol,
+                      (a, px[0].round(4).tolist(), px[3].round(4).tolist()))
 
 
 def main(out_dir=None):
