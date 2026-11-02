@@ -1,0 +1,173 @@
+"""Build a seeded heightfield terrain mesh, optionally flattened into a corridor along a curve (a road bed).
+
+Noise comes from `mathutils.noise.fractal`. That function is not controlled by `noise.seed_set`, so the seed
+is turned into a sampling offset instead: the same seed always gives the same mesh, a different seed another.
+Creates one new object and touches nothing else.
+
+    import runpy
+    result = runpy.run_path("<skill_dir>/scripts/terrain_heightfield.py", init_globals={"ARGS": {
+        "name": "GEO_Terrain", "size": 60, "resolution": 129, "seed": 7, "height": 6,
+        "corridor": {"curve": "CRV_Road", "half_width": 3, "falloff": 6}}})["result"]
+
+ARGS:
+    name        (str)   new object (and mesh) name (default "GEO_Terrain"); refused if the object exists unless replace
+    size        (float) side length in meters, centred on `center` (default 50)
+    resolution  (int)   vertices per side, 2..513 (default 65)
+    seed        (int)   noise seed (default 0)
+    height      (float) noise amplitude in meters (default 5)
+    frequency   (float) noise features per meter, roughly 1 / feature size (default 0.04)
+    octaves     (int)   fractal octaves 1..8 (default 5)
+    center      (list[3]) world position of the terrain centre (default [0, 0, 0])
+    corridor    (dict|None) flatten along a curve object:
+                curve (str) curve object name; half_width (float) fully flat half width in m (default 3);
+                falloff (float) blend distance outside the flat part in m (default 5); offset (float) lowers the
+                bed below the curve by this many metres (default 0). Heights inside half_width equal the curve
+                height (minus offset); the curve is read in world space and only its XY position and Z are used.
+    collection  (str|None) collection to link into (default: the scene collection)
+    replace     (bool)  replace the mesh of an existing object of that name (default False = refuse)
+"""
+import json
+import random
+import sys
+
+import bpy
+import numpy as np
+from mathutils import Vector, noise
+
+
+def _cli_args():
+    """ARGS after `--`: one JSON object, or `--args-file <path.json>` (quoting-proof on every shell)."""
+    raw = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
+    if not raw:
+        return {}
+    if raw[0] == "--args-file":
+        with open(raw[1], encoding="utf-8") as fh:
+            return json.load(fh)
+    try:
+        return json.loads(raw[0])
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"ARGS after '--' must be one JSON object, got {raw[0]!r}; "
+                         "cmd/PowerShell mangle JSON quotes, so pass --args-file <path.json> instead") from exc
+
+
+def _curve_points(name):
+    """World-space polyline (N x 3) of the evaluated curve, in curve order."""
+    obj = bpy.data.objects.get(name)
+    if obj is None or obj.type != "CURVE":
+        raise ValueError(f"corridor curve {name!r} is not a curve object")
+    dg = bpy.context.evaluated_depsgraph_get()
+    ev = obj.evaluated_get(dg)
+    mesh = ev.to_mesh()
+    try:
+        pts = np.array([(obj.matrix_world @ v.co)[:] for v in mesh.vertices], dtype=np.float64)
+        order = _chain_order(mesh)
+    finally:
+        ev.to_mesh_clear()
+    if len(pts) < 2:
+        raise ValueError(f"curve {name!r} evaluates to fewer than two points")
+    return pts[order]
+
+
+def _chain_order(mesh):
+    """Vertex indices walked along the evaluated edges (a single open or closed chain)."""
+    adj = {}
+    for e in mesh.edges:
+        a, b = e.vertices
+        adj.setdefault(a, []).append(b)
+        adj.setdefault(b, []).append(a)
+    if not adj:
+        return list(range(len(mesh.vertices)))
+    start = next((v for v, n in adj.items() if len(n) == 1), min(adj))
+    order, seen, cur = [start], {start}, start
+    while True:
+        nxt = next((n for n in adj[cur] if n not in seen), None)
+        if nxt is None:
+            break
+        order.append(nxt)
+        seen.add(nxt)
+        cur = nxt
+    return order
+
+
+def _nearest_on_polyline(px, py, pts):
+    """For every (px, py): distance in XY to the polyline and the polyline's Z at the nearest point."""
+    best_d = np.full(px.shape, np.inf)
+    best_z = np.zeros(px.shape)
+    for a, b in zip(pts[:-1], pts[1:]):
+        abx, aby = b[0] - a[0], b[1] - a[1]
+        den = abx * abx + aby * aby
+        t = np.zeros(px.shape) if den < 1e-12 else np.clip(((px - a[0]) * abx + (py - a[1]) * aby) / den, 0.0, 1.0)
+        cx, cy = a[0] + t * abx, a[1] + t * aby
+        d = np.hypot(px - cx, py - cy)
+        closer = d < best_d
+        best_d = np.where(closer, d, best_d)
+        best_z = np.where(closer, a[2] + t * (b[2] - a[2]), best_z)
+    return best_d, best_z
+
+
+def main(name="GEO_Terrain", size=50.0, resolution=65, seed=0, height=5.0, frequency=0.04, octaves=5,
+         center=(0.0, 0.0, 0.0), corridor=None, collection=None, replace=False):
+    resolution, octaves = int(resolution), int(octaves)
+    if not 2 <= resolution <= 513:
+        raise ValueError("resolution must be 2..513")
+    if not 1 <= octaves <= 8:
+        raise ValueError("octaves must be 1..8")
+    if size <= 0:
+        raise ValueError("size must be > 0")
+    existing = bpy.data.objects.get(name)
+    if existing is not None and not replace:
+        raise ValueError(f"object {name!r} exists; pass replace=true to give it a new mesh")
+    if existing is not None and existing.type != "MESH":
+        raise ValueError(f"object {name!r} exists and is not a mesh")
+    target_coll = bpy.data.collections.get(collection) if collection else bpy.context.scene.collection
+    if target_coll is None:
+        raise ValueError(f"collection {collection!r} not found")
+    rng = random.Random(int(seed))
+    off = Vector((rng.uniform(-1000, 1000), rng.uniform(-1000, 1000), rng.uniform(-1000, 1000)))
+    cx, cy, cz = center
+    xs = np.linspace(-size / 2, size / 2, resolution)
+    gx, gy = np.meshgrid(xs, xs)
+    wx, wy = gx + cx, gy + cy
+    z = np.empty(gx.shape)
+    for j in range(resolution):
+        for i in range(resolution):
+            p = Vector((wx[j, i] * frequency, wy[j, i] * frequency, 0.0)) + off
+            z[j, i] = noise.fractal(p, 1.0, 2.0, octaves, noise_basis="PERLIN_ORIGINAL")
+    z = z * height + cz
+    info = None
+    if corridor:
+        pts = _curve_points(corridor["curve"])
+        half = float(corridor.get("half_width", 3.0))
+        fall = max(1e-6, float(corridor.get("falloff", 5.0)))
+        bed = float(corridor.get("offset", 0.0))
+        dist, cz_curve = _nearest_on_polyline(wx, wy, pts)
+        w = np.clip(1.0 - (dist - half) / fall, 0.0, 1.0)
+        w = w * w * (3.0 - 2.0 * w)  # smoothstep; exactly 1 inside half_width
+        z = z * (1.0 - w) + (cz_curve - bed) * w
+        info = {"curve": corridor["curve"], "half_width": half, "falloff": fall, "offset": bed,
+                "curve_points": int(len(pts)), "flat_vertices": int((dist <= half).sum())}
+    # x/y are relative to the object origin, which sits at (center.x, center.y, 0); z is already world height
+    verts = [(float(gx[j, i]), float(gy[j, i]), float(z[j, i])) for j in range(resolution)
+             for i in range(resolution)]
+    faces = [(j * resolution + i, j * resolution + i + 1, (j + 1) * resolution + i + 1, (j + 1) * resolution + i)
+             for j in range(resolution - 1) for i in range(resolution - 1)]
+    if existing is not None:
+        mesh = existing.data
+        mesh.clear_geometry()
+        obj = existing
+    else:
+        mesh = bpy.data.meshes.new(name)
+        obj = bpy.data.objects.new(name, mesh)
+        target_coll.objects.link(obj)
+    mesh.from_pydata(verts, [], faces)
+    mesh.update()
+    obj.location = (cx, cy, 0.0)
+    return {"object": obj.name, "vertices": len(verts), "faces": len(faces), "seed": int(seed),
+            "z_min": float(z.min()), "z_max": float(z.max()), "corridor": info,
+            "note": "Vertex Z is world height; the object origin is at (center.x, center.y, 0)."}
+
+
+ARGS = globals().get("ARGS") or _cli_args()
+result = main(**ARGS)
+if bpy.app.background and __name__ == "__main__":
+    print(json.dumps(result, indent=2))

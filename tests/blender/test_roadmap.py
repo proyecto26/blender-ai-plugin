@@ -1,0 +1,513 @@
+"""Headless Blender tests for the iteration-12 roadmap scripts R1-R5.
+
+R1 lowpoly-style/ps1_look.py          ordered dither, compared on real rendered pixels
+R2 procedural-modeling/terrain_heightfield.py  seeded terrain + corridor along a curve
+R3 rendering/render_preset.py         denoiser use-case presets and the prior values they return
+R4 texture-workflow/import_painter_textures.py  synthetic maps wired by name (Painter itself is NOT tested)
+R5 usd-pipeline/usd_roundtrip.py      export, reimport, compare, clean up
+
+Writes <out_dir>/roadmap_tests_report.json (summary passed/total/failed). Never saves the open file; the test scene,
+objects and datablocks it makes are removed at the end. Use a NEW out_dir each run.
+
+    blender -b --factory-startup --python tests/blender/test_roadmap.py -- '{"out_dir": "/tmp/roadmap-<new>"}'
+"""
+import json
+import os
+import runpy
+import sys
+import tempfile
+import traceback
+
+import bmesh
+import bpy
+import numpy as np
+
+HERE = os.path.dirname(os.path.abspath(globals().get("__file__") or sys.argv[0]))
+SKILLS = os.path.normpath(os.path.join(HERE, "..", "..", "skills"))
+
+COLLECTIONS = ("objects", "meshes", "materials", "images", "curves", "cameras", "lights", "node_groups",
+               "collections", "worlds")
+BAYER4 = np.array([[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]])  # written out, not computed
+
+
+def _cli_args():
+    if "--" in sys.argv:
+        raw = sys.argv[sys.argv.index("--") + 1:]
+        if raw:
+            return json.loads(raw[0])
+    return {}
+
+
+def run(skill, script, args):
+    return runpy.run_path(os.path.join(SKILLS, skill, "scripts", script), init_globals={"ARGS": args},
+                          run_name="__skill_test__")
+
+
+def raises(fn, exc=ValueError):
+    try:
+        fn()
+    except exc as e:
+        return str(e)
+    return None
+
+
+class Recorder:
+    def __init__(self):
+        self.results = []
+
+    def check(self, name, ok, detail=""):
+        self.results.append({"name": name, "ok": bool(ok), "detail": str(detail)[:400]})
+        return bool(ok)
+
+    def section(self, name, fn):
+        try:
+            fn(self)
+        except Exception:
+            self.results.append({"name": f"{name}: crashed", "ok": False, "detail": traceback.format_exc()[-700:]})
+
+
+# ---------------------------------------------------------------- shared fixtures
+
+def plane_with_texture(scene, name, pixels):
+    """4 x 3 m plane facing +Z with UVs 0..1 and a Closest-filtered image texture; returns (object, image)."""
+    h, w = pixels.shape[:2]
+    img = bpy.data.images.new(f"{name}_img", w, h, alpha=False)
+    img.colorspace_settings.name = "sRGB"
+    rgba = np.ones((h, w, 4), dtype=np.float32)
+    rgba[:, :, :3] = pixels
+    img.pixels.foreach_set(rgba.ravel())
+    img.pack()
+    me = bpy.data.meshes.new(name)
+    me.from_pydata([(-2, -1.5, 0), (2, -1.5, 0), (2, 1.5, 0), (-2, 1.5, 0)], [], [(0, 1, 2, 3)])
+    uv = me.uv_layers.new(name="UVMap")
+    for loop, co in zip(uv.data, [(0, 0), (1, 0), (1, 1), (0, 1)]):
+        loop.uv = co
+    mat = bpy.data.materials.new(f"{name}_mat")
+    nt = mat.node_tree
+    tex = nt.nodes.new("ShaderNodeTexImage")
+    tex.image, tex.interpolation = img, "Closest"
+    nt.nodes.active = tex
+    me.materials.append(mat)
+    obj = bpy.data.objects.new(name, me)
+    scene.collection.objects.link(obj)
+    return obj, img
+
+
+def set_texture_pixels(img, pixels):
+    h, w = pixels.shape[:2]
+    rgba = np.ones((h, w, 4), dtype=np.float32)
+    rgba[:, :, :3] = pixels
+    img.pixels.foreach_set(rgba.ravel())
+
+
+def ortho_camera(scene):
+    cam = bpy.data.objects.new("CAM_RT", bpy.data.cameras.new("CAM_RT"))
+    cam.data.type, cam.data.ortho_scale = "ORTHO", 4.0
+    cam.location = (0, 0, 5)
+    scene.collection.objects.link(cam)
+    scene.camera = cam
+
+
+def workbench_flat(scene):
+    scene.render.engine = "BLENDER_WORKBENCH"
+    sh = scene.display.shading
+    sh.light, sh.color_type, sh.show_cavity, sh.show_object_outline = "FLAT", "TEXTURE", False, False
+    scene.display.render_aa = "OFF"
+    scene.render.film_transparent = False
+
+
+def render_pixels(scene, path):
+    scene.render.filepath = path
+    scene.render.image_settings.file_format = "PNG"
+    scene.render.image_settings.color_mode = "RGB"
+    scene.render.image_settings.color_depth = "8"
+    bpy.ops.render.render(write_still=True, scene=scene.name)
+    img = bpy.data.images.load(path)
+    try:
+        img.colorspace_settings.name = "Non-Color"  # raw 8-bit values / 255
+        w, h = img.size
+        arr = np.array(img.pixels[:], dtype=np.float32).reshape(h, w, 4)[:, :, :3]
+    finally:
+        bpy.data.images.remove(img)
+    return arr
+
+
+# ---------------------------------------------------------------- R1
+
+def test_r1(rec, scene, out_dir):
+    W, H = 320, 240
+    gx = np.linspace(0.0, 1.0, W, dtype=np.float32)
+    grad = np.repeat(gx[None, :, None], H, axis=0).repeat(3, axis=2)
+    obj, img = plane_with_texture(scene, "RT_DitherPlane", np.round(grad * 255) / 255)
+    ortho_camera(scene)
+    workbench_flat(scene)
+    base = {"objects": [], "snap": 0, "fog": False, "texture": False, "resolution": [W, H]}
+
+    res_off = run("lowpoly-style", "ps1_look.py", {**base, "dither": False})["result"]
+    rec.check("R1 dither off: no dither stage", res_off["dither"] is None)
+    plain = render_pixels(scene, os.path.join(out_dir, "r1_plain.png"))
+    uniq_plain = len(np.unique(np.round(plain[:, :, 0] * 255)))
+    rec.check("R1 baseline gradient has many levels", uniq_plain > 150, uniq_plain)
+
+    levels = 8
+    steps = levels - 1
+    res = run("lowpoly-style", "ps1_look.py", {**base, "dither": True, "color_levels": levels, "dither_size": 4})["result"]
+    rec.check("R1 result reports the dither", bool(res["dither"]) and res["dither"]["levels"] == levels, res["dither"])
+    rec.check("R1 hint no longer sends the user to comp_grade for dithering",
+              "comp_grade does not dither" in res["hint"], res["hint"][:80])
+    rec.check("R1 render dither_intensity zeroed", scene.render.dither_intensity == 0.0, scene.render.dither_intensity)
+    dith = render_pixels(scene, os.path.join(out_dir, "r1_dither.png"))
+    vals = np.unique(np.round(dith * 255))
+    rec.check("R1 dithered gradient has at most `levels` values per channel", len(vals) <= levels, len(vals))
+    rec.check("R1 dithered gradient uses the levels (not collapsed)", len(vals) >= levels - 1, len(vals))
+    expect_levels = np.round(np.arange(levels) / steps * 255)
+    rec.check("R1 values sit on the k/(levels-1) grid",
+              bool(np.isin(vals, expect_levels).all()), sorted(set(vals) - set(expect_levels)))
+    ys, xs = np.mgrid[0:H, 0:W]
+    t = (BAYER4[ys % 4, xs % 4] + 0.5) / 16.0  # row 0 = bottom, like image.pixels
+    expected = np.floor(plain[:, :, 0] * steps + t) / steps
+    got = dith[:, :, 0]
+    exact = float((np.abs(got - expected) < 0.5 / 255).mean())
+    worst = float(np.abs(got - expected).max())
+    rec.check("R1 gradient pixels match an independent numpy Bayer dither (>= 99% exact)", exact >= 0.99, f"exact={exact:.4f}")
+    rec.check("R1 no pixel is more than one level from the expectation", worst <= 1.0 / steps + 2.0 / 255, worst)
+    rec.check("R1 channels agree (grey in, grey out)", bool(np.allclose(dith[:, :, 0], dith[:, :, 1])
+                                                            and np.allclose(dith[:, :, 1], dith[:, :, 2])))
+
+    # Flat grey between two levels: the exact Bayer pattern must come out, pixel for pixel.
+    flat = np.full((H, W, 3), 118 / 255.0, dtype=np.float32)
+    set_texture_pixels(img, flat)
+    flat_out = render_pixels(scene, os.path.join(out_dir, "r1_flat.png"))[:, :, 0]
+    frac = 118 / 255.0 * steps - np.floor(118 / 255.0 * steps)
+    want_upper = (BAYER4[ys % 4, xs % 4] + 0.5) / 16.0 >= 1.0 - frac
+    lo, hi = np.floor(118 / 255.0 * steps) / steps, np.ceil(118 / 255.0 * steps) / steps
+    got_upper = flat_out > (lo + hi) / 2
+    rec.check("R1 flat grey: two values only", len(np.unique(np.round(flat_out * 255))) == 2,
+              np.unique(np.round(flat_out * 255)))
+    rec.check("R1 flat grey: upper-level pixels follow the 4x4 Bayer matrix exactly", bool((got_upper == want_upper).all()),
+              f"mismatch={int((got_upper != want_upper).sum())}")
+    rec.check("R1 flat grey: pattern repeats with period 4",
+              bool((got_upper[:, :-4] == got_upper[:, 4:]).all() and (got_upper[:-4] == got_upper[4:]).all()))
+
+    # Re-run is idempotent and arguments are checked.
+    run("lowpoly-style", "ps1_look.py", {**base, "dither": True, "color_levels": levels})
+    n = len([x for x in scene.compositing_node_group.nodes if x.name.startswith("SK_PS1_Dither")])
+    rec.check("R1 rerun does not stack dither nodes", n == 5, n)
+    rec.check("R1 color_levels < 3 refused", raises(lambda: run("lowpoly-style", "ps1_look.py", {**base, "color_levels": 2})))
+    rec.check("R1 dither_size 3 refused", raises(lambda: run("lowpoly-style", "ps1_look.py", {**base, "dither_size": 3})))
+
+
+# ---------------------------------------------------------------- R2
+
+def mesh_coords(obj):
+    return np.array([(obj.matrix_world @ v.co)[:] for v in obj.data.vertices], dtype=np.float64)
+
+
+def test_r2(rec, scene, out_dir):
+    before = {o.name for o in bpy.data.objects}
+    args = {"size": 40, "resolution": 41, "seed": 7, "height": 4, "frequency": 0.08}
+    a = run("procedural-modeling", "terrain_heightfield.py", {**args, "name": "RT_TerrA"})["result"]
+    b = run("procedural-modeling", "terrain_heightfield.py", {**args, "name": "RT_TerrB"})["result"]
+    c = run("procedural-modeling", "terrain_heightfield.py", {**args, "name": "RT_TerrC", "seed": 8})["result"]
+    ca, cb, cc = (mesh_coords(bpy.data.objects[n]) for n in ("RT_TerrA", "RT_TerrB", "RT_TerrC"))
+    rec.check("R2 grid size", a["vertices"] == 41 * 41 and a["faces"] == 40 * 40, a["vertices"])
+    rec.check("R2 same seed gives the same mesh", bool(np.array_equal(ca, cb)))
+    rec.check("R2 different seed gives a different mesh", not np.allclose(ca[:, 2], cc[:, 2]))
+    rec.check("R2 terrain has relief within the amplitude scale", 0.5 < np.ptp(ca[:, 2]) < 8 * 4, np.ptp(ca[:, 2]))
+    rec.check("R2 only the new objects were added",
+              {o.name for o in bpy.data.objects} - before == {"RT_TerrA", "RT_TerrB", "RT_TerrC"})
+    rec.check("R2 existing name refused", raises(lambda: run("procedural-modeling", "terrain_heightfield.py",
+                                                            {**args, "name": "RT_TerrA"})))
+    run("procedural-modeling", "terrain_heightfield.py", {**args, "name": "RT_TerrA", "seed": 8, "replace": True})
+    rec.check("R2 replace swaps the mesh in place", np.array_equal(mesh_coords(bpy.data.objects["RT_TerrA"]), cc))
+
+    # Corridor along a straight, sloping poly curve: z must be 2 + x/10 on the bed.
+    cu = bpy.data.curves.new("CRV_RT", "CURVE")
+    cu.dimensions = "3D"
+    sp = cu.splines.new("POLY")
+    sp.points.add(1)
+    sp.points[0].co = (-10, 0, 1, 1)
+    sp.points[1].co = (10, 0, 3, 1)
+    crv = bpy.data.objects.new("CRV_RT", cu)
+    scene.collection.objects.link(crv)
+    half, fall = 3.0, 5.0
+    r = run("procedural-modeling", "terrain_heightfield.py",
+            {**args, "name": "RT_TerrRoad", "corridor": {"curve": "CRV_RT", "half_width": half, "falloff": fall}})["result"]
+    road = mesh_coords(bpy.data.objects["RT_TerrRoad"])
+    x, y, z = road[:, 0], road[:, 1], road[:, 2]
+    bed = (np.abs(y) <= half) & (np.abs(x) <= 10)
+    rec.check("R2 corridor reports flat vertices", r["corridor"] and r["corridor"]["flat_vertices"] > 20,
+              r["corridor"])
+    err = float(np.abs(z[bed] - (2 + x[bed] / 10)).max()) if bed.any() else 99
+    rec.check("R2 corridor height equals the curve height (<= 1 mm)", bed.sum() > 20 and err < 1e-3, f"n={bed.sum()} err={err}")
+    far = np.abs(y) > half + fall
+    rec.check("R2 outside corridor + falloff the terrain is the untouched noise", bool(np.allclose(z[far], cb[far, 2], atol=1e-6)))
+    rec.check("R2 the corridor really changed the terrain", float(np.abs(z[bed] - cb[bed, 2]).max()) > 0.05)
+    rec.check("R2 bad curve refused", raises(lambda: run("procedural-modeling", "terrain_heightfield.py", {
+        **args, "name": "RT_TerrBad", "corridor": {"curve": "nope"}})))
+    rec.check("R2 refused call left no object", "RT_TerrBad" not in bpy.data.objects)
+
+
+# ---------------------------------------------------------------- R3
+
+DEN_KEYS = ["use_denoising", "denoiser", "denoising_input_passes", "denoising_prefilter", "denoising_quality",
+            "denoising_use_gpu", "use_preview_denoising", "preview_denoiser", "preview_denoising_input_passes",
+            "preview_denoising_prefilter", "preview_denoising_quality", "preview_denoising_start_sample",
+            "samples", "adaptive_threshold", "use_animated_seed"]
+
+
+def test_r3(rec, scene, out_dir):
+    cy = scene.cycles
+
+    def snap():
+        return {k: getattr(cy, k) for k in DEN_KEYS}
+    probe = run("rendering", "render_preset.py", {"preset": "eevee_preview"})
+    presets = probe["PRESETS"]
+    new = [p for p in presets if p.startswith("denoise_")]
+    rec.check("R3 five denoise presets exist", len(new) == 5, new)
+    order = ["cycles_final", "denoise_draft", "denoise_final_still", "denoise_animation", "denoise_viewport",
+             "denoise_off", "cycles_preview", "denoise_final_still", "denoise_draft"]
+    for name in order:
+        before = snap()
+        res = run("rendering", "render_preset.py", {"preset": name})["result"]
+        after = snap()
+        cfg = presets[name]["cycles"] if "cycles" in presets[name] else {}
+        rec.check(f"R3 {name}: nothing skipped (all properties real)", res["skipped"] == [], res["skipped"])
+        wrong = {k: (getattr(cy, k), v) for k, v in cfg.items()
+                 if not (abs(getattr(cy, k) - v) < 1e-6 if isinstance(v, float) else getattr(cy, k) == v)}
+        rec.check(f"R3 {name}: every property holds the preset value", not wrong, wrong)
+        changed = [k for k in DEN_KEYS if before[k] != after[k]]
+        missing = [k for k in changed if f"cycles.{k}" not in res["previous"]]
+        rec.check(f"R3 {name}: previous lists every denoise property that changed", not missing, f"changed={changed} missing={missing}")
+        bad = {k: (res["previous"].get(f"cycles.{k}"), before[k]) for k in changed
+               if res["previous"].get(f"cycles.{k}") != before[k]}
+        rec.check(f"R3 {name}: prior values are the real prior values", not bad, bad)
+    # Revert from `previous` alone puts the denoiser state back.
+    state0 = snap()
+    res = run("rendering", "render_preset.py", {"preset": "denoise_animation"})["result"]
+    for key, value in res["previous"].items():
+        group, _, prop = key.partition(".")
+        if group == "cycles":
+            setattr(cy, prop, value)
+    rec.check("R3 reverting with `previous` restores the denoiser state", snap() == state0, {k: (snap()[k], state0[k]) for k in DEN_KEYS if snap()[k] != state0[k]})
+    rec.check("R3 existing keys kept in previous", {"engine", "resolution_percentage", "view_transform", "look"} <= set(res["previous"]))
+    rec.check("R3 unknown preset refused", raises(lambda: run("rendering", "render_preset.py", {"preset": "denoise_nope"})))
+
+
+# ---------------------------------------------------------------- R4
+
+def save_map(path, value, size=8):
+    img = bpy.data.images.new("tmp_map", size, size, alpha=False)
+    try:
+        px = np.ones((size, size, 4), dtype=np.float32)
+        px[:, :, :3] = value
+        img.pixels.foreach_set(px.ravel())
+        img.filepath_raw = path
+        img.file_format = "PNG"
+        img.save()
+    finally:
+        bpy.data.images.remove(img)
+
+
+def linked(sock):
+    return sock.links[0].from_node if sock.is_linked else None
+
+
+def test_r4(rec, scene, out_dir):
+    folder = os.path.join(out_dir, "r4_maps")
+    os.makedirs(folder, exist_ok=True)
+    for stem in ("BaseColor", "Roughness", "Metallic", "Normal", "Height", "Emissive", "Opacity", "AmbientOcclusion",
+                 "Mystery", "BaseColor.1001"):
+        save_map(os.path.join(folder, f"Crate_{stem}.png"), 0.5)
+    save_map(os.path.join(folder, "Other_BaseColor.png"), 0.5)
+    open(os.path.join(folder, "notes.txt"), "w").write("not an image")
+    cube = bpy.data.objects.new("RT_Cube", bpy.data.meshes.new("RT_Cube"))
+    scene.collection.objects.link(cube)
+    r = run("texture-workflow", "import_painter_textures.py",
+            {"folder": folder, "texture_set": "Crate", "material": "MAT_RT_Crate", "assign_to": ["RT_Cube"]})["result"]
+    mat = bpy.data.materials["MAT_RT_Crate"]
+    bsdf = next(n for n in mat.node_tree.nodes if n.bl_idname == "ShaderNodeBsdfPrincipled")
+
+    def img_of(socket_name):
+        node = linked(bsdf.inputs[socket_name])
+        return node.image if node and node.bl_idname == "ShaderNodeTexImage" else None
+    bc, ro, me = img_of("Base Color"), img_of("Roughness"), img_of("Metallic")
+    em, al = img_of("Emission Color"), img_of("Alpha")
+    rec.check("R4 base colour wired from the BaseColor file", bc is not None and bc.filepath.endswith("Crate_BaseColor.png"),
+              bc and bc.filepath)
+    rec.check("R4 roughness wired from the Roughness file", ro is not None and ro.filepath.endswith("Crate_Roughness.png"))
+    rec.check("R4 metallic wired from the Metallic file", me is not None and me.filepath.endswith("Crate_Metallic.png"))
+    rec.check("R4 emissive and opacity wired", em is not None and al is not None and em.filepath.endswith("Emissive.png")
+              and al.filepath.endswith("Opacity.png"))
+    rec.check("R4 colour maps are sRGB", bc.colorspace_settings.name == "sRGB" and em.colorspace_settings.name == "sRGB",
+              (bc.colorspace_settings.name, em.colorspace_settings.name))
+    rec.check("R4 data maps are Non-Color",
+              all(i.colorspace_settings.name == "Non-Color" for i in (ro, me, al)),
+              [i.colorspace_settings.name for i in (ro, me, al)])
+    bump = linked(bsdf.inputs["Normal"])
+    nmap = linked(bump.inputs["Normal"]) if bump and bump.bl_idname == "ShaderNodeBump" else None
+    nimg = linked(nmap.inputs["Color"]) if nmap and nmap.bl_idname == "ShaderNodeNormalMap" else None
+    himg = linked(bump.inputs["Height"]) if bump else None
+    rec.check("R4 normal: texture -> Normal Map -> Bump -> BSDF", nimg is not None and nimg.image.filepath.endswith("Normal.png"))
+    rec.check("R4 normal and height images are Non-Color",
+              nimg is not None and himg is not None and nimg.image.colorspace_settings.name == "Non-Color"
+              and himg.image.colorspace_settings.name == "Non-Color")
+    rec.check("R4 AO not wired by default", not any(n.bl_idname == "ShaderNodeMix" for n in mat.node_tree.nodes))
+    rec.check("R4 unmatched and UDIM files reported",
+              "Crate_Mystery.png" in r["unmatched"] and "Crate_BaseColor.1001.png" in r["skipped_udim"], (r["unmatched"], r["skipped_udim"]))
+    rec.check("R4 other texture set and non-images ignored",
+              not any("Other" in v for v in r["files"].values()) and "notes.txt" not in r["unmatched"])
+    rec.check("R4 material assigned", [s.material.name for s in cube.material_slots] == ["MAT_RT_Crate"])
+    rec.check("R4 existing material refused", raises(lambda: run("texture-workflow", "import_painter_textures.py", {
+        "folder": folder, "texture_set": "Crate", "material": "MAT_RT_Crate"})))
+    rec.check("R4 missing folder refused", raises(lambda: run("texture-workflow", "import_painter_textures.py", {
+        "folder": os.path.join(out_dir, "nope")})))
+
+    # DirectX normals get a green flip between the texture and the Normal Map node.
+    run("texture-workflow", "import_painter_textures.py", {
+        "folder": folder, "texture_set": "Crate", "material": "MAT_RT_DX", "normal_convention": "DIRECTX"})
+    dx = bpy.data.materials["MAT_RT_DX"].node_tree
+    nm = next(n for n in dx.nodes if n.bl_idname == "ShaderNodeNormalMap")
+    comb = linked(nm.inputs["Color"])
+    inv = linked(comb.inputs["Green"]) if comb else None
+    sep = linked(inv.inputs[1]) if inv else None
+    tex = linked(sep.inputs["Color"]) if sep else None
+    rec.check("R4 DirectX: texture -> split -> 1-G -> combine -> Normal Map",
+              bool(comb and inv and inv.operation == "SUBTRACT" and tex and tex.image.filepath.endswith("Normal.png")))
+    ok_default = not any(n.name.startswith("FLIP_G") for n in mat.node_tree.nodes)
+    rec.check("R4 OpenGL default has no flip", ok_default)
+
+    # Packed ORM.
+    orm = os.path.join(out_dir, "r4_orm")
+    os.makedirs(orm, exist_ok=True)
+    save_map(os.path.join(orm, "Rock_BaseColor.png"), 0.4)
+    save_map(os.path.join(orm, "Rock_OcclusionRoughnessMetallic.png"), 0.3)
+    run("texture-workflow", "import_painter_textures.py", {"folder": orm, "material": "MAT_RT_ORM"})
+    on = bpy.data.materials["MAT_RT_ORM"].node_tree
+    ob = next(n for n in on.nodes if n.bl_idname == "ShaderNodeBsdfPrincipled")
+    rs, ms = linked(ob.inputs["Roughness"]), linked(ob.inputs["Metallic"])
+    rec.check("R4 ORM: G -> Roughness, B -> Metallic from one Non-Color image",
+              bool(rs and ms and rs.name == ms.name and rs.bl_idname == "ShaderNodeSeparateColor"
+                   and ob.inputs["Roughness"].links[0].from_socket.name == "Green"
+                   and ob.inputs["Metallic"].links[0].from_socket.name == "Blue"
+                   and linked(rs.inputs["Color"]).image.colorspace_settings.name == "Non-Color"))
+
+
+# ---------------------------------------------------------------- R5
+
+def test_r5(rec, scene, out_dir):
+    def mat(name, rgb):
+        m = bpy.data.materials.new(name)
+        m.diffuse_color = (*rgb, 1.0)
+        return m
+
+    def mesh_obj(name, build, loc, mats=()):
+        me = bpy.data.meshes.new(name)
+        bm = bmesh.new()
+        build(bm)
+        bm.to_mesh(me)
+        bm.free()
+        for m in mats:
+            me.materials.append(m)
+        o = bpy.data.objects.new(name, me)
+        scene.collection.objects.link(o)
+        o.location = loc
+        return o
+    red, blue, green = mat("RT_Red", (1, 0, 0)), mat("RT_Blue", (0, 0, 1)), mat("RT_Green", (0, 1, 0))
+    cube = mesh_obj("RT_USD_Cube", lambda bm: bmesh.ops.create_cube(bm, size=1.0), (1, 2, 0.5), [red])
+    cube.rotation_euler = (0.1, 0.2, 0.3)
+    cube.scale = (1.0, 2.0, 0.5)
+    sph = mesh_obj("RT_USD_Sphere", lambda bm: bmesh.ops.create_uvsphere(bm, u_segments=12, v_segments=6, radius=0.4),
+                   (-2, 0, 1), [blue, green])
+    for i, p in enumerate(sph.data.polygons):
+        p.material_index = i % 2
+    child = mesh_obj("RT_USD_Child", lambda bm: bmesh.ops.create_cube(bm, size=0.3), (0.0, 0.0, 1.0), [green])
+    child.parent = cube
+    sub = mesh_obj("RT_USD_Sub", lambda bm: bmesh.ops.create_cube(bm, size=1.0), (4, 0, 0.5), [red])
+    sub.modifiers.new("Subsurf", "SUBSURF").levels = 1
+    sub.modifiers[0].render_levels = 1
+    bpy.context.view_layer.update()
+    names = ["RT_USD_Cube", "RT_USD_Sphere", "RT_USD_Child", "RT_USD_Sub"]
+    snapshot = {c: sorted(i.name for i in getattr(bpy.data, c)) for c in ("objects", "meshes", "materials")}
+    matrices = {n: [list(r) for r in bpy.data.objects[n].matrix_world] for n in names}
+    path = os.path.join(out_dir, "r5", "roundtrip.usdc")
+    r = run("usd-pipeline", "usd_roundtrip.py", {"objects": names, "out_path": path})["result"]
+    rec.check("R5 round trip ok", r["ok"], r["problems"])
+    rec.check("R5 file written", os.path.isfile(path) and r["bytes"] > 0, r["bytes"])
+    rec.check("R5 all four objects found after import", all(r["per_object"][n]["found"] for n in names), r["per_object"])
+    rec.check("R5 transforms match", all(v["matrix_max_diff"] < 1e-4 for v in r["per_object"].values()),
+              {k: v["matrix_max_diff"] for k, v in r["per_object"].items()})
+    sub_counts = r["per_object"]["RT_USD_Sub"]
+    rec.check("R5 modifier result exported (evaluated verts/faces match, more than the base cube)",
+              sub_counts["verts"][0] == sub_counts["verts"][1] and sub_counts["verts"][0] > 8, sub_counts["verts"])
+    rec.check("R5 material names survive (two-material sphere)",
+              r["per_object"]["RT_USD_Sphere"]["materials"][1] == ["RT_Blue", "RT_Green"],
+              r["per_object"]["RT_USD_Sphere"]["materials"])
+    after = {c: sorted(i.name for i in getattr(bpy.data, c)) for c in ("objects", "meshes", "materials")}
+    rec.check("R5 scene datablocks unchanged after the check", after == snapshot,
+              {c: set(after[c]) ^ set(snapshot[c]) for c in snapshot if after[c] != snapshot[c]})
+    rec.check("R5 original transforms untouched",
+              all(np.allclose(np.array([list(r_) for r_ in bpy.data.objects[n].matrix_world]), np.array(matrices[n]))
+                  for n in names))
+    rec.check("R5 bad extension refused", raises(lambda: run("usd-pipeline", "usd_roundtrip.py", {
+        "objects": names, "out_path": os.path.join(out_dir, "x.fbx")})))
+    rec.check("R5 missing object refused", raises(lambda: run("usd-pipeline", "usd_roundtrip.py", {
+        "objects": ["nope"], "out_path": os.path.join(out_dir, "x.usdc")})))
+
+
+# ---------------------------------------------------------------- harness
+
+def run_all(out_dir):
+    rec = Recorder()
+    os.makedirs(out_dir, exist_ok=True)
+    before = {c: {i.name for i in getattr(bpy.data, c)} for c in COLLECTIONS}
+    scenes_before = {s.name for s in bpy.data.scenes}
+    window = bpy.context.window
+    original = window.scene if window else bpy.context.scene
+    scene = bpy.data.scenes.new("__RoadmapTests")
+    if window:
+        window.scene = scene
+    try:
+        ctx = bpy.context.temp_override(scene=scene, view_layer=scene.view_layers[0]) if not window else None
+        if ctx:
+            ctx.__enter__()
+        try:
+            for name, fn in (("R1", test_r1), ("R2", test_r2), ("R3", test_r3), ("R4", test_r4), ("R5", test_r5)):
+                rec.section(name, lambda r, fn=fn: fn(r, scene, out_dir))
+        finally:
+            if ctx:
+                ctx.__exit__(None, None, None)
+    finally:
+        if window:
+            window.scene = original
+        for s in [s for s in bpy.data.scenes if s.name not in scenes_before]:
+            bpy.data.scenes.remove(s)
+        for coll in COLLECTIONS:
+            for item in [i for i in getattr(bpy.data, coll) if i.name not in before[coll]]:
+                try:
+                    getattr(bpy.data, coll).remove(item)
+                except (ReferenceError, RuntimeError):
+                    pass
+    return rec.results
+
+
+def main(out_dir=None):
+    out_dir = out_dir or os.path.join(tempfile.gettempdir(), "blender-roadmap-tests")
+    try:
+        results = run_all(out_dir)
+    except Exception:
+        results = [{"name": "harness", "ok": False, "detail": traceback.format_exc()[-700:]}]
+    failures = [r for r in results if not r["ok"]]
+    report = {"blender": bpy.app.version_string,
+              "summary": {"passed": len(results) - len(failures), "total": len(results), "failed": len(failures)},
+              "passed": len(results) - len(failures), "total": len(results), "failures": failures, "results": results}
+    os.makedirs(out_dir, exist_ok=True)
+    with open(os.path.join(out_dir, "roadmap_tests_report.json"), "w", encoding="utf-8") as fh:
+        json.dump(report, fh, indent=2)
+    return report
+
+
+ARGS = globals().get("ARGS") or _cli_args()
+result = main(**ARGS)
+if bpy.app.background and __name__ == "__main__":
+    print(json.dumps({k: result[k] for k in ("summary", "failures")}, indent=2))

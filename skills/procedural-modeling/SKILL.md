@@ -135,15 +135,22 @@ path of this installed script and their ARGS. Don't inline or rewrite the script
 | Script | What it does |
 |--------|--------------|
 | `scripts/gn_curve_profile.py` | Curve-swept pipe/cable/rail: poly curve + Geometry Nodes (Curve to Mesh, Curve Circle profile) with Radius / Resolution / Fill Caps exposed on the modifier. |
+| `scripts/terrain_heightfield.py` | Seeded heightfield terrain mesh (`mathutils.noise`), optionally flattened into a corridor along a curve object. Creates one new object, refuses an existing name unless `replace`. |
 
 ```python
 import runpy
 result = runpy.run_path("<skill_dir>/scripts/gn_curve_profile.py", init_globals={"ARGS": {"name": "GEO_Pipe", "points": [[0, -5, 0.5], [0, 5, 0.5]], "radius": 0.15}})["result"]
 ```
 
+Terrain: ARGS `name`, `size`, `resolution`, `seed`, `height`, `frequency`, `octaves`, `center`, `corridor`
+(`{"curve", "half_width", "falloff", "offset"}`), `collection`, `replace`. The same seed gives the same mesh; inside
+`half_width` of the curve the terrain height equals the curve height (both checked by the test). See
+`references/terrain-road.md` for the road workflow and its limits.
+
 ## Reference Guide
 
 | Topic | Reference | Load When |
 |-------|-----------|-----------|
+| Terrain with a road bed | `references/terrain-road.md` | Terrain, roads on slopes |
 | Geo nodes patterns | `geometry-nodes` skill | Node setup |
 | Environment integration | `environment-artist` skill | Scene placement |

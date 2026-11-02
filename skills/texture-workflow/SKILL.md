@@ -145,6 +145,7 @@ path of this installed script and their ARGS. Don't inline or rewrite the script
 | Script | What it does |
 |--------|--------------|
 | `scripts/bake_maps.py` | Bake high-poly -> low-poly maps in Cycles (normal, AO, roughness, diffuse color) to PNG files, with cage extrusion. Restores the render engine afterwards. Requires the low-poly to have a UV map. |
+| `scripts/import_painter_textures.py` | Wire exported PBR maps from a folder into a NEW Principled BSDF material by file name: sRGB for colour maps, Non-Color for data maps, Normal Map (optional DirectX green flip), Bump from height, packed ORM split. Refuses an existing material name. Tested with synthetic maps only; Substance Painter itself was not run. |
 
 ```python
 import runpy
@@ -153,9 +154,15 @@ result = runpy.run_path("<skill_dir>/scripts/bake_maps.py", init_globals={"ARGS"
 
 ARGS: `low`, `high`, `maps`, `size`, `extrusion`, `samples`, `out_dir`
 
+Import ARGS (`import_painter_textures.py`): `folder`, `material`, `texture_set`, `normal_convention` (`OPENGL` or
+`DIRECTX`), `patterns`, `ao` (`skip` or `multiply`), `height_strength`, `assign_to`, `pack`. Read the result: `files`
+(which file went where), `unmatched`, `ambiguous`, `skipped_udim`. UDIM tiles are not wired. See
+`references/substance-painter-handoff.md`.
+
 ## Reference Guide
 
 | Topic | Reference | Load When |
 |-------|-----------|-----------|
 | Bake troubleshooting | `references/bake-troubleshooting.md` | Bake artifacts |
 | ORM packing | `references/orm-packing.md` | Unreal/Unity export |
+| Substance Painter hand-off | `references/substance-painter-handoff.md` | Painter-exported maps into Blender |
