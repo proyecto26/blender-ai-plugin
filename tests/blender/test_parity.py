@@ -295,6 +295,19 @@ def test_clash(check, out_dir):
     r = audit(objects=["Sheet1", "Sheet2"])
     check("H1 coincident open sheets fail too", r["verdict"] == "FAIL", r)
 
+    # round 2 H: face-touching thin slabs (thinner than min_depth_m) are neighbours, not duplicates; a true duplicate
+    # slab next to them must still be caught, in the same audit
+    reset_scene()
+    box("SlabA", (1, 1, 0.0005), (0, 0, 0))
+    box("SlabB", (1, 1, 0.0005), (0, 0, 0.0005))
+    r = audit(objects=["SlabA", "SlabB"])
+    check("H1r2 face-touching thin slabs pass (no penetration)", r["verdict"] == "PASS" and not r["clashes"], r["clashes"])
+    box("SlabA2", (1, 1, 0.0005), (0, 0, 0))
+    r = audit(objects=["SlabA", "SlabB", "SlabA2"])
+    pairs = sorted(sorted((c["a"], c["b"])) for c in r["clashes"])
+    check("H1r2 thin touching pair and a coincident thin duplicate at once: only the duplicate is a clash",
+          r["verdict"] == "FAIL" and pairs == [["SlabA", "SlabA2"]] and r["clashes"][0].get("depth") == "coincident", r["clashes"])
+
     # a cube inside a cube: no surfaces cross, still a fail
     reset_scene()
     box("Outer", (2, 2, 2))
@@ -711,6 +724,19 @@ def test_fit(check, out_dir, measured):
     r = fit(objects=["Box"], views=views, params=[{"object": "Box", "path": "scale[0]", "min": 0.3, "max": 3.0}], max_evals=60, apply=True)
     check("H3 single component fit moves only that axis", near(box_o.scale[1:], (1.3, 1.3)) and abs(box_o.scale[0] - 1.3) <= 0.03, tuple(box_o.scale))
 
+    # round 2 H: a whole-vector param on a non-uniform start must never leave an unscored state applied
+    box_o.scale, box_o.location = (0.8, 1.3, 1.3), (0, 0, 0)
+    nref = render(os.path.join(d, "nonuniform.png"), cam)
+    nviews = [{"camera": "CamF", "reference": nref}]
+    for cap in (1, 2, 3, 12):
+        box_o.scale, box_o.location = (0.8, 1.3, 1.3), (0, 0, 0)
+        r = fit(objects=["Box"], views=nviews, params=[{"object": "Box", "path": "scale", "min": 0.3, "max": 3.0}],
+                max_evals=cap, apply=True)
+        iou = sil(["Box"], nviews)["views"][0]["iou"]
+        check(f"H3r2 whole-vector apply, max_evals={cap}: applied state is the scored best (scale kept, iou {iou:.4f} == {r['score_best']})",
+              near(box_o.scale, (0.8, 1.3, 1.3)) and abs(iou - r["score_best"]) < 1e-6, (tuple(box_o.scale), iou, r["score_best"]))
+    box_o.scale, box_o.location = (0.8, 0.8, 0.8), (0, 0, 0)
+
     # every error comes before any change
     box_o.scale, box_o.location = (0.8, 0.8, 0.8), (0, 0, 0)
     before = snapshot()
@@ -846,6 +872,26 @@ def test_ingest(check, out_dir, measured):
     check("H4 gltf without its .bin fails", msg is not None, msg)
     check("H4 failed import rolls back objects and collections", set(bpy.data.objects.keys()) == names and set(bpy.data.collections.keys()) == cols,
           (set(bpy.data.objects.keys()) - names, set(bpy.data.collections.keys()) - cols))
+
+    # round 2 H: a planar textured OBJ asked for a height fails; its material and image must not be left behind
+    reset_scene()
+    tex = os.path.join(d, "plane_tex.png")
+    write_png_rgba(tex, [[(255, 0, 0, 255), (0, 255, 0, 255)], [(0, 0, 255, 255), (255, 255, 0, 255)]])
+    mtl_text = chr(10).join(["newmtl PlaneMat", "Kd 1 1 1", "map_Kd plane_tex.png", ""])
+    obj_text = chr(10).join(["mtllib plane.mtl", "o Plane", "v 0 0 0", "v 1 0 0", "v 1 0 1", "v 0 0 1", "vt 0 0", "vt 1 0",
+                             "vt 1 1", "vt 0 1", "usemtl PlaneMat", "f 1/1 2/2 3/3 4/4", ""])
+    with open(os.path.join(d, "plane.mtl"), "w", encoding="utf-8") as fh:
+        fh.write(mtl_text)
+    with open(os.path.join(d, "plane.obj"), "w", encoding="utf-8") as fh:
+        fh.write(obj_text)
+    box("Existing", (1, 1, 1))
+    mats, imgs = set(bpy.data.materials.keys()), set(bpy.data.images.keys())
+    got = []
+    msg = raises(lambda: got.append(run("ingest_asset.py", {"path": os.path.join(d, "plane.obj"), "target_size_m": 1.8})))
+    check("H4r2 planar OBJ with a height target is refused", msg is not None,
+          got and {k: got[0][k] for k in ("size_before_m", "size_after_m", "scale_factor")})
+    check("H4r2 failed import leaves no new material or image", set(bpy.data.materials.keys()) == mats and set(bpy.data.images.keys()) == imgs,
+          (set(bpy.data.materials.keys()) - mats, set(bpy.data.images.keys()) - imgs))
 
     # a file with no mesh: the import creates an object, then the script refuses and removes what it created
     reset_scene()

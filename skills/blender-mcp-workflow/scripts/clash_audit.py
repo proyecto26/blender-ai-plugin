@@ -326,6 +326,10 @@ def main(objects=None, gap_max_m=0.005, min_depth_m=0.001, require_connected=Tru
             joined = False
             if overlap:
                 pairs += 1
+                # "same surface" must be tighter than a slab is thick: face-touching slabs thinner than min_depth_m
+                # have every sample within min_depth_m of each other without being duplicates
+                thick = [float(np.min(r.hi - r.lo)) for r in (a, b) if r.closed]
+                dup_tol = max(tol if not thick else min(tol, 0.2 * min(thick)), eps)
                 crossing = _pierces(a, b, eps) or _pierces(b, a, eps)
                 far = 4 * diag + 1.0
                 if crossing:
@@ -356,8 +360,8 @@ def main(objects=None, gap_max_m=0.005, min_depth_m=0.001, require_connected=Tru
                                         "reason": "surfaces cross but no sample point lies inside; depth unresolved"})
                     else:
                         touching.append({"a": a.name, "b": b.name, "depth_m": round(depth, 5)})
-                elif min(_on_surface_fraction(a, b, max(tol, eps), cap, rng),
-                         _on_surface_fraction(b, a, max(tol, eps), cap, rng)) >= 0.9:
+                elif min(_on_surface_fraction(a, b, dup_tol, cap, rng),
+                         _on_surface_fraction(b, a, dup_tol, cap, rng)) >= 0.9:
                     joined = True  # duplicate geometry in the same place: nothing crosses, nothing is inside
                     if frozenset((a.name, b.name)) not in ignore:
                         clashes.append({"a": a.name, "b": b.name, "depth_m": None, "depth": "coincident",

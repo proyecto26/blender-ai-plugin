@@ -146,6 +146,8 @@ def main(path=None, collection=None, target_size_m=None, size_axis="z", up_axis_
     objs_before = set(bpy.data.objects.keys())
     cols_before = set(bpy.data.collections.keys())
     meshes_before = set(bpy.data.meshes.keys())
+    mats_before = set(bpy.data.materials.keys())
+    images_before = set(bpy.data.images.keys())
     selected = [o.name for o in scene.objects if o.select_get()]
     active = view_layer.objects.active.name if view_layer.objects.active else None
     prev_layer_col = view_layer.active_layer_collection
@@ -194,7 +196,7 @@ def main(path=None, collection=None, target_size_m=None, size_axis="z", up_axis_
         scale = 1.0
         if target_size_m is not None:
             cur = float(size_before.max() if size_axis == "max" else size_before["xyz".index(size_axis)])
-            if cur <= 1e-12:
+            if cur <= max(1e-9, 1e-5 * float(size_before.max())):  # float32 noise on a flat mesh is not an extent
                 raise ValueError(f"the imported meshes have no extent along {size_axis!r}; cannot scale")
             scale = float(target_size_m) / cur
         centre_xy = (lo[:2] + hi[:2]) / 2 * scale
@@ -262,6 +264,10 @@ def main(path=None, collection=None, target_size_m=None, size_axis="z", up_axis_
                 bpy.data.meshes.remove(me)
         for c in [c for c in bpy.data.collections if c.name not in cols_before]:
             bpy.data.collections.remove(c)
+        for mat in [m for m in bpy.data.materials if m.name not in mats_before and m.users == 0]:
+            bpy.data.materials.remove(mat)
+        for img in [i for i in bpy.data.images if i.name not in images_before and i.users == 0]:
+            bpy.data.images.remove(img)
         raise
     finally:
         try:
