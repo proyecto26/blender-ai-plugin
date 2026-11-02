@@ -22,17 +22,32 @@ ARGS:
                         flicker (default 0.6)
     min_measured        (float) below this share of measured blocks, over the sequence or in any one evaluated frame,
                         the verdict is "inconclusive", never "pass" (default 0.5)
+    dropout_level       (float) a dropout cell's mean is within this of 0 (black) or 1 (white) (default 0.015; the darkest
+                        flat cells in 31 clean renders are 0 to 0.06, injected dropouts are exactly 0 or 1)
+    dropout_flat_dev    (float) a dropout cell's mean absolute deviation is at most this (default 0.01)
+    dropout_gap         (float) both neighbours of a dropout cell are at least this far from its flat value, as a mean
+                        absolute difference (default 0.02; a 0 / 0.05 checker is 0.025 away from black)
 
-Dropouts: a block of frame t that the match rejects (a region gone black or white, or showing other content for one frame)
-is also checked against the frames either side. When t-1 and t+1 still match each other at that place (searched over twice
-`max_motion_px`, since two frames apart a pan moves twice as far) and t differs from both, the block is a dropout and counts
-in the event (`dropout_blocks`) with its frame and region. Objects moving over a background, disocclusion and cuts do not have
-that shape (t-1 and t+1 do not match each other there). In a very dark scene a block also flags at 40% of its neighbours'
-level (at least 0.005), not only at `flicker_threshold`, while the neighbours agree with each other.
-Limits: a dropout in a pan faster than `max_motion_px` per frame is not found as one; a dropout where the neighbours do not
-agree with each other (moving content, several bad frames in a row) is never confirmed, only left to `unmeasured_frames`;
-dropouts are only looked for when at most 90% of the blocks of the frame are rejected (a wholly different frame is judged by
-its mean luma, below).
+Dropouts (a separate, narrow rule, run only on candidate cells; a cell is half a block, `block // 2` px): a cell of frame t
+is a dropout when it is nearly uniform (mean absolute deviation <= `dropout_flat_dev`) and near black or near white (its mean
+within `dropout_level` of 0 or 1), while the same place in t-1 and t+1, shifted symmetrically by up to `max_motion_px` per
+frame, has real content: each is at least `dropout_gap` away from the flat value (mean absolute difference) and the two
+agree with each other at least twice as closely as with it, and clearly better than the typical shift fits. The best shift
+is searched per candidate cell only (every shift on every second px, then +-1 px at full resolution), and the smallest raw difference is kept, so a periodic
+texture or a pan cannot hide the agreement. At least 4 flat cells must sit in a 3x3 neighbourhood. This catches a tile, a band
+or a whole frame gone black or white for one frame, in the middle of a shot, whatever fraction of the frame it covers (there
+is no share limit, a wholly black frame is the same rule). The event has the frame, the region of the cells found (within
+one block of the true region: whole cells only) and `dropout_cells`. A textured moving object cannot qualify, since its cells
+are not flat; other content showing for one frame, a fade, a cut and black bars that never change are not dropouts either.
+Limits, measured: (1) a very dark scene whose neighbours are themselves nearly flat black (mean about 0.01) returns `pass` for a
+black frame at the default `dropout_gap` (0.02); lower it to 0.005 to find it there, at the price of more false events in dark
+renders; (2) a dropout smaller than two cells in each direction (16 px at the default block) is not looked for; (3) a flat
+black or white object that moves more than its own width per frame (24 px at 30 px per frame was measured) is the same
+shape as a dropout and is reported as one when it spans 2x2 cells (a shadow is not: the darkest flat cells in 31 clean renders, shadows included, are above 0.015
+unless the scene itself is black);
+(4) the neighbours must be a steady shift of each other: a pan that accelerates, or a dropout beside another bad frame,
+is not confirmed and is left to `unmeasured_frames`; (5) a region that turns not black or white but another level (a
+gain pop on part of the frame) is found only when it is a block-wide jump, as before.
 
 Method: each block of frame t is matched in t-1 and in t+1 inside the search window by minimising the residual
 after subtracting each block's own mean (so a brightness change does not stop the match). The second difference
@@ -150,13 +165,83 @@ def _match(cur, ref, y0, x0, nby, nbx, bh, bw, R, margin, ratio, mean_tol):
     return out, code, oy, ox
 
 
+def _grab(F, ys, xs, ky, kx, R, sub):
+    """Cells of the R-padded frame F at (ys + ky, xs + kx): ys, xs are [K, c] pixel indices, ky, kx [K] shifts."""
+    return F[(ys[:, ::sub] + R + ky[:, None])[:, :, None], (xs[:, ::sub] + R + kx[:, None])[:, None, :]]
+
+
+def _dropouts(frames, t, cell, R, level, flat_dev, gap):
+    """Cells of frame t that went flat black or white while the frames either side agree there: (x0, y0, x1, y1, dev).
+    Only candidate cells are searched: t is nearly uniform (mean abs deviation <= flat_dev) and its mean is within `level`
+    of 0 or 1. For those, t-1 and t+1 are compared at the same place, shifted symmetrically by up to R px per frame
+    (every shift on every second px, then +-1 px of the best at full resolution) and the smallest raw difference is kept:
+    a periodic texture cannot make that worse, it can only match at a period. A candidate is a dropout when both
+    neighbours are at least `gap` away from the flat value (mean absolute difference) and agree with each other at
+    least twice as closely as with it, and at least twice as closely as the typical shift does (so a smooth or noisy dark
+    area, where every shift fits about as well, is not a match). Cells alone in a 3x3 neighbourhood (fewer than 4 flat
+    cells there) are dropped: a dropout is a region, and a thin dark line is more often a shadow or an edge."""
+    H, W = frames[t].shape
+    ny, nx = H // cell, W // cell
+    if not ny or not nx:
+        return []
+    T = frames[t][:ny * cell, :nx * cell].reshape(ny, cell, nx, cell)
+    tm = T.mean(axis=(1, 3))
+    td = np.abs(T - tm[:, None, :, None]).mean(axis=(1, 3))
+    cy, cx = np.nonzero((td <= flat_dev) & ((tm <= level) | (tm >= 1.0 - level)))
+    if not len(cy):
+        return []
+    v = tm[cy, cx]
+    ar = np.arange(cell)
+    ys, xs = cy[:, None] * cell + ar[None, :], cx[:, None] * cell + ar[None, :]
+    Pp = np.pad(frames[t - 1], R, mode="constant", constant_values=np.nan)
+    Np = np.pad(frames[t + 1], R, mode="constant", constant_values=np.nan)
+    sub = 2 if cell >= 8 else 1
+    K = len(cy)
+    best = np.full(K, np.inf)
+    by = np.zeros(K, dtype=int)
+    bx = np.zeros(K, dtype=int)
+
+    def try_shift(ky, kx, s):
+        nonlocal best, by, bx
+        e = np.abs(_grab(Pp, ys, xs, -ky, -kx, R, s) - _grab(Np, ys, xs, ky, kx, R, s)).mean(axis=(1, 2))
+        e = np.where(np.isnan(e), np.inf, e)
+        coarse.append(e)
+        better = e < best - 1e-6  # the first of equal fits wins: the smallest shift (the loop below runs outward)
+        best = np.where(better, e, best)
+        by = np.where(better, ky, by)
+        bx = np.where(better, kx, bx)
+
+    coarse = []
+    for ky, kx in sorted(((a, b) for a in range(-R, R + 1) for b in range(-R, R + 1)), key=lambda k: abs(k[0]) + abs(k[1])):
+        try_shift(np.full(K, ky), np.full(K, kx), sub)
+    typical = np.median(np.stack(coarse), axis=0)
+    cy0, cx0 = by.copy(), bx.copy()
+    best[:] = np.inf
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            try_shift(np.clip(cy0 + dy, -R, R), np.clip(cx0 + dx, -R, R), 1)
+    Pb = _grab(Pp, ys, xs, -by, -bx, R, 1)
+    Nb = _grab(Np, ys, xs, by, bx, R, 1)
+    dP = np.abs(Pb - v[:, None, None]).mean(axis=(1, 2))
+    dN = np.abs(Nb - v[:, None, None]).mean(axis=(1, 2))
+    ok = np.isfinite(best) & (dP >= gap) & (dN >= gap) & (best <= 0.5 * np.minimum(dP, dN)) & (best <= 0.5 * typical)
+    grid = np.zeros((ny + 2, nx + 2), dtype=np.int8)
+    grid[cy + 1, cx + 1] = ok
+    near = sum(grid[1 + a:1 + a + ny, 1 + b:1 + b + nx] for a in (-1, 0, 1) for b in (-1, 0, 1))
+    ok = ok & (near[cy, cx] >= 4)
+    nb = 0.5 * (Pb.mean(axis=(1, 2)) + Nb.mean(axis=(1, 2)))
+    return [(int(cx[i]) * cell, int(cy[i]) * cell, int(cx[i]) * cell + cell, int(cy[i]) * cell + cell, float(v[i] - nb[i]))
+            for i in np.nonzero(ok)[0]]
+
+
 def _natural_files(d):
     names = [f for f in os.listdir(d) if os.path.splitext(f)[1].lower() in IMG_EXT]
     return [os.path.join(d, f) for f in sorted(names, key=_natural)]
 
 
 def main(paths=None, dir=None, block=16, max_motion_px=8, flicker_threshold=0.03, reject_ratio=0.5,
-         ambiguity_margin=0.02, global_fraction=0.6, min_measured=0.5):
+         ambiguity_margin=0.02, global_fraction=0.6, min_measured=0.5, dropout_level=0.015, dropout_flat_dev=0.01,
+         dropout_gap=0.02):
     if bool(paths) == bool(dir):
         raise ValueError("pass exactly one of 'paths' or 'dir'")
     files = list(paths) if paths else _natural_files(dir)
@@ -224,39 +309,12 @@ def main(paths=None, dir=None, block=16, max_motion_px=8, flicker_threshold=0.03
                 for u, oy_, ox_ in ((t - 1, pyo, pxo), (t + 1, nyo, nxo)):
                     foot_at[t][(rx + int(x) * bw, ry + int(y) * bh, u)] = (
                         rx + int(x) * bw + int(ox_[y, x]), ry + int(y) * bh + int(oy_[y, x]), bw, bh)
-            # in a very dark scene the absolute threshold is out of reach: a block also flags when it jumps by more than
-            # 40% of its neighbours' level (at least 0.005) while the neighbours agree with each other
-            nb = 0.5 * (mp + mn)
-            eff = np.minimum(thr, np.maximum(0.005, 0.4 * nb))
-            agree = np.abs(mp - mn) < 0.25 * np.abs(dev)
-            ys, xs = np.nonzero((np.abs(dev) > thr) | ((np.abs(dev) > eff) & agree))  # NaN compares False
+            ys, xs = np.nonzero(np.abs(dev) > thr)  # NaN compares False
             flagged_by_t[t] += [(rx + int(x) * bw, ry + int(y) * bh, rx + int(x) * bw + bw, ry + int(y) * bh + bh,
                                  float(dev[y, x])) for y, x in zip(ys, xs)]
-            # blocks of frame t the match rejected: a dropout when t-1 and t+1 still match each other there and t differs
-            # from both (the search window is doubled: across two frames a pan moves twice as far)
-            rej = code != 0
-            if rej.any() and rej.mean() <= 0.9:
-                _mx, cpn, oyn, oxn = _match(frames[t - 1], frames[t + 1], ry, rx, ny, nx, bh, bw, 2 * R,
-                                            ambiguity_margin, reject_ratio, -1.0)
-                for y, x in zip(*np.nonzero(rej & (cpn == 0))):
-                    by, bx = ry + int(y) * bh, rx + int(x) * bw
-                    oy_, ox_ = int(oyn[y, x]), int(oxn[y, x])
-                    my, mx = by + int(np.rint(oy_ / 2)), bx + int(np.rint(ox_ / 2))  # where the block is in frame t
-                    if not (0 <= my <= H - bh and 0 <= mx <= W - bw):
-                        continue
-                    Pb = frames[t - 1][by:by + bh, bx:bx + bw]
-                    Nb = frames[t + 1][by + oy_:by + oy_ + bh, bx + ox_:bx + ox_ + bw]
-                    Tb = frames[t][my:my + bh, mx:mx + bw]
-                    pm_, nm_, tm_ = float(Pb.mean()), float(Nb.mean()), float(Tb.mean())
-                    rp = float(np.abs((Tb - tm_) - (Pb - pm_)).mean())
-                    rn = float(np.abs((Tb - tm_) - (Nb - nm_)).mean())
-                    unlike = (rp > max(0.01, reject_ratio * float(np.abs(Pb - pm_).mean()))
-                              and rn > max(0.01, reject_ratio * float(np.abs(Nb - nm_).mean())))
-                    nb_ = 0.5 * (pm_ + nm_)
-                    e_ = min(thr, max(0.005, 0.4 * nb_))
-                    shifted = abs(tm_ - pm_) > e_ and abs(tm_ - nm_) > e_ and (tm_ - pm_) * (tm_ - nm_) > 0
-                    if unlike or shifted:
-                        drops_by_t[t].append((mx, my, mx + bw, my + bh, tm_ - nb_))
+    cell = max(4, B // 2)
+    for t in per_frame:
+        drops_by_t[t] = _dropouts(frames, t, cell, R, dropout_level, dropout_flat_dev, dropout_gap)
 
     events = []
     for t, flagged in flagged_by_t.items():
@@ -270,6 +328,13 @@ def main(paths=None, dir=None, block=16, max_motion_px=8, flicker_threshold=0.03
                     ov = max(0, min(fx + fw, bx + bw_) - max(fx, bx)) * max(0, min(fy + fh, by + bh_) - max(fy, by))
                     if ov >= 0.25 * min(fw * fh, bw_ * bh_) and abs(d) > abs(f[4]):
                         return True
+                # the same for a dropout in the adjacent frame: a block matched into or beside a region that went flat there
+                # (a cell wide on each side: the edge of the region is only partly flat) differs because of it
+                for (x0_, y0_, x1_, y1_, _d) in drops_by_t.get(u, []):
+                    x0_, y0_, x1_, y1_ = x0_ - cell, y0_ - cell, x1_ + cell, y1_ + cell
+                    ov = max(0, min(fx + fw, x1_) - max(fx, x0_)) * max(0, min(fy + fh, y1_) - max(fy, y0_))
+                    if ov >= 0.25 * min(fw * fh, (x1_ - x0_) * (y1_ - y0_)):
+                        return True
             return False
 
         flagged = [f for f in flagged if not echo(f)]
@@ -277,13 +342,17 @@ def main(paths=None, dir=None, block=16, max_motion_px=8, flicker_threshold=0.03
         flagged = flagged + drops
         if not flagged:
             continue
-        meas = per_frame[t]["measured"] + len(drops)
-        kind = "global_exposure" if len(flagged) >= global_fraction * meas else "local"
+        meas = per_frame[t]["measured"]
+        if drops:  # blocks and cells differ in size: judge the share by area
+            covered = sum((f[2] - f[0]) * (f[3] - f[1]) for f in flagged)
+            kind = "global_exposure" if covered >= global_fraction * H * W else "local"
+        else:
+            kind = "global_exposure" if len(flagged) >= global_fraction * meas else "local"
         events.append({"frame": t, "file": os.path.basename(files[t]), "kind": kind,
                        "mean_deviation": round(float(np.mean([f[4] for f in flagged])), 5),
                        "region_px": [min(f[0] for f in flagged), min(f[1] for f in flagged),
                                      max(f[2] for f in flagged), max(f[3] for f in flagged)],
-                       "blocks_flagged": len(flagged), "blocks_measured": meas, "dropout_blocks": len(drops),
+                       "blocks_flagged": len(flagged), "blocks_measured": meas, "dropout_cells": len(drops), "cell_px": cell,
                        "blocks": [[f[0], f[1], round(f[4], 5)] for f in flagged[:32]]})
     # Frames the block method could not judge. A frame that is pure black or white (or otherwise unlike its neighbours
     # everywhere) has no measured block in itself or in the frames beside it, and the aggregate share can still look fine
