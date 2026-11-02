@@ -94,6 +94,21 @@ Python and Blender accept forward slashes on every OS; macOS and Linux paths nee
 | `scripts/capture_views.py` | Front / 3-4 / side / back / top / camera PNGs with a temporary camera; restores settings | No (temp camera removed) |
 | `scripts/ref_board.py` | Reads a folder of reference images, writes `style_bible.json` (palette, value/saturation histograms, contrast, warm/cool) | No (writes the JSON only) |
 | `scripts/compare_to_refs.py` | Scores renders, viewport captures or engine screenshots against the bible: distances, score, plain-language drift list | No |
+| `scripts/clash_audit.py` | Clash gate for several meshes: penetrating pairs with an estimated depth, objects fully inside others, floating parts (groups by contact within `gap_max_m`); modifiers count, touching faces do not; optional `evidence_path` writes its own result file into a run folder | No (writes the evidence file only when asked) |
+| `scripts/silhouette_score.py` | Projects the named meshes through named cameras and scores the silhouette against reference masks (alpha, or background from the corners): IoU, bbox and centroid drift per view, PASS/FAIL against `min_iou`; no render needed | No |
+| `scripts/fit_search.py` | Coordinate search over named numeric properties (scale, location, a modifier value) that raises the `silhouette_score.py` IoU; bounded by `max_evals`, restores every value unless `apply` is true | Only with `apply: true` |
+| `scripts/ingest_asset.py` | Imports a local GLB / glTF (external `.bin`) / FBX / OBJ / USD file into a new collection, scales it to a target size, puts its base centre at the origin, prefixes names, bakes transforms, then runs `validate_asset.py`; refuses URLs and `.blend` | Adds the imported objects only |
+
+When to reach for the four newer scripts:
+
+- **`clash_audit.py`** at the end of a multi-part build (furniture, kits, mechanical assemblies) and before the `validate`
+  gate: it finds what `validate_asset.py` cannot see, because that checks one object at a time. Open meshes have no inside,
+  so containment in them comes back as `not_measured` and the verdict is WARN, never PASS.
+- **`silhouette_score.py`** when a reference photo, concept or render exists for a view and "does the outline match" needs a
+  number instead of an opinion; **`fit_search.py`** when that number is low because of a few known dials (overall scale, one
+  offset) and not because the shape is wrong. Both are described in `references/reference-image-match.md`.
+- **`ingest_asset.py`** when the user supplies a model file (a purchased asset, a scan, an export from another tool) that must
+  fit the project's scale and naming before anything is built around it. Download the file outside Blender first.
 
 ## Before a Destructive Step
 
