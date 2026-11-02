@@ -172,6 +172,7 @@ def main(paths=None, dir=None, block=16, max_motion_px=8, flicker_threshold=0.03
                      "not_measured": {"high_residual": 0, "ambiguous": 0}, "max_abs_dev": None}
                  for t in range(1, len(frames) - 1)}
     flagged_by_t = {t: [] for t in per_frame}  # (x0, y0, x1, y1, dev) of blocks over the threshold
+    dev_at = {t: {} for t in per_frame}  # (x0, y0) of a block -> its signed deviation in frame t (measured blocks only)
     totals = {"high_residual": 0, "ambiguous": 0}
     n_meas = n_all = 0
     for (ry, rx, ny, nx, bh, bw) in regions:
@@ -195,17 +196,19 @@ def main(paths=None, dir=None, block=16, max_motion_px=8, flicker_threshold=0.03
             if meas:
                 m = round(float(np.nanmax(np.abs(dev))), 5)
                 pf["max_abs_dev"] = m if pf["max_abs_dev"] is None else max(pf["max_abs_dev"], m)
+            for y, x in zip(*np.nonzero(~np.isnan(dev))):
+                dev_at[t][(rx + int(x) * bw, ry + int(y) * bh)] = float(dev[y, x])
             ys, xs = np.nonzero(np.abs(dev) > thr)  # NaN compares False
             flagged_by_t[t] += [(rx + int(x) * bw, ry + int(y) * bh, rx + int(x) * bw + bw, ry + int(y) * bh + bh,
                                  float(dev[y, x])) for y, x in zip(ys, xs)]
 
-    peak = {t: (per_frame[t]["max_abs_dev"] or 0.0) for t in per_frame}
     events = []
     for t, flagged in flagged_by_t.items():
+        # a one-frame bump also shows at half size, opposite sign, in its neighbours: drop a block whose deviation is
+        # smaller than the same block's in an adjacent frame (per block, so an independent event elsewhere survives)
+        flagged = [f for f in flagged
+                   if not any(abs(dev_at.get(u, {}).get((f[0], f[1]), 0.0)) > abs(f[4]) for u in (t - 1, t + 1))]
         if not flagged:
-            continue
-        # keep the frame where the deviation peaks: a one-frame bump also shows at half size in its neighbours
-        if peak[t] < peak.get(t - 1, 0.0) or peak[t] < peak.get(t + 1, 0.0):
             continue
         meas = per_frame[t]["measured"]
         kind = "global_exposure" if len(flagged) >= global_fraction * meas else "local"

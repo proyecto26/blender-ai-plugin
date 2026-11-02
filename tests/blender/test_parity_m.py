@@ -519,6 +519,65 @@ def run_review_round1(out_dir, check):
           res["g2"]["ok"] is None and "not_measured" in res["g2"] and res["level"] == "G1", res)
 
 
+def run_review_round2(out_dir, check):
+    """Findings from the round-2 review of batch M. Each check failed on c954846 before its fix."""
+    base = os.path.join(out_dir, "review2")
+
+    # M1: two independent events in disjoint regions on adjacent frames must both be reported (static, no motion)
+    rng = np.random.default_rng(5)
+    t = rng.random((H + 2, W + 2)).astype(np.float32)
+    w0 = 0.05 + 0.6 * (sum(t[dy:dy + H, dx:dx + W] for dy in range(3) for dx in range(3)) / 9.0 - 0.3)
+    fr = [w0.copy() for _ in range(9)]
+    fr[4] = bump(fr[4], 0, 0, 32, 32, 0.2)    # region A, frame 4, +0.2
+    fr[5] = bump(fr[5], 64, 16, 96, 48, 0.1)  # region B, frame 5, +0.1
+    r = run("film-production", "flicker_check.py", {"paths": write_seq(os.path.join(base, "adjacent"), fr), "max_motion_px": 0})
+    by = {e["frame"]: e for e in r["events"]}
+    check("flicker: independent events on adjacent frames (A@4 +0.2, B@5 +0.1) are both reported",
+          sorted(by) == [4, 5], [(e["frame"], e["region_px"]) for e in r["events"]])
+    if 4 in by and 5 in by:
+        check("flicker: frame 4 reports region A only (no echo of B), frame 5 reports region B only",
+              by[4]["region_px"][2] <= 32 and by[5]["region_px"][0] >= 64 and by[5]["region_px"][2] <= 96,
+              (by[4]["region_px"], by[5]["region_px"]))
+    else:
+        check("flicker: frame 4 reports region A only, frame 5 region B only", False, sorted(by))
+
+    # M3: a saved .blend with an unpacked texture at //textures/albedo.png; the snapshot lives in another folder
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    proj = os.path.join(base, "proj")
+    tex = os.path.join(proj, "textures", "albedo.png")
+    os.makedirs(os.path.dirname(tex), exist_ok=True)
+    save_gray(tex, np.random.default_rng(1).random((8, 8)).astype(np.float32))
+    bpy.ops.wm.save_as_mainfile(filepath=os.path.join(proj, "work.blend"))
+    me = bpy.data.meshes.new("Tri")
+    me.from_pydata([(0, 0, 0), (1, 0, 0), (1, 1, 0)], [], [(0, 1, 2)])
+    ob = bpy.data.objects.new("Textured", me)
+    bpy.context.scene.collection.objects.link(ob)
+    mat = bpy.data.materials.new("TexMat")
+    mat.use_nodes = True
+    node = mat.node_tree.nodes.new("ShaderNodeTexImage")
+    img = bpy.data.images.load(tex)
+    img.filepath = "//textures/albedo.png"
+    node.image = img
+    me.materials.append(mat)
+    bpy.context.view_layer.update()
+    check("snapshot fixture: the image path is relative and resolves to the real file",
+          img.filepath.startswith("//") and os.path.normcase(os.path.abspath(bpy.path.abspath(img.filepath))) == os.path.normcase(os.path.abspath(tex)),
+          (img.filepath, bpy.path.abspath(img.filepath)))
+    snaps = os.path.join(proj, "snapshots")
+    snap = lambda **kw: run("blender-mcp-workflow", "scene_snapshot.py", kw)  # noqa: E731
+    snap(action="save", name="tx")
+    check("snapshot: default dir is <file folder>/snapshots", os.path.exists(os.path.join(snaps, "tx.blend")))
+    bpy.data.objects.remove(ob)  # restore into a scene where the original is gone
+    bpy.data.materials.remove(mat)
+    bpy.data.images.remove(img)
+    snap(action="restore", dir=snaps, name="tx", objects=["Textured"])
+    rm = bpy.data.objects["Textured"].active_material
+    ri = next(n.image for n in rm.node_tree.nodes if n.type == "TEX_IMAGE")
+    got = os.path.normcase(os.path.abspath(bpy.path.abspath(ri.filepath)))
+    check("snapshot: restored material's image path resolves to the real texture file",
+          got == os.path.normcase(os.path.abspath(tex)) and os.path.exists(got), (ri.filepath, got))
+
+
 def run_all(out_dir):
     results = []
 
@@ -527,7 +586,8 @@ def run_all(out_dir):
 
     os.makedirs(out_dir, exist_ok=True)
     for label, fn in (("flicker_check", run_flicker), ("scene_snapshot", run_snapshot),
-                      ("surface_tools", run_surface), ("review_round1", run_review_round1)):
+                      ("surface_tools", run_surface), ("review_round1", run_review_round1),
+                      ("review_round2", run_review_round2)):
         try:
             fn(out_dir, check)
         except Exception:
