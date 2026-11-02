@@ -5,8 +5,9 @@
         "out_dir": "/tmp/run", "brief": {"asset": "SM_Crate", "target": "godot"},
         "stage": "validate", "skill": "blender-mcp-workflow", "script": "validate_asset.py",
         "args": {"objects": ["SM_Crate"]}, "result_summary": {"fails": 0, "warns": 0},
-        "verdict": "PASS", "capture": "views/crate_3q.png"}})["result"]
+        "verdict": "PASS", "evidence": "validate_evidence.json", "capture": "views/crate_3q.png"}})["result"]
 
+`validate_evidence.json` is the file validate_asset.py wrote when run with `evidence_path` set to <out_dir>/validate_evidence.json.
 The first call creates the file (with `brief`); with no `stage` it only creates / reports status.
 
 ARGS:

@@ -173,13 +173,13 @@ def same_second_gates():
                        ev("light_camera", "2026-01-01T00:00:00.500000+00:00")]}
 
 
-def writes_then_launch(writes, command=PS_LAUNCH, say=None):
+def writes_then_launch(writes, command=PS_LAUNCH, say=None, tool_name="PowerShell"):
     """Several Write calls (path, content dict) in order, then one launch."""
     rows, t = [], T0
     for i, (path, body) in enumerate(writes):
         rows += [(t, assistant(tool(f"w{i}", "Write", file_path=path, content=json.dumps(body)))), (t + 1, done(f"w{i}"))]
         t += 2
-    rows += [(t, assistant(*(([text(say)] if say else []) + [tool("j", "PowerShell", command=command)]))), (t + 1, done("j"))]
+    rows += [(t, assistant(*(([text(say)] if say else []) + [tool("j", tool_name, command=command)]))), (t + 1, done("j"))]
     return replay(rows)
 
 
@@ -236,6 +236,31 @@ def args_file_cases():
         ("relative folder tail does not match another folder", announce(writes_then_launch([other], with_file("run\\args.json"))), "FLAG"),
         ("--args-file=path form, real file last", announce(writes_then_launch([other, real], eq_form)), "FLAG"),
         ("case and slash style differ", announce(writes_then_launch([("c:/RUN/args.json", plan[1])])), "OK"),
+    ] + spaced_cases()
+
+
+def spaced_cases():
+    """Paths with spaces: a quoted path is one token, in the args-file match and in the output-folder check."""
+    real = (r"C:\my run\args.json", {"out_dir": r"C:\my run\out"})
+    other = (r"C:\my unrelated\args.json", {"out_dir": r"C:\my unrelated\out", "plan": True})
+    plan = (real[0], dict(real[1], plan=True))
+    ps = PS_LAUNCH.replace("C:\\run\\args.json", real[0])
+    bash = "blender-launcher.exe -b C:/run/f.blend --python C:/s/background_render.py -- --args-file '%s'" % "C:/my run/args.json"
+    bash_dq = bash.replace("'", '"')
+    bash_eq = bash.replace("--args-file '", "--args-file=\"").rstrip("'") + '"'
+    say_real = "Rendering 4 frames, about 12 s. Progress: C:/my run/out/render_status.json"
+    say_other = "Rendering 4 frames, about 12 s. Progress: C:/my unrelated/out/render_status.json"
+    say_prefix = "Rendering 4 frames, about 12 s. Progress: C:/my/render_status.json"
+    one = lambda writes, cmd, say=None, tool_name="PowerShell": announce(writes_then_launch(writes, cmd, say, tool_name))
+    return [
+        ("spaced: unrelated plan file does not exempt a real job", one([real, other], ps), "FLAG"),
+        ("spaced bash single quotes: same", one([real, other], bash, tool_name="Bash"), "FLAG"),
+        ("spaced bash double quotes: same", one([real, other], bash_dq, tool_name="Bash"), "FLAG"),
+        ("spaced --args-file=\"..\": same", one([real, other], bash_eq, tool_name="Bash"), "FLAG"),
+        ("spaced: the launched plan file does exempt", one([other, plan], ps), "OK"),
+        ("spaced: announcing the unrelated folder is not enough", one([real, other], ps, say_other), "FLAG"),
+        ("spaced: announcing only the shared prefix is not enough", one([real], ps, say_prefix), "FLAG"),
+        ("spaced: announcing the real folder is enough", one([real, other], ps, say_real), "OK"),
     ]
 
 

@@ -14,6 +14,7 @@ Or through the official Blender MCP, against a scratch .blend:
 """
 import json
 import os
+import re
 import runpy
 import struct
 import sys
@@ -820,6 +821,34 @@ def _export_evidence_collision():
     return {"errors": err, "written": os.path.exists(target), "side_written": os.path.exists(side)}
 
 
+def _manifest_docstring_example():
+    """The example at the top of run_manifest.py runs as written, once the producer's files it names exist."""
+    import ast
+    import datetime
+    path = os.path.join(SKILLS, "blender-director", "scripts", "run_manifest.py")
+    with open(path, encoding="utf-8") as fh:
+        doc = ast.get_docstring(ast.parse(fh.read()), clean=True)
+    import textwrap
+    code = textwrap.dedent(doc.split("\n\n")[1])
+    d = os.path.join(OUT, "manifest_docstring")
+    os.makedirs(os.path.join(d, "views"), exist_ok=True)
+    names = re.findall(r"\"(?:evidence|capture)\":\s*\"([^\"]+)\"", code)
+    for name in names:
+        full = os.path.join(d, name)
+        if name.endswith(".png"):
+            with open(full, "wb") as fh:
+                fh.write(b"\x89PNG")
+        else:
+            stamp = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="microseconds")
+            with open(full, "w", encoding="utf-8") as fh:
+                json.dump({"schema": "script-evidence/1", "script": "validate_asset.py", "verdict": "PASS",
+                           "summary": {}, "time": stamp}, fh)
+    scope = {"__builtins__": __builtins__}
+    code = code.replace("<skill_dir>/scripts/run_manifest.py", path.replace(os.sep, "/")).replace("/tmp/run", d.replace(os.sep, "/"))
+    exec(compile(code, "docstring_example", "exec"), scope)
+    return {"names": names, "gates": scope["result"]["gates"], "events": scope["result"]["events"]}
+
+
 def _manifest_validate_gate():
     d = os.path.join(OUT, "manifest_gate")
     os.makedirs(d, exist_ok=True)
@@ -1176,6 +1205,8 @@ def build_cases(out_dir):
         ("director.export_needs_validate_pass", lambda: _manifest_validate_gate(),
          lambda r: r["missing"] and "validate" in r["missing"] and r["not_checked"] and "validate" in r["not_checked"]
          and r["verify_nc"] and r["export_after_na"] == "PASS" and r["verify_after_pass"] == "PASS"),
+        ("director.docstring_example_runs", lambda: _manifest_docstring_example(),
+         lambda r: r["gates"]["validate"] == "PASS" and r["events"] == 1 and "views/crate_3q.png" in r["names"]),
         ("collision-proxy.user_duplicate_survives", lambda: _collision_dup_survives(),
          lambda r: r["survives"] and r["proxies"] == ["UCX_SM_DupCol_01"]),
         ("camera.eye_height_distance_and_notes", lambda: _camera_eye_height_case(),

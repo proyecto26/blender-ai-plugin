@@ -319,9 +319,13 @@ def blender_job(command):
 
 
 def path_mentions(text, base):
-    """Every path in the text that ends in the file name, normalized, as written (a bare name stays bare)."""
+    """Every path in the text that ends in the file name, normalized, as written (a bare name stays bare). A quoted
+    string is taken whole, spaces included; outside quotes a path ends at whitespace."""
     flat = norm_path(text)
-    return re.findall(r"[^\s\"'`,;()=<>|&]*" + re.escape(base) + r"(?![\w.\-])", flat)
+    tail = re.escape(base) + r"(?![\w.\-])"
+    quoted = re.findall(r"[\"']([^\"'\n]*" + tail + ")", flat)
+    rest = re.sub(r"([\"'])[^\"'\n]*\1", " ", flat)
+    return quoted + re.findall(r"[^\s\"'`,;()=<>|&]*" + tail, rest)
 
 
 def same_file(a, b):
@@ -338,7 +342,8 @@ def related_text(call, run):
     """The launch command plus the text of the args file it names, if an earlier call wrote it."""
     command = call["input"].get("command", "")
     parts = [command]
-    for ref in re.findall(r"--args-file[\"']?[\s,=]+[\"']?([^\s\"',]+)", command):
+    for groups in re.findall(r"--args-file[\"']?[\s,=]+(?:\"([^\"]+)\"|'([^']+)'|([^\s\"',]+))", command):
+        ref = next(g for g in groups if g)
         ref = re.sub(r"^(?:\./|\.\./)+", "", norm_path(ref))
         base = ref.rsplit("/", 1)[-1]
         # Match by the whole normalized path: two folders can each hold an args.json. The name alone decides only
