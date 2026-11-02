@@ -69,23 +69,35 @@ def _box_mesh(src):
     return bm
 
 
+def _hull(points):
+    """A closed hull built from bare points: hulling a mesh keeps its own faces next to the new ones."""
+    bm = bmesh.new()
+    for co in points:
+        bm.verts.new(co)
+    hull = bmesh.ops.convex_hull(bm, input=bm.verts, use_existing_faces=False)
+    strays = {g for g in hull["geom_interior"] + hull["geom_unused"] if isinstance(g, bmesh.types.BMVert)}
+    bmesh.ops.delete(bm, geom=list(strays), context="VERTS")
+    return bm
+
+
 def _convex_mesh(src, max_verts):
     depsgraph = bpy.context.evaluated_depsgraph_get()
     ev = src.evaluated_get(depsgraph)
     mesh = ev.to_mesh()
-    bm = bmesh.new()
-    bm.from_mesh(mesh)
+    points = [v.co.copy() for v in mesh.vertices]
     ev.to_mesh_clear()
-    hull = bmesh.ops.convex_hull(bm, input=bm.verts, use_existing_faces=False)
-    interior = [g for g in hull["geom_interior"] if isinstance(g, bmesh.types.BMVert)]
-    unused = [g for g in hull["geom_unused"] if isinstance(g, bmesh.types.BMVert)]
-    bmesh.ops.delete(bm, geom=list(set(interior + unused)), context="VERTS")
+    bm = _hull(points)
     if len(bm.verts) > max_verts:
-        # Collapse shortest edges until under the cap; keeps the hull convex enough for physics.
+        # Collapse shortest edges until under the cap, then hull what is left, so the result is closed and convex.
         while len(bm.verts) > max_verts:
             edge = min(bm.edges, key=lambda e: e.calc_length())
             bmesh.ops.collapse(bm, edges=[edge])
-        bmesh.ops.convex_hull(bm, input=bm.verts, use_existing_faces=False)
+        points = [v.co.copy() for v in bm.verts]
+        bm.free()
+        bm = _hull(points)
+    if not bm.faces or any(not e.is_manifold for e in bm.edges):
+        bm.free()
+        raise ValueError(f"{src.name} is flat or has too few points for a convex hull; use shape 'box'")
     bmesh.ops.triangulate(bm, faces=bm.faces)
     return bm
 
@@ -100,6 +112,8 @@ def _remove_proxy(obj):
 def main(objects, shape="box", engine="unreal", max_hull_verts=64, replace=True):
     if shape not in ("box", "convex"):
         raise ValueError("shape must be 'box' or 'convex'")
+    if max_hull_verts < 4:
+        raise ValueError(f"max_hull_verts must be at least 4, got {max_hull_verts}")
     col = bpy.data.collections.get("COL_Collision")
     if col is None:
         col = bpy.data.collections.new("COL_Collision")

@@ -681,6 +681,36 @@ def _manifest_validate_gate():
             "export_after_na": ok_na["gates"]["export"], "verify_after_pass": ok_verify["gates"]["verify"]}
 
 
+def _convex_closed():
+    """Convex proxies must be closed, and hold no faces or stray vertices from the source."""
+    def hull(name, build, **extra):
+        bm = bmesh.new()
+        build(bm)
+        me = bpy.data.meshes.new(name)
+        bm.to_mesh(me)
+        bm.free()
+        bpy.context.scene.collection.objects.link(bpy.data.objects.new(name, me))
+        made = run("collision-proxy", "make_collision.py", dict({"objects": [name], "shape": "convex", "engine": "godot"}, **extra))
+        bm = bmesh.new()
+        bm.from_mesh(bpy.data.objects[made["proxies"][0]["name"]].data)
+        stats = {"verts": len(bm.verts), "faces": len(bm.faces), "open": sum(not e.is_manifold for e in bm.edges)}
+        bm.free()
+        return stats
+
+    def inner_point(bm):
+        bmesh.ops.create_cube(bm, size=2.0)
+        bm.verts.new((0.0, 0.0, 0.0))
+
+    flat = _expect_error(lambda: hull("SM_HullFlat", lambda bm: bmesh.ops.create_grid(bm, x_segments=1, y_segments=1, size=1.0)))
+    flat_ngon = _expect_error(lambda: hull("SM_HullNgon", lambda bm: bmesh.ops.create_circle(bm, cap_ends=True, segments=14, radius=1.0)))
+    return {"flat": flat, "flat_ngon": flat_ngon, "cylinder": hull("SM_HullCyl", lambda bm: bmesh.ops.create_cone(
+                bm, cap_ends=True, segments=14, radius1=1.0, radius2=1.0, depth=2.0)),
+            "cube": hull("SM_HullCube", lambda bm: bmesh.ops.create_cube(bm, size=2.0)),
+            "inner": hull("SM_HullInner", inner_point),
+            "capped": hull("SM_HullCap", lambda bm: bmesh.ops.create_uvsphere(bm, u_segments=32, v_segments=16, radius=1.0),
+                           max_hull_verts=32)}
+
+
 def _collision_dup_survives():
     _cube("SM_DupCol", 1.0, loc=(-12, 0, 0))
     run("collision-proxy", "make_collision.py", {"objects": ["SM_DupCol"], "shape": "box", "engine": "unreal"})
@@ -756,6 +786,11 @@ def build_cases(out_dir):
         ("collision-proxy.make_collision", lambda: run("collision-proxy", "make_collision.py", {
             "objects": ["SM_Sphere_01"], "shape": "convex", "engine": "unreal", "max_hull_verts": 32}),
          lambda r: r["proxies"][0]["name"].startswith("UCX_SM_Sphere_01") and r["proxies"][0]["verts"] <= 32),
+        ("collision-proxy.convex_closed", lambda: _convex_closed(),
+         lambda r: "flat" in (r["flat"] or "") and "flat" in (r["flat_ngon"] or "")
+         and all(c["open"] == 0 and c["faces"] == 2 * c["verts"] - 4 for k, c in r.items() if not k.startswith("flat"))
+         and r["cylinder"]["verts"] == 28 and r["cube"]["verts"] == 8 and r["inner"]["verts"] == 8
+         and r["capped"]["verts"] <= 32),
         ("export-pipeline.fbx", lambda: run("export-pipeline", "export_asset.py", {
             "objects": ["SM_Crate_01"], "engine": "unreal", "out_path": os.path.join(out_dir, "SM_Crate_01.fbx")}),
          lambda r: r["exists"] and r["bytes"] > 1000),

@@ -22,6 +22,8 @@ Iteration 11: fixes from a measured run of the real orchestrator agent, reviewed
 - `tests/blender/test_skill_scripts.py`: the rigid body case collides with the crate, not `GEO_Ground`, which scatters
   `COL_Rocks`; the dependency cycle crashed Blender on macOS (exit 139) in 2 of 3 suite runs
 - `score_run.py`: announcements also sees a background render started with `nohup` or a trailing `&`
+- `collision-proxy` -> `make_collision.py`: a convex proxy is now a closed hull. It kept the source's faces beside the hull
+  (a 14-sided cylinder gave 104 faces and 50 non-manifold edges). A flat mesh is now an error that points to `shape: box`
 
 ### Added
 - `rendering` -> `scripts/background_render.py`: render in a background Blender with an atomic progress status file; it
