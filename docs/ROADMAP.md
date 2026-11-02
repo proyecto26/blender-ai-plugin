@@ -66,6 +66,24 @@ References:
 - [ ] **R15** Bloober Team analysis (`indie-horror-aesthetics`)
 - [ ] **R16** Parallel work rule: agents never share one live session; stated as unmeasured
 
+## Iteration 12, review follow-ups
+
+Reproduced by the final review and left open. The first ones can give a wrong answer.
+
+- [ ] `flicker_check.py`: a partial dropout passes. A black or white 32x32 tile in a 96x96 frame, or a black band over 25 to 50% of a textured frame, returns `pass`, because those blocks count only as high residual. A 60% band is caught. A black frame in a very dark scene (mean about 0.025) is under the 0.03 threshold
+- [ ] `score_run.py`: misses `Start-Process blender -ArgumentList "-b scene.blend -a"`, `& $blender` and `"$BLENDER"` launches; does not read escaped inline JSON paths; reads `p:/` in a URL as a Windows path; compares the first duration in a message, not the total
+- [ ] `scene_snapshot.py`: reads stale transforms when the scene was not updated; saves stale data for an armature in Edit Mode; "latest" can be wrong for two saves in the same second
+- [ ] `import_painter_textures.py`: wires a DirectX normal map without flipping it, and without a warning
+- [ ] `terrain_heightfield.py`: `replace` accepts an object with a rigid body or a Displace modifier, where vertex Z no longer equals world height
+- [ ] `mocap-cleanup.md`: the stated tolerance does not hold on Bezier keys (0.0158 measured against 0.005); linear keys stay within it
+- [ ] `silhouette_score.py`: scores a stale transform for an object in an excluded collection
+- [ ] `usd_roundtrip.py`: leaves orphan armatures, and loses the selection on a refused run
+- [ ] `scan-match.md`: the scan-to-model direction has no test
+- [ ] `facial-shape-keys-drivers.md`: "Breaks all of them" and "matches the game minimum" are wrong as written
+- [ ] `clash_audit.py`: partial contact against an open mesh can report a false clash
+- [ ] `ingest_asset.py`: switches a scene object out of Edit Mode without saying so; the edit is kept
+- [ ] `usd_roundtrip.py`: a material slot plus a Set Material node gives a false `ok:false`
+
 ## Not planned, and why
 
 - Needs consent or hardware: a paid orchestrator run, ComfyUI generation (credits), Godot import (not installed), Mac runs

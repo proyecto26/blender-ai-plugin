@@ -35,6 +35,15 @@ Iteration 12: example parity and the open roadmap. Plan: `docs/plans/iteration-1
   Eevee jobs, and is now within 1.00 to 1.17 of real time over 15 Windows runs
 - `score_run.py` sees PowerShell launches and foreground renders, checks the duration claim, and judges the window by platform
 - `rigid_body_setup.py` rejects an invalid collision shape before changing anything
+- `flicker_check.py`: a sequence with a frame below `min_measured` no longer passes. A hard cut that used to return `pass` now
+  returns `inconclusive` and names the frames in `unmeasured_frames`
+- `ingest_asset.py` and `usd_roundtrip.py` leave the scene's world, frame range, current frame and fps as they were
+- `clash_audit.py` reports a solid inside another even when it spans wall to wall
+- `hdrp-material-mapping.md`: Blender's `save()` of a float image divides RGB by alpha; the reference now gives routes checked
+  by decoding the file bytes. The only correct route through Blender's writer is 8 bit; the 16-bit route writes the PNG itself
+- `scene_snapshot.py`: a repeated name in `restore` no longer crashes Blender
+
+Known open issues from the final review are listed in `docs/ROADMAP.md`.
 - `validate_asset.py` and `clash_audit.py` refuse a mesh in Edit Mode rather than judge stale data; `export_asset.py` exports the current edit
 - `fix_asset.py` scales shape keys together with the mesh
 

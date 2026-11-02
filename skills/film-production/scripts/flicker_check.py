@@ -23,6 +23,10 @@ ARGS:
     min_measured        (float) below this share of measured blocks, over the sequence or in any one evaluated frame,
                         the verdict is "inconclusive", never "pass" (default 0.5)
 
+Known limit: a partial dropout can pass. A black or white region covering up to about half of a textured frame counts as
+blocks with no match, not as flicker, so this check does not replace looking at the frames. A black frame in a very dark
+scene (mean under flicker_threshold) passes too.
+
 Method: each block of frame t is matched in t-1 and in t+1 inside the search window by minimising the residual
 after subtracting each block's own mean (so a brightness change does not stop the match). The second difference
 is then taken between the block means at the matched places: a pan, however fast inside the window, gives 0, while

@@ -60,6 +60,8 @@ r = runpy.run_path("<skill_dir>/scripts/flicker_check.py", init_globals={"ARGS":
 
 Use it after a render that shows pops, shimmer or lighting jumps, and before you accept a shot. It matches each block against the previous and next frame within `max_motion_px`, so a pan is not mistaken for flicker. `r["verdict"]` is `flicker` (see `events`: frame, `local` or `global_exposure`, region box), `pass`, or `inconclusive`. Blocks it cannot follow (motion beyond the window, occlusion, periodic or gradient content whose rivals differ in brightness) are `not_measured` with counts by reason, never a pass: on `inconclusive`, raise `max_motion_px` or judge the shot by eye. Periodic patterns: the motion it finds may be off by a period, so trust the brightness result only when `not_measured.ambiguous` is 0 for that area.
 
+A hard cut, or frames it cannot measure, gives `inconclusive` and lists them in `unmeasured_frames`. A partial dropout, such as a black band over up to about half of a textured frame, can still pass, so look at the frames too.
+
 Build the edit and, when ready, render it:
 
 ```python
