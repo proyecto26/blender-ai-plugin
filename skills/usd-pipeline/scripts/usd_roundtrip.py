@@ -2,7 +2,9 @@
 
 Checks: mesh/empty/other counts, world transforms, evaluated vertex and face counts per object, and material names
 per object. Your scene is left as it was: the imported objects, meshes, materials, images and collections created by
-the import are removed again (`keep` leaves them). The USD file is written to `out_path` and stays there.
+the import are removed again (`keep` leaves them). The scene's world, frame range, frame step, fps and current frame
+are never changed: the import runs with `set_frame_range` and `create_world_material` off, and the time settings are put
+back even if the run fails. The USD file is written to `out_path` and stays there.
 
     import runpy
     result = runpy.run_path("<skill_dir>/scripts/usd_roundtrip.py", init_globals={"ARGS": {
@@ -126,7 +128,10 @@ def main(out_path, objects=None, tol=1e-4, keep=False, subdivision="TESSELLATE")
         before = {(o.type, _clean_key(o.name)): _describe(o, dg) for o in targets}
 
     snap = {coll: {i.name for i in getattr(bpy.data, coll)}
-            for coll in ("objects", "meshes", "materials", "images", "collections", "cameras", "lights", "node_groups")}
+            for coll in ("objects", "meshes", "materials", "images", "collections", "cameras", "lights", "node_groups", "worlds")}
+    scene = bpy.context.scene
+    world, rd = scene.world, scene.render
+    timing = (scene.frame_start, scene.frame_end, scene.frame_step, scene.frame_current, rd.fps, rd.fps_base)
     view_layer = bpy.context.view_layer
     prev_sel = list(bpy.context.selected_objects)
     prev_active = view_layer.objects.active
@@ -143,8 +148,12 @@ def main(out_path, objects=None, tol=1e-4, keep=False, subdivision="TESSELLATE")
         if not os.path.isfile(out_path):
             raise RuntimeError("usd_export wrote no file")
         bpy.ops.wm.usd_import(filepath=out_path, create_collection=True, import_materials=True,
-                              mtl_name_collision_mode="MAKE_UNIQUE")
+                              mtl_name_collision_mode="MAKE_UNIQUE", set_frame_range=False,
+                              create_world_material=False)
     finally:
+        (scene.frame_start, scene.frame_end, scene.frame_step, scene.frame_current, rd.fps, rd.fps_base) = timing
+        if scene.world is not world:
+            scene.world = world
         for o in targets:
             o.select_set(False)
         for o in prev_sel:
@@ -196,7 +205,7 @@ def main(out_path, objects=None, tol=1e-4, keep=False, subdivision="TESSELLATE")
         for o in new["objects"]:
             bpy.data.objects.remove(o, do_unlink=True)
             removed += 1
-        for coll in ("meshes", "materials", "images", "cameras", "lights", "node_groups", "collections"):
+        for coll in ("meshes", "materials", "images", "cameras", "lights", "node_groups", "collections", "worlds"):
             for item in new[coll]:
                 try:
                     getattr(bpy.data, coll).remove(item)
