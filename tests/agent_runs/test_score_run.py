@@ -123,6 +123,7 @@ def extra_cases():
         checks += window_cases(tmp)
         checks += flag_cases()
         checks += args_file_cases()
+        checks += plan_state_cases()
     return [(name, "", want, got) for name, got, want in checks if got != want]
 
 
@@ -185,7 +186,7 @@ def writes_then_launch(writes, command=PS_LAUNCH, say=None, tool_name="PowerShel
 
 def edits_then_launch(first, calls, command=PS_LAUNCH):
     """Write the args file (dict), then incremental calls (name, input) that touch it, then launch silently."""
-    rows, t = [(T0, assistant(tool("w", "Write", file_path="C:\\run\\args.json", content=json.dumps(first)))), (T0 + 1, done("w"))], T0 + 2
+    rows, t = [(T0, assistant(tool("w", "Write", file_path="C:\\run\\args.json", content=first if isinstance(first, str) else json.dumps(first)))), (T0 + 1, done("w"))], T0 + 2
     for i, (name, inp) in enumerate(calls):
         rows += [(t, assistant(tool(f"e{i}", name, **inp))), (t + 1, done(f"e{i}"))]
         t += 2
@@ -210,6 +211,68 @@ def incremental_edit_cases():
         ("shell read of the file does not change it", announce(edits_then_launch(on, [
             ("PowerShell", {"command": "Get-Content C:\\run\\args.json"})])), "OK"),
     ]
+
+
+def plan_state_cases():
+    """The plan exemption is granted only when the args file's latest state is known to say `plan: true`: from a full
+    Write, then Edit / MultiEdit replays. Any other write spelling, however odd, makes it unknown."""
+    path, other = "C:\\run\\args.json", "C:\\elsewhere\\args.json"
+    on = {"out_dir": "C:\\run\\out", "plan": True}
+    pretty = json.dumps(on, indent=2)
+    pretty_old = '"out_dir": "C:\\\\run\\\\out",\n  "plan": true'
+    sh = lambda cmd, name="Bash": (name, {"command": cmd})
+    run = lambda calls, first=on: announce(edits_then_launch(first, calls))
+    edit = lambda old, new, fp=path: ("Edit", {"file_path": fp, "old_string": old, "new_string": new})
+    multi = ("MultiEdit", {"file_path": path, "edits": [{"old_string": pretty_old, "new_string": '"out_dir": "x",\n  "plan": false'}]})
+    cases = [
+        # Unknown state: a stale plan:true must not exempt a real render.
+        ("Edit with out_dir in old_string, both lines edited", run([edit(pretty_old, '"out_dir": "C:\\\\run\\\\out2",\n  "plan": false')], pretty), "FLAG"),
+        ("MultiEdit with out_dir in old_string", run([multi], pretty), "FLAG"),
+        ("json.dump(d, open(p, 'w'))", run([sh("python -c \"import json; d=json.load(open('C:/run/args.json')); d['plan']=False; json.dump(d, open('C:/run/args.json','w'))\"")]), "FLAG"),
+        ("json.dump line of a heredoc script", run([sh("python - <<'EOF'\nimport json\njson.dump(d, open('C:/run/args.json','w'))\nEOF")]), "FLAG"),
+        ("python -c write_text", run([sh("python -c \"import pathlib; pathlib.Path('C:/run/args.json').write_text('{}')\"")]), "FLAG"),
+        ("echo > rewrite", run([sh("echo '{}' > C:/run/args.json")]), "FLAG"),
+        ("echo >> append", run([sh("echo x >> C:/run/args.json")]), "FLAG"),
+        ("tee rewrite", run([sh("echo '{}' | tee C:/run/args.json")]), "FLAG"),
+        ("cat piped into tee", run([sh("cat C:/run/args.json | tee C:/run/args.json")]), "FLAG"),
+        ("Out-File rewrite", run([sh("'{}' | Out-File C:\\run\\args.json", "PowerShell")]), "FLAG"),
+        ("PowerShell > redirect", run([sh("'{}' > C:\\run\\args.json", "PowerShell")]), "FLAG"),
+        ("cp over the file", run([sh("cp C:/run/off.json C:/run/args.json")]), "FLAG"),
+        ("mv over the file", run([sh("mv C:/run/off.json C:/run/args.json")]), "FLAG"),
+        ("Copy-Item over the file", run([sh("Copy-Item C:\\run\\off.json C:\\run\\args.json", "PowerShell")]), "FLAG"),
+        ("sed -i", run([sh("sed -i 's/true/false/' C:/run/args.json")]), "FLAG"),
+        ("a read-only piece does not excuse a writing one", run([sh("cat C:/run/args.json; python w.py C:/run/args.json")]), "FLAG"),
+        ("another tool naming the file", run([("NotebookEdit", {"notebook_path": "C:/run/args.json"})]), "FLAG"),
+        ("no Write at all: a shell-created plan file is not known", announce(replay([
+            (T0, assistant(tool("s", "Bash", command="echo '{\"out_dir\": \"C:/run/out\", \"plan\": true}' > C:/run/args.json"))), (T0 + 1, done("s")),
+            (T0 + 2, assistant(tool("j", "PowerShell", command=PS_LAUNCH))), (T0 + 3, done("j"))])), "FLAG"),
+        ("a later full Write of plan:true restores the exemption", announce(replay([
+            (T0, assistant(tool("w", "Write", file_path=path, content=json.dumps(on)))), (T0 + 1, done("w")),
+            (T0 + 2, assistant(tool("s", "Bash", command="cp a.json C:/run/args.json"))), (T0 + 3, done("s")),
+            (T0 + 4, assistant(tool("w2", "Write", file_path=path, content=json.dumps(on)))), (T0 + 5, done("w2")),
+            (T0 + 6, assistant(tool("j", "PowerShell", command=PS_LAUNCH))), (T0 + 7, done("j"))])), "OK"),
+        # Established state: these leave the exemption alone.
+        ("Read", run([("Read", {"file_path": path})]), "OK"),
+        ("cat", run([sh("cat C:/run/args.json")]), "OK"),
+        ("cat piped to grep", run([sh("cat C:/run/args.json | grep plan")]), "OK"),
+        ("head and tail", run([sh("head -5 C:/run/args.json && tail -2 C:/run/args.json")]), "OK"),
+        ("type", run([sh("type C:\\run\\args.json", "PowerShell")]), "OK"),
+        ("Get-Content", run([sh("Get-Content C:\\run\\args.json", "PowerShell")]), "OK"),
+        ("ls", run([sh("ls -l C:/run/args.json")]), "OK"),
+        ("grep", run([sh("grep plan C:/run/args.json")]), "OK"),
+        ("an unrelated shell command", run([sh("python make_other.py > out.txt")]), "OK"),
+        ("a write to another file", run([sh("echo hi > C:/run/notes.txt")]), "OK"),
+        ("the Blender launch itself, log redirected elsewhere",
+         run([sh("blender -b f.blend --python r.py -- --args-file C:/run/args.json > log.txt 2>&1")]), "OK"),
+        ("unrelated Edit keeps the plan", run([edit("out", "out2")]), "OK"),
+        ("Edit with out_dir in old_string that keeps plan true", run([edit('"out_dir": "C:\\\\run\\\\out"', '"out_dir": "C:\\\\run\\\\o2"')], pretty), "OK"),
+        ("Edit of another folder's args file", run([edit('"plan": true', '"plan": false', other)]), "OK"),
+        ("shell write to another folder's args file", run([sh("echo {} > C:/elsewhere/args.json")]), "OK"),
+        ("Edit turning plan on after a Write without it", run([edit("false", "true")], {"out_dir": "C:\\run\\out", "plan": False}), "OK"),
+        ("inline plan in the launch command itself",
+         announce(launch_run(None, "PowerShell", PS_LAUNCH + ' # {"plan": true}', args_call=ARGS_FILE)), "OK"),
+    ]
+    return cases
 
 
 def flag_cases():
