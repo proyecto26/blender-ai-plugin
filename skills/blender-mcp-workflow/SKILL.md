@@ -91,6 +91,7 @@ Python and Blender accept forward slashes on every OS; macOS and Linux paths nee
 | `scripts/validate_asset.py` | PASS/WARN/FAIL gate: transforms, tri budget, n-gons, manifold, loose geo, UVs, materials, naming, scale, origin | No |
 | `scripts/fix_asset.py` | Fixes the usual FAILs: bakes unapplied scale (or rotation+scale) into the mesh and adds a box-projected or Smart UV layer only where none exists; idempotent | Edits the named meshes |
 | `scripts/work_copy.py` | Disposable working copies for destructive steps: `begin` / `accept` / `revert` / `status`; originals are never modified, accepted originals go to an excluded `__Checkpoint` collection | Adds `__Work` copies; accept relinks |
+| `scripts/scene_snapshot.py` | Named snapshots of the scene's objects: `save` / `list` / `diff` (added, removed, moved, mesh changed) / `restore` (appends named objects into `_Restored`, removes nothing). `save` never changes the open file's path | `save`, `list`, `diff`: no (writes snapshot files only). `restore`: adds objects |
 | `scripts/capture_views.py` | Front / 3-4 / side / back / top / camera PNGs with a temporary camera; restores settings | No (temp camera removed) |
 | `scripts/ref_board.py` | Reads a folder of reference images, writes `style_bible.json` (palette, value/saturation histograms, contrast, warm/cool) | No (writes the JSON only) |
 | `scripts/compare_to_refs.py` | Scores renders, viewport captures or engine screenshots against the bible: distances, score, plain-language drift list | No |
@@ -102,6 +103,10 @@ Before a destructive step (apply transforms/modifiers, join, boolean apply, reme
 `fix_asset.py` on `SM_Crate__work`), check them, then `accept` (the copy takes the original name and
 every reference; the untouched original goes to the excluded `__Checkpoint`) or `revert` (copies removed).
 One pending work set at a time. Details: `references/mcp-integration.md`.
+
+## Snapshots Before Risky Edits
+
+Use `scripts/scene_snapshot.py` when you want a named restore point without File > Save As (which would make the snapshot the open file): `save` before a risky edit, `diff` afterwards to see exactly which objects were added, removed, moved or had their mesh changed, and `restore` with `objects: [...]` to bring back only what you need (copies land in `_Restored`; nothing is deleted or overwritten). Snapshots live in `<file folder>/snapshots` unless you pass `dir`. It covers objects and the data they use, not scene settings, and the mesh hash ignores modifiers and materials. For whole-asset destructive steps `work_copy.py` is still the tool; the snapshot is for scene-level history.
 
 ## Working Live
 
