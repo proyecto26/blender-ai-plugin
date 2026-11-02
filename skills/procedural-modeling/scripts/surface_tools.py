@@ -27,7 +27,7 @@ ARGS:
               The surface is bilinearly blended (Coons): it reproduces the four boundaries exactly.
 
   continuity (read-only):
-    a, b      each a surface: either an object name (mesh; world-space vertices read row by row) with
+    a, b      each a surface: either an object name (mesh; world-space vertices read row by row; in Edit Mode the live edit mesh is read, nothing flushed) with
               a_shape / b_shape = [rows, cols], or a_grid / b_grid = rows x cols x 3 nested lists.
     edge_a    (str) boundary of a: "last_row" (default) | "first_row" | "last_col" | "first_col"
     edge_b    (str) boundary of b, default "first_row"
@@ -49,6 +49,7 @@ at G1). Limit: the rows must be a smooth function of the row index; a kinked gri
 import json
 import sys
 
+import bmesh
 import bpy
 import numpy as np
 
@@ -163,11 +164,15 @@ def _grid_from(obj_name, shape, grid, label):
             raise ValueError(f"{label}: give a mesh object name with {label}_shape, or {label}_grid")
         if not shape or len(shape) != 2:
             raise ValueError(f"{label}_shape must be [rows, cols]")
-        if shape[0] * shape[1] != len(obj.data.vertices):
-            raise ValueError(f"{label}_shape {shape} does not match {len(obj.data.vertices)} vertices")
-        co = np.empty(len(obj.data.vertices) * 3, dtype=np.float64)
-        obj.data.vertices.foreach_get("co", co)
-        pts = co.reshape(-1, 3)
+        if obj.data.is_editmode:  # obj.data holds the stale pre-edit mesh; read the live edit mesh without changing anything
+            bm = bmesh.from_edit_mesh(obj.data)
+            pts = np.array([tuple(v.co) for v in bm.verts], dtype=np.float64).reshape(-1, 3)
+        else:
+            co = np.empty(len(obj.data.vertices) * 3, dtype=np.float64)
+            obj.data.vertices.foreach_get("co", co)
+            pts = co.reshape(-1, 3)
+        if shape[0] * shape[1] != len(pts):
+            raise ValueError(f"{label}_shape {shape} does not match {len(pts)} vertices")
         mw = np.array(obj.matrix_world)
         g = (pts @ mw[:3, :3].T + mw[:3, 3]).reshape(int(shape[0]), int(shape[1]), 3)
     if g.ndim != 3 or g.shape[2] != 3:

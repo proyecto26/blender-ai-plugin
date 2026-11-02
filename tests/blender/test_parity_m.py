@@ -649,6 +649,114 @@ def run_review_round3(out_dir, check):
     check("snapshot: diff of a normal name against the live scene still works", [c["name"] for c in d["changed"]] == ["Qo"], d)
 
 
+def run_review_round4(out_dir, check):
+    """Findings from the round-4 review of batch M. Each check failed on 5cdc393 before its fix."""
+    import bmesh
+    base = os.path.join(out_dir, "review4")
+    snaps = os.path.join(base, "snaps")
+    snap = lambda **kw: run("blender-mcp-workflow", "scene_snapshot.py", kw)  # noqa: E731
+    surf = lambda **kw: run("procedural-modeling", "surface_tools.py", kw)  # noqa: E731
+
+    def refused(fn, **kw):
+        try:
+            fn(**kw)
+        except ValueError as exc:
+            return str(exc)
+        return None
+
+    def stored_xs(o):
+        return [round(v.co.x, 4) for v in o.data.vertices]
+
+    # M3: diff against the live scene sees an edit made in Edit Mode, and reading it changes nothing
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    bpy.ops.mesh.primitive_cube_add()
+    cube = bpy.context.active_object
+    cube.name = "E"
+    snap(action="save", dir=snaps, name="e0")
+    bpy.ops.object.mode_set(mode="EDIT")
+    bm = bmesh.from_edit_mesh(cube.data)
+    bm.verts.ensure_lookup_table()
+    bm.verts[0].co.x += 0.5
+    bmesh.update_edit_mesh(cube.data)
+    stale = stored_xs(cube)
+    d = snap(action="diff", dir=snaps, a="e0")
+    check("M3: diff in Edit Mode reports the edit-mesh change (not a stale 'unchanged')",
+          [c["name"] for c in d["changed"]] == ["E"] and d["changed"][0].get("mesh_changed") is True, d)
+    bm = bmesh.from_edit_mesh(cube.data)
+    bm.verts.ensure_lookup_table()
+    check("M3: reading left the mode, the edit data and the stored mesh as they were",
+          cube.mode == "EDIT" and abs(bm.verts[0].co.x - (stale[0] + 0.5)) < 1e-4 and stored_xs(cube) == stale,
+          (cube.mode, stored_xs(cube), stale))
+    # moving the vertex back makes it match the snapshot again (the edit-mesh hash has the same layout as object mode)
+    bm.verts[0].co.x -= 0.5
+    bmesh.update_edit_mesh(cube.data)
+    d = snap(action="diff", dir=snaps, a="e0")
+    check("M3: Edit Mode mesh identical to the snapshot is reported unchanged", d["changed"] == [] and d["unchanged"] == 1, d)
+    # save would write the stale object-mode mesh while the manifest described the edit mesh: refused, nothing written
+    msg = refused(snap, action="save", dir=snaps, name="e1")
+    check("M3: save in Edit Mode is refused clearly and writes nothing",
+          msg is not None and "Edit Mode" in msg and not os.path.exists(os.path.join(snaps, "e1.json"))
+          and not os.path.exists(os.path.join(snaps, "e1.blend")), msg)
+    bpy.ops.object.mode_set(mode="OBJECT")
+    check("M3: after leaving Edit Mode save works again", os.path.exists(snap(action="save", dir=snaps, name="e1")["blend"]))
+
+    # M2: object-backed continuity reads the edit mesh, so a crease made in Edit Mode is seen
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+
+    def plane(x0, x1, name, z1=0.0):
+        e = np.linspace(x0, x1, 11)
+        zs = [z1 * (x - x0) / (x1 - x0) for x in e]
+        return surf(action="patch", name=name, nu=11, nv=9,
+                    bottom=[[x, 0, z] for x, z in zip(e, zs)], top=[[x, 1, z] for x, z in zip(e, zs)],
+                    left=[[x0, y, 0] for y in np.linspace(0, 1, 9)], right=[[x1, y, z1] for y in np.linspace(0, 1, 9)])
+    pa, pb = plane(-1, 0, "QA"), plane(0, 1, "QB")
+    cont = lambda: surf(action="continuity", a=pa["object"], a_shape=[9, 11], edge_a="last_col",  # noqa: E731
+                        b=pb["object"], b_shape=[9, 11], edge_b="first_col")
+    check("M2: fixture - two coplanar patches are G2 in Object Mode", cont()["level"] == "G2")
+    ob = bpy.data.objects[pb["object"]]
+    bpy.context.view_layer.objects.active = ob
+    bpy.ops.object.mode_set(mode="EDIT")
+    bm = bmesh.from_edit_mesh(ob.data)
+    bm.verts.ensure_lookup_table()
+    for v in bm.verts:  # lift everything past the seam column (x > 0.05) by x: a 45 degree crease, edit mesh only
+        if v.co.x > 0.05:
+            v.co.z += v.co.x
+    bmesh.update_edit_mesh(ob.data)
+    stale = stored_xs(ob)
+    res = cont()
+    check("M2: continuity in Edit Mode scores the edit mesh (crease -> not G1), not the stale smooth one",
+          res["level"] == "G0" and not res["g1"]["ok"], res)
+    bm = bmesh.from_edit_mesh(ob.data)
+    check("M2: reading left Edit Mode and the stored mesh alone", ob.mode == "EDIT" and stored_xs(ob) == stale and len(bm.verts) == 99)
+    check("M2: shape is checked against the edit mesh vertex count",
+          "does not match 99" in (refused(surf, action="continuity", a=pa["object"], a_shape=[9, 11], edge_a="last_col",
+                                           b=pb["object"], b_shape=[9, 10], edge_b="first_col") or ""))
+    bpy.ops.object.mode_set(mode="OBJECT")
+
+    # M3 (low): restore must not touch the existing dirty mesh, and the restored copy carries the snapshot geometry
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    for n, loc in (("P", (0, 0, 0)), ("Q", (4, 0, 0))):
+        bpy.ops.mesh.primitive_cube_add(location=loc)
+        bpy.context.active_object.name = n
+    q = bpy.data.objects["Q"]
+    q.parent = bpy.data.objects["P"]
+    q.matrix_parent_inverse = bpy.data.objects["P"].matrix_world.inverted()
+    orig = [round(v.co.x, 4) for v in q.data.vertices]
+    snaps2 = os.path.join(base, "snaps2")
+    snap(action="save", dir=snaps2, name="r0")
+    q.data.vertices[0].co.x += 0.75
+    edited = [round(v.co.x, 4) for v in q.data.vertices]
+    mesh_name = q.data.name
+    r = snap(action="restore", dir=snaps2, name="r0", objects=["Q"])
+    new_q = bpy.data.objects[r["restored"]["Q"]]
+    check("restore: the existing object's mesh keeps its edit (same datablock, same coordinates)",
+          bpy.data.objects["Q"].data.name == mesh_name and stored_xs(bpy.data.objects["Q"]) == edited,
+          (bpy.data.objects["Q"].data.name, mesh_name))
+    check("restore: the restored copy has its own mesh with the snapshot geometry, not the edit",
+          new_q is not bpy.data.objects["Q"] and new_q.data is not bpy.data.objects["Q"].data
+          and stored_xs(new_q) == orig and orig != edited, (stored_xs(new_q), orig, edited))
+
+
 def run_all(out_dir):
     results = []
 
@@ -658,7 +766,8 @@ def run_all(out_dir):
     os.makedirs(out_dir, exist_ok=True)
     for label, fn in (("flicker_check", run_flicker), ("scene_snapshot", run_snapshot),
                       ("surface_tools", run_surface), ("review_round1", run_review_round1),
-                      ("review_round2", run_review_round2), ("review_round3", run_review_round3)):
+                      ("review_round2", run_review_round2), ("review_round3", run_review_round3),
+                      ("review_round4", run_review_round4)):
         try:
             fn(out_dir, check)
         except Exception:

@@ -19,12 +19,13 @@ ARGS:
 save:    writes <dir>/<name>.blend (the scene's objects and the data they use, via bpy.data.libraries.write, a
          data-level write that does not go through File > Save) and <dir>/<name>.json (manifest: per object
          type, parent, collections, world matrix, mesh hash); relative external paths ('//textures/a.png') are re-based so
-         they still resolve to the same files from the snapshot folder. Refuses an existing name. Nothing in the open
+         they still resolve to the same files from the snapshot folder. Refuses an existing name, and refuses while a mesh is in Edit Mode (the file would hold its
+         stale pre-edit mesh). Nothing in the open
          session changes: file path, dirty flag, objects and selection are the same afterwards.
 list:    snapshots in <dir>, oldest first (name, created, object count, size). Read-only.
 diff:    added / removed / changed objects between two manifests: changed lists the largest transform delta,
          whether the mesh hash differs (base mesh vertices to 1e-5 and face corners; modifiers and materials are
-         not hashed), and parent changes. Read-only.
+         not hashed), and parent changes. Read-only; an object in Edit Mode is read from its edit mesh without leaving the mode.
 restore: appends the named objects (and what they depend on, e.g. a parent or mesh) from the snapshot file into a
          "_Restored" collection under the scene collection. It removes and overwrites nothing: an object that still
          exists keeps its name and the restored copy gets Blender's ".001" name; `restored` maps requested name to the
@@ -37,6 +38,7 @@ import re
 import sys
 import time
 
+import bmesh
 import bpy
 import numpy as np
 
@@ -84,8 +86,19 @@ def _check_name(name):
         raise ValueError("snapshot name must be at most 100 characters")
 
 
-def _mesh_hash(obj):
+def _mesh_arrays(obj):
+    """Vertex coordinates, face-corner vertex indices, face corner starts and edge vertex pairs of the mesh as the user
+    sees it. In Edit Mode obj.data is the stale pre-edit copy, so the live edit mesh is read through bmesh.from_edit_mesh
+    (a view onto the edit data: nothing is flushed, no mode change, no index is rewritten)."""
     me = obj.data
+    if me.is_editmode:
+        bm = bmesh.from_edit_mesh(me)
+        vid = {v: i for i, v in enumerate(bm.verts)}
+        co = np.array([c for v in bm.verts for c in v.co], dtype=np.float32)
+        corners = np.array([vid[lp.vert] for f in bm.faces for lp in f.loops], dtype=np.int32)
+        starts = np.cumsum([0] + [len(f.loops) for f in bm.faces][:-1]).astype(np.int32)
+        edges = np.array([vid[v] for e in bm.edges for v in e.verts], dtype=np.int32)
+        return co, corners, starts, edges
     co = np.empty(len(me.vertices) * 3, dtype=np.float32)
     me.vertices.foreach_get("co", co)
     corners = np.empty(len(me.loops), dtype=np.int32)
@@ -94,6 +107,11 @@ def _mesh_hash(obj):
     me.polygons.foreach_get("loop_start", starts)
     edges = np.empty(len(me.edges) * 2, dtype=np.int32)  # includes loose edges, which no polygon covers
     me.edges.foreach_get("vertices", edges)
+    return co, corners, starts, edges
+
+
+def _mesh_hash(obj):
+    co, corners, starts, edges = _mesh_arrays(obj)
     h = hashlib.sha1()
     h.update(np.round(co, 5).tobytes())
     for part in (corners, starts, edges):
@@ -111,7 +129,7 @@ def _manifest(name):
                  "matrix_world": [round(v, 6) for row in o.matrix_world for v in row]}
         if o.type == "MESH":
             entry["mesh_hash"] = _mesh_hash(o)
-            entry["vertices"] = len(o.data.vertices)
+            entry["vertices"] = len(_mesh_arrays(o)[0]) // 3
         objs[o.name] = entry
     return {"version": 1, "name": name, "created": time.strftime("%Y-%m-%dT%H:%M:%S"),
             "source_file": os.path.basename(bpy.data.filepath), "scene": scene.name, "objects": objs}
@@ -162,6 +180,10 @@ def _save(d, name):
     objs = list(bpy.context.scene.objects)
     if not objs:
         raise ValueError("the scene has no objects to snapshot")
+    editing = sorted(o.name for o in objs if o.type == "MESH" and o.data.is_editmode)
+    if editing:  # the .blend would hold the stale pre-edit mesh while the manifest hashes the edit mesh
+        raise ValueError(f"cannot save a snapshot while {editing} are in Edit Mode: their edits are not in the saved mesh. "
+                         "Leave Edit Mode (Tab) and save again")
     manifest = _manifest(name)
     os.makedirs(d, exist_ok=True)
     # RELATIVE re-bases '//' paths onto the snapshot folder; the default NONE leaves them pointing under it
