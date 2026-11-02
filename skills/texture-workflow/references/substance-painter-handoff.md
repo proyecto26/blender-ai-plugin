@@ -19,7 +19,7 @@ Because of that the script matches generic keywords in file names, and you tell 
 
 ## Matching rules
 
-| Kind | Keywords (any one in the file name) | Goes to | Colour space |
+| Kind | Keywords (at the end of the file name) | Goes to | Colour space |
 |------|--------------------------------------|---------|--------------|
 | `orm` | `orm` as a whole word, `occlusionroughnessmetallic` | Roughness from G, Metallic from B | Non-Color |
 | `base_color` | `basecolor`, `base_color`, `base-color`, `albedo`, `diffuse`, `color`, `colour` | Base Color | sRGB |
@@ -31,7 +31,7 @@ Because of that the script matches generic keywords in file names, and you tell 
 | `emissive` | `emissive`, `emission`, `emit` (whole word) | Emission Color | sRGB |
 | `opacity` | `opacity`, `alpha`, `transparency` | Alpha | Non-Color |
 
-Words of four characters or fewer match whole name parts only, so `orm` does not fire inside `Normal`. If your files use
+The kind is read from the end of the file name: `Metal_Panel_Normal.png` is a normal map, while `Crate_Normal_backup.png` is not matched (a keyword earlier in the name, or followed by other words, is ignored). Trailing resolution, version and convention tokens (`2k`, `v2`, `OpenGL`, `DirectX`) are skipped first. Words of four characters or fewer match whole name parts only, so `orm` does not fire inside `Normal`. If your files use
 other words, pass `patterns`, for example `{"roughness": ["rgh"]}`. Run once and read `files`, `unmatched` and
 `ambiguous` before trusting the material: two files of one kind keep the first in name order and report the other.
 

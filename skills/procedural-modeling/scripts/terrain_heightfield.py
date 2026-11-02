@@ -134,7 +134,7 @@ def main(name="GEO_Terrain", size=50.0, resolution=65, seed=0, height=5.0, frequ
         raise ValueError("size must be > 0")
     existing = bpy.data.objects.get(name)
     if existing is not None and not replace:
-        raise ValueError(f"object {name!r} exists; pass replace=true to give it a new mesh")
+        raise ValueError(f"object {name!r} exists; pass replace=true to give it a new mesh (a mesh shared with other objects is left alone; the object gets its own)")
     if existing is not None and existing.type != "MESH":
         raise ValueError(f"object {name!r} exists and is not a mesh")
     target_coll = bpy.data.collections.get(collection) if collection else bpy.context.scene.collection
@@ -171,9 +171,15 @@ def main(name="GEO_Terrain", size=50.0, resolution=65, seed=0, height=5.0, frequ
     faces = [(j * resolution + i, j * resolution + i + 1, (j + 1) * resolution + i + 1, (j + 1) * resolution + i)
              for j in range(resolution - 1) for i in range(resolution - 1)]
     if existing is not None:
-        mesh = existing.data
-        mesh.clear_geometry()
         obj = existing
+        if existing.data.users > 1:  # linked duplicates: never edit a mesh another object uses
+            mesh = bpy.data.meshes.new(name)
+            for mat in existing.data.materials:
+                mesh.materials.append(mat)
+            existing.data = mesh
+        else:
+            mesh = existing.data
+            mesh.clear_geometry()
     else:
         mesh = bpy.data.meshes.new(name)
         obj = bpy.data.objects.new(name, mesh)

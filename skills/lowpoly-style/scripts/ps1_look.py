@@ -125,38 +125,63 @@ def _ps1_material(obj, seed):
     return mat.name
 
 
+def _is_ps1(node):
+    return node.name.startswith("SK_PS1_")
+
+
+def _unwind(node):
+    """The non-PS1 socket that feeds PS1 `node` (through any chain of PS1 nodes), or None."""
+    seen = set()
+    while _is_ps1(node) and node.name not in seen:
+        seen.add(node.name)
+        linked = [i for i in node.inputs if i.is_linked and i.enabled]
+        pick = next((i for i in linked if i.type == "RGBA"), linked[0] if linked else None)
+        if pick is None:
+            return None
+        sock = pick.links[0].from_socket
+        if not _is_ps1(sock.node):
+            return sock
+        node = sock.node
+    return None
+
+
+def _image_in_use(img):
+    """True when any compositor/shader/node-group tree in the file still references `img`."""
+    trees = [g for g in bpy.data.node_groups] + [s.compositing_node_group for s in bpy.data.scenes
+                                                  if s.compositing_node_group is not None]
+    trees += [m.node_tree for m in bpy.data.materials if m.node_tree]
+    return any(getattr(n, "image", None) == img for t in trees for n in t.nodes)
+
+
 def _tree(scene):
-    """The scene compositing group (created if missing) with its Image output socket; own SK_PS1_ nodes removed."""
+    """The scene compositing group (created if missing) with its Image output socket. A rerun splices every
+    SK_PS1_ node out wherever it sits in the chain (nodes before and after stay connected) and drops this
+    scene's old threshold image unless some other node tree still uses it."""
     tree = scene.compositing_node_group
     if tree is None:
         tree = bpy.data.node_groups.new("Compositing", "CompositorNodeTree")
         scene.compositing_node_group = tree
     if not any(getattr(i, "in_out", None) == "OUTPUT" for i in tree.interface.items_tree):
         tree.interface.new_socket("Image", in_out="OUTPUT", socket_type="NodeSocketColor")
-    out = next((n for n in tree.nodes if n.bl_idname == "NodeGroupOutput"), None)
-    feed = _unwound_feed(out) if out is not None else None
-    for node in [n for n in tree.nodes if n.name.startswith("SK_PS1_")]:
+    ours = [n for n in tree.nodes if _is_ps1(n)]
+    old_images = [n.image for n in ours if n.bl_idname == "CompositorNodeImage" and n.image is not None]
+    bridges = []  # (feeding socket, consuming socket) for every link that leaves the PS1 group
+    for node in ours:
+        for out_sock in node.outputs:
+            for lk in out_sock.links:
+                if not _is_ps1(lk.to_node):
+                    src = _unwind(node)
+                    if src is not None:
+                        bridges.append((src, lk.to_socket))
+    for node in ours:
         tree.nodes.remove(node)
-    if feed is not None and not out.inputs[0].is_linked:
-        tree.links.new(feed, out.inputs[0])  # a rerun keeps whatever (e.g. a comp_grade) fed our first stage
+    for src, dst in bridges:
+        if not dst.is_linked:
+            tree.links.new(src, dst)
+    for img in old_images:
+        if img.get(OWNER_KEY) is not None and not _image_in_use(img):
+            bpy.data.images.remove(img)
     return tree
-
-
-def _unwound_feed(out):
-    """The non-PS1 socket that feeds the first SK_PS1_ stage upstream of `out`, or None when nothing PS1 is there."""
-    if not out.inputs[0].is_linked:
-        return None
-    sock, seen = out.inputs[0].links[0].from_socket, set()
-    if not sock.node.name.startswith("SK_PS1_"):
-        return None
-    while sock.node.name.startswith("SK_PS1_") and sock.node.name not in seen:
-        seen.add(sock.node.name)
-        linked = [i for i in sock.node.inputs if i.is_linked and i.enabled]
-        pick = next((i for i in linked if i.type == "RGBA"), linked[0] if linked else None)
-        if pick is None:
-            return None
-        sock = pick.links[0].from_socket
-    return None if sock.node.name.startswith("SK_PS1_") else sock
 
 
 def _ends(tree):
@@ -198,13 +223,9 @@ def _threshold_image(scene, size, steps):
     r = scene.render
     w = max(1, r.resolution_x * r.resolution_percentage // 100)
     h = max(1, r.resolution_y * r.resolution_percentage // 100)
-    # One image per scene: another scene's compositor may still use its own. The stable hash of the full scene name
-    # comes first so truncation to Blender's 63-character name limit can never make two scenes share a name.
+    # Names are only labels (Blender suffixes a collision); ownership is decided by the nodes that reference the image.
     digest = hashlib.sha1(scene.name.encode("utf-8")).hexdigest()[:10]
     name = f"{DITHER_IMAGE}_{digest}_{scene.name}"[:63]
-    old = bpy.data.images.get(name)
-    if old is not None and old.get(OWNER_KEY) == scene.name:  # only an image this script made for this very scene
-        bpy.data.images.remove(old)
     img = bpy.data.images.new(name, w, h, alpha=False, float_buffer=True, is_data=True)
     img[OWNER_KEY] = scene.name
     img.colorspace_settings.name = "Non-Color"
