@@ -717,6 +717,133 @@ def test_review2(rec, scene, out_dir):
               tolerant["ok"], tolerant["problems"])
 
 
+# ---------------------------------------------------------------- review findings (round 3)
+
+def test_review3(rec, scene, out_dir):
+    # R1: scene names that share a long prefix must not share a threshold image (name truncation, deletion).
+    prefix = "Environment_Exterior_Industrial_District_Sequence_"
+    base = {"objects": [], "snap": 0, "fog": False, "texture": False, "resolution": [32, 24]}
+    la, lb = bpy.data.scenes.new(prefix + "A"), bpy.data.scenes.new(prefix + "B")
+    for s_ in (la, lb):
+        s_.render.resolution_x, s_.render.resolution_y = 32, 24
+    in_scene(la, lambda: run("lowpoly-style", "ps1_look.py", base))
+    img_a = la.compositing_node_group.nodes["SK_PS1_DitherThreshold"].image
+    name_a = img_a.name
+    in_scene(lb, lambda: run("lowpoly-style", "ps1_look.py", base))
+    node_a = la.compositing_node_group.nodes["SK_PS1_DitherThreshold"]
+    img_b = lb.compositing_node_group.nodes["SK_PS1_DitherThreshold"].image
+    rec.check("R1-review3: long scene names: scene A's threshold image survives applying PS1 in scene B",
+              node_a.image is not None and name_a in bpy.data.images and bpy.data.images[name_a] == node_a.image, name_a)
+    rec.check("R1-review3: long scene names: scenes A and B have different threshold images",
+              img_b is not None and node_a.image is not None and img_b.name != node_a.image.name,
+              (img_b and img_b.name, node_a.image and node_a.image.name))
+    rec.check("R1-review3: image names stay within 63 characters", len(name_a) <= 63 and len(img_b.name) <= 63,
+              (len(name_a), len(img_b.name)))
+    in_scene(la, lambda: run("lowpoly-style", "ps1_look.py", base))
+    rec.check("R1-review3: rerunning in A replaces its own image (one image per scene, none leaked)",
+              sum(1 for i in bpy.data.images if prefix in i.name or i.get("sk_ps1_scene", "").startswith(prefix)) == 2,
+              [i.name for i in bpy.data.images if prefix in i.name or i.get("sk_ps1_scene", "").startswith(prefix)])
+    # A user image that happens to carry the name the script would pick must not be deleted.
+    lc = bpy.data.scenes.new("__RT_R1_C")
+    lc.render.resolution_x, lc.render.resolution_y = 32, 24
+    in_scene(lc, lambda: run("lowpoly-style", "ps1_look.py", base))
+    cname = lc.compositing_node_group.nodes["SK_PS1_DitherThreshold"].image.name
+    lc.compositing_node_group.nodes.remove(lc.compositing_node_group.nodes["SK_PS1_DitherThreshold"])
+    bpy.data.images.remove(bpy.data.images[cname])
+    mine = bpy.data.images.new(cname, 4, 4)
+    mine.use_fake_user = True
+    in_scene(lc, lambda: run("lowpoly-style", "ps1_look.py", {**base, "dither": True}))
+    rec.check("R1-review3: an image not made by PS1 for this scene is never deleted", mine.name in bpy.data.images
+              and bpy.data.images[mine.name] == mine)
+
+    # R2: a curve object with several splines flattens under every one of them.
+    cu = bpy.data.curves.new("CRV_RT_TWO", "CURVE")
+    cu.dimensions = "3D"
+    for yy, zz in ((-12.0, 1.0), (12.0, 3.0)):
+        sp = cu.splines.new("POLY")
+        sp.points.add(1)
+        for p_, co in zip(sp.points, [(-10, yy, zz, 1), (10, yy, zz, 1)]):
+            p_.co = co
+    scene.collection.objects.link(bpy.data.objects.new("CRV_RT_TWO", cu))
+    args = {"size": 40, "resolution": 81, "seed": 7, "height": 4, "frequency": 0.08}
+    run("procedural-modeling", "terrain_heightfield.py", {**args, "name": "RT_TerrTwoFree"})
+    free = mesh_coords(bpy.data.objects["RT_TerrTwoFree"])[:, 2]
+    r = run("procedural-modeling", "terrain_heightfield.py",
+            {**args, "name": "RT_TerrTwo", "corridor": {"curve": "CRV_RT_TWO", "half_width": 1.5, "falloff": 1.0}})["result"]
+    co = mesh_coords(bpy.data.objects["RT_TerrTwo"])
+    x, y, z = co[:, 0], co[:, 1], co[:, 2]
+    for yy, zz in ((-12.0, 1.0), (12.0, 3.0)):
+        bed = (np.abs(y - yy) <= 1.5) & (np.abs(x) <= 8)
+        err = float(np.abs(z[bed] - zz).max()) if bed.any() else 99
+        rec.check(f"R2-review3: spline at y={yy:g} is flattened to z={zz:g} (<= 1 mm)", bed.sum() > 10 and err < 1e-3,
+                  f"n={bed.sum()} err={err}")
+    mid = (np.abs(y) <= 3) & (np.abs(x) <= 8)
+    rec.check("R2-review3: terrain between the splines is untouched noise", bool(np.allclose(z[mid], free[mid], atol=1e-6)))
+    rec.check("R2-review3: result reports both splines", r["corridor"].get("splines") == 2, r["corridor"])
+
+    # R3: independent literal values for each documented use case (SKILL.md table), not read from PRESETS.
+    cy = scene.cycles
+    literal = {
+        "denoise_draft": dict(samples=32, use_denoising=True, denoiser="OPENIMAGEDENOISE", denoising_quality="FAST",
+                              denoising_prefilter="FAST", denoising_input_passes="RGB_ALBEDO", adaptive_threshold=0.05),
+        "denoise_final_still": dict(samples=1024, use_denoising=True, denoiser="OPENIMAGEDENOISE",
+                                    denoising_quality="HIGH", denoising_prefilter="ACCURATE",
+                                    denoising_input_passes="RGB_ALBEDO_NORMAL", adaptive_threshold=0.01),
+        "denoise_animation": dict(samples=512, use_denoising=True, denoising_quality="BALANCED",
+                                  denoising_prefilter="ACCURATE", denoising_input_passes="RGB_ALBEDO_NORMAL",
+                                  use_animated_seed=False, adaptive_threshold=0.02),
+        "denoise_viewport": dict(use_preview_denoising=True, preview_denoiser="AUTO", preview_denoising_quality="FAST",
+                                 preview_denoising_prefilter="FAST", preview_denoising_input_passes="RGB_ALBEDO",
+                                 preview_denoising_start_sample=1),
+    }
+    for name, want in literal.items():
+        cy.use_denoising, cy.use_preview_denoising, cy.samples = False, False, 7  # known starting point
+        run("rendering", "render_preset.py", {"preset": name})
+        bad = {k: (getattr(cy, k), v) for k, v in want.items()
+               if not (abs(getattr(cy, k) - v) < 1e-6 if isinstance(v, float) else getattr(cy, k) == v)}
+        rec.check(f"R3-review3: {name} sets the documented values", not bad, bad)
+    cy.use_denoising, cy.use_preview_denoising = True, True
+    run("rendering", "render_preset.py", {"preset": "denoise_off"})
+    rec.check("R3-review3: denoise_off turns both denoisers off", not cy.use_denoising and not cy.use_preview_denoising)
+    cy.use_denoising, cy.use_preview_denoising = True, False
+    run("rendering", "render_preset.py", {"preset": "denoise_viewport"})
+    rec.check("R3-review3: denoise_viewport leaves the final-render denoise switch alone", cy.use_denoising is True)
+
+    # R4: the map kind sits at the END of the name; asset-name words earlier in it are not map kinds.
+    table = [
+        ("Metal_Panel_Normal", "normal"), ("Metal_Panel_Metallic", "metallic"), ("MetalDoor_Normal", "normal"),
+        ("Rock_occlusion_roughness_metallic", "orm"), ("Rock_OcclusionRoughnessMetallic", "orm"), ("Rock_ORM", "orm"),
+        ("Rough_Stone_BaseColor", "base_color"), ("Rough_Stone_Albedo", "base_color"),
+        ("Base_Metal_Roughness", "roughness"), ("Normal_Wall_Height", "height"),
+        ("Normal_Wall_BaseColor", "base_color"), ("Color_Wall_Normal", "normal"), ("Wall_Base_Color", "base_color"),
+        ("Wall_base-color", "base_color"), ("Metal_Door_AO", "ao"), ("AO_Panel_Roughness", "roughness"),
+        ("Wall_Normal_DirectX", "normal"), ("Bump_Rock_Height", "height"), ("Disp_Rock_Normal", "normal"),
+        ("Alpha_Tree_Opacity", "opacity"), ("Emissive_Lamp_BaseColor", "base_color"), ("Door_Metalness", "metallic"),
+        ("Height_Crate_Metallic", "metallic"), ("Crate_Roughness_2k", "roughness"), ("MetalDoorNormal", "normal"),
+        ("Crate_Mystery", None), ("Normal_Mystery", None),
+    ]
+    for i, (stem, kind) in enumerate(table):
+        folder = os.path.join(out_dir, "r4_table", f"c{i}")
+        os.makedirs(folder, exist_ok=True)
+        save_map(os.path.join(folder, stem + ".png"), 0.5)
+        args4 = {"folder": folder, "material": f"MAT_RT_T{i}"}
+        if kind is None:
+            rec.check(f"R4-review3 table: {stem} matches no map kind",
+                      raises(lambda: run("texture-workflow", "import_painter_textures.py", args4)) is not None)
+            continue
+        got = run("texture-workflow", "import_painter_textures.py", args4)["result"]["files"]
+        rec.check(f"R4-review3 table: {stem} -> {kind}", got == {kind: stem + ".png"}, got)
+    folder = os.path.join(out_dir, "r4_metal_panel")
+    os.makedirs(folder, exist_ok=True)
+    for stem in ("BaseColor", "Normal", "Metallic", "Roughness"):
+        save_map(os.path.join(folder, f"Metal_Panel_{stem}.png"), 0.5)
+    r = run("texture-workflow", "import_painter_textures.py", {"folder": folder, "material": "MAT_RT_MetalPanel"})["result"]
+    bsdf = next(n for n in bpy.data.materials["MAT_RT_MetalPanel"].node_tree.nodes if n.bl_idname == "ShaderNodeBsdfPrincipled")
+    rec.check("R4-review3: Metal_Panel set: normal wired, metallic from Metallic file, nothing ambiguous",
+              bsdf.inputs["Normal"].is_linked and r["files"].get("metallic") == "Metal_Panel_Metallic.png"
+              and not r["ambiguous"], (r["files"], r["ambiguous"]))
+
+
 # ---------------------------------------------------------------- harness
 
 def run_all(out_dir):
@@ -737,7 +864,8 @@ def run_all(out_dir):
             for name, fn in (("R1", test_r1), ("R2", test_r2), ("R3", test_r3), ("R4", test_r4), ("R5", test_r5),
                              ("R1-review", test_review_r1), ("R2-review", test_review_r2),
                              ("R3-review", test_review_r3), ("R4-review", test_review_r4),
-                             ("R5-review", test_review_r5), ("review2", test_review2)):
+                             ("R5-review", test_review_r5), ("review2", test_review2),
+                             ("review3", test_review3)):
                 rec.section(name, lambda r, fn=fn: fn(r, scene, out_dir))
         finally:
             if ctx:

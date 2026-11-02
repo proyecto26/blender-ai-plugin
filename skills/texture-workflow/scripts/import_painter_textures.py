@@ -1,6 +1,6 @@
 """Wire exported PBR texture maps (for example from Substance 3D Painter) into a new Principled BSDF material, by file name.
 
-Files are matched by keywords in the name (see PATTERNS; override or extend with `patterns`). Colour maps load as sRGB,
+Files are matched by the keyword that ends the name (see PATTERNS and _classify; override or extend with `patterns`). Colour maps load as sRGB,
 data maps (roughness, metallic, normal, height, opacity, packed ORM, AO) as Non-Color. Creates a new material only;
 refuses to touch an existing one. The maps are read from disk, nothing is exported or deleted.
 Painter itself is NOT exercised by the tests: they use synthetic maps with these names.
@@ -33,8 +33,7 @@ import sys
 
 import bpy
 
-# Words of 4 characters or fewer match whole name tokens only ("orm" must not match inside "normal");
-# longer words match anywhere in the name. Order matters: the packed ORM map is tried first.
+# The map kind is read from the end of the file name (see _classify). Order matters: the packed ORM map is tried first.
 PATTERNS = {
     "orm": ["orm", "occlusionroughnessmetallic", "occlusion_roughness_metallic"],
     "base_color": ["basecolor", "base_color", "base-color", "albedo", "diffuse", "color", "colour"],
@@ -66,17 +65,35 @@ def _cli_args():
                          "cmd/PowerShell mangle JSON quotes, so pass --args-file <path.json> instead") from exc
 
 
+NOISE_TAIL = re.compile(r"^(\d+|v\d+|\d+k|opengl|directx|gl|dx)$")  # resolution / version / convention suffixes
+
+
+def _norm(word):
+    return re.sub(r"[^a-z0-9]+", "", word.lower())
+
+
 def _classify(filename, patterns):
+    """Map kind from the END of the file name, where exporters put it ("Metal_Panel_Normal" is a normal map; the
+    asset name before it is not a map kind). Trailing resolution/version/convention tokens (2k, v2, DirectX) are
+    ignored. Longest tail first, so a spelled-out compound ("occlusion_roughness_metallic", "base_color") beats the
+    single words inside it; then the last token alone; then, for a camelCase name with no separator
+    ("MetalDoorNormal"), a long keyword the name ends with."""
     stem = os.path.splitext(filename)[0].lower()
-    tokens = set(re.split(r"[^a-z0-9]+", stem))
-    for w in patterns.get("orm", ()):  # a compound packed name spells out other maps: it must win over their tokens
-        if len(w) > 4 and w in stem:
-            return "orm"
-    for kind, words in patterns.items():  # whole name tokens first: "MetalDoor_Normal" is a normal map, not metallic
-        if any(w in tokens for w in words):
-            return kind
+    tokens = [t for t in re.split(r"[^a-z0-9]+", stem) if t]
+    while len(tokens) > 1 and NOISE_TAIL.match(tokens[-1]):
+        tokens.pop()
+    if not tokens:
+        return None
+    for n in (3, 2, 1):  # patterns is ordered: the packed ORM kind is first, so it wins a tie
+        if n > len(tokens):
+            continue
+        tail = "".join(tokens[-n:])
+        for kind, words in patterns.items():
+            if any(_norm(w) == tail and (n == 1 or len(_norm(w)) > 4) for w in words):
+                return kind
+    last = tokens[-1]
     for kind, words in patterns.items():
-        if any(len(w) > 4 and w in stem for w in words):
+        if any(len(_norm(w)) > 4 and last.endswith(_norm(w)) for w in words):
             return kind
     return None
 

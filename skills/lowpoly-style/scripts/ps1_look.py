@@ -26,6 +26,7 @@ Standard view transform the 8-bit output has exactly `color_levels` values per c
 render-sized image: after changing the render resolution, run this script again. Scene render dither_intensity
 is set to 0 (Blender's own output noise would blur the levels).
 """
+import hashlib
 import json
 import sys
 
@@ -33,6 +34,7 @@ import bpy
 
 GROUP = "GN_PS1_VertexSnap"
 DITHER_IMAGE = "SK_PS1_DitherThreshold"
+OWNER_KEY = "sk_ps1_scene"  # custom property on a threshold image: the scene it was made for
 
 
 def _cli_args():
@@ -196,11 +198,15 @@ def _threshold_image(scene, size, steps):
     r = scene.render
     w = max(1, r.resolution_x * r.resolution_percentage // 100)
     h = max(1, r.resolution_y * r.resolution_percentage // 100)
-    name = f"{DITHER_IMAGE}_{scene.name}"[:63]  # one image per scene: another scene's compositor may still use its own
+    # One image per scene: another scene's compositor may still use its own. The stable hash of the full scene name
+    # comes first so truncation to Blender's 63-character name limit can never make two scenes share a name.
+    digest = hashlib.sha1(scene.name.encode("utf-8")).hexdigest()[:10]
+    name = f"{DITHER_IMAGE}_{digest}_{scene.name}"[:63]
     old = bpy.data.images.get(name)
-    if old is not None:
+    if old is not None and old.get(OWNER_KEY) == scene.name:  # only an image this script made for this very scene
         bpy.data.images.remove(old)
     img = bpy.data.images.new(name, w, h, alpha=False, float_buffer=True, is_data=True)
+    img[OWNER_KEY] = scene.name
     img.colorspace_settings.name = "Non-Color"
     m = _bayer(size)
     t = (m + 0.5) / float(size * size) / float(steps)
