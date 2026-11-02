@@ -36,21 +36,19 @@ reading the other keys' values). It is 0 unless both are on. This corrective set
 ## Recipe (tested)
 
 Builds a sphere face proxy, an armature with a `jaw` bone and a `ctrl` bone, two shape keys with drivers, then checks the
-result. It raises if a driver is invalid or the evaluated mesh does not move by the expected amount. Re-running removes and
-rebuilds its own objects only (`FaceDemo`, `ARM_FaceDemo`).
+result. It raises if a driver is invalid or the evaluated mesh does not move by the expected amount. Everything it creates
+carries a `recipe_owner` tag; re-running removes only tagged data from an earlier run. An object, mesh or armature of yours
+that happens to be named `FaceDemo` or `ARM_FaceDemo` is not touched (the recipe's copies get a `.001` suffix).
 
 ```python
 import bpy
 import bmesh
 
-# remove only this recipe's own data from an earlier run
-for name in ("FaceDemo", "ARM_FaceDemo"):
-    old = bpy.data.objects.get(name)
-    if old:
-        bpy.data.objects.remove(old)
-for coll, name in ((bpy.data.meshes, "FaceDemo"), (bpy.data.armatures, "ARM_FaceDemo")):
-    if coll.get(name):
-        coll.remove(coll[name])
+# Remove only data this recipe tagged on an earlier run; never look anything up by name.
+TAG, OWNER = "recipe_owner", "facial-shape-keys-drivers"
+for coll in (bpy.data.objects, bpy.data.meshes, bpy.data.armatures):
+    for stale in [d for d in coll if d.get(TAG) == OWNER]:
+        coll.remove(stale)
 
 sc = bpy.context.scene
 me = bpy.data.meshes.new("FaceDemo")
@@ -59,6 +57,7 @@ bmesh.ops.create_uvsphere(bm, u_segments=16, v_segments=8, radius=1.0)
 bm.to_mesh(me)
 bm.free()
 face = bpy.data.objects.new("FaceDemo", me)
+face[TAG] = me[TAG] = OWNER
 sc.collection.objects.link(face)
 
 # keys: Basis, jaw_open (lower third drops 0.3), smile (verts with |x| > 0.6 rise 0.1)
@@ -76,6 +75,7 @@ for k in (jaw_key, smile_key):
 # controls
 arm = bpy.data.armatures.new("ARM_FaceDemo")
 rig = bpy.data.objects.new("ARM_FaceDemo", arm)
+rig[TAG] = arm[TAG] = OWNER
 sc.collection.objects.link(rig)
 bpy.context.view_layer.objects.active = rig
 bpy.ops.object.mode_set(mode="EDIT")

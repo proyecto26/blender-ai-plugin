@@ -29,7 +29,9 @@ These are starting points for a 30 fps clip, to be tuned by looking at the curve
 Makes a synthetic capture on an empty named `MocapDemo`: a sine move with noise, one 1.5 m spike at frame 41, and a rotation
 that jumps by 2 pi at frame 71. It then unwraps, despikes, smooths and reduces the keys, and checks against the known clean
 curve. The sine and noise come from a fixed seed, so the numbers are repeatable. It raises if the cleaned curve is not
-closer to the truth than the noisy one, if keys are not reduced, or if the rotation still flips.
+closer to the truth than the noisy one, if keys are not reduced, if the rotation still flips, or if the cleaned rotation
+has drifted from the true ramp (so a rotation replaced by a constant fails). Everything it creates carries a `recipe_owner`
+tag; re-running removes only tagged data from an earlier run, and an object or action of yours with the same name is left alone.
 
 ```python
 import math
@@ -37,12 +39,13 @@ import bpy
 import numpy as np
 from bpy_extras import anim_utils
 
-# remove only this recipe's data from an earlier run
-old = bpy.data.objects.get("MocapDemo")
-if old:
-    bpy.data.objects.remove(old)
-for act in [a for a in bpy.data.actions if a.name.startswith("MocapDemo")]:
-    bpy.data.actions.remove(act)
+# Everything this recipe creates is tagged; a re-run removes only tagged data from an earlier run. Data you already have
+# with the same name is never touched: the new data simply gets a .001 name, and the recipe uses references, not names.
+TAG = "recipe_owner"
+OWNER = "mocap-cleanup"
+for coll in (bpy.data.objects, bpy.data.actions):
+    for stale in [d for d in coll if d.get(TAG) == OWNER]:
+        coll.remove(stale)
 
 # synthetic capture
 n = 120
@@ -63,7 +66,9 @@ for f in range(n):
     ob.rotation_euler.z = float(rot[f])
     ob.keyframe_insert("location", index=0, frame=f + 1)
     ob.keyframe_insert("rotation_euler", index=2, frame=f + 1)
+ob[TAG] = OWNER
 ad = ob.animation_data
+ad.action[TAG] = OWNER
 bag = anim_utils.action_get_channelbag_for_slot(ad.action, ad.action_slot)
 curves = {fc.data_path: fc for fc in bag.fcurves}
 
@@ -132,17 +137,20 @@ report["rms_vs_truth_before"] = round(rms(noisy, truth), 4)
 report["rms_vs_truth_after"] = round(rms(after_loc, truth), 4)
 report["max_rot_step_before"] = round(float(np.abs(np.diff(rot)).max()), 3)
 report["max_rot_step_after"] = round(float(np.abs(np.diff(after_rot)).max()), 3)
+report["rot_rms_vs_truth_before"] = round(rms(rot - rot[0], true_rot - true_rot[0]), 4)
 report["rot_rms_vs_truth_after"] = round(rms(after_rot - after_rot[0], true_rot - true_rot[0]), 4)
 
 assert report["location"]["spikes_removed"] >= 1, "spike not found"
 assert report["rms_vs_truth_after"] < report["rms_vs_truth_before"] / 3, report
 assert report["location"]["keys_after"] < n / 2, report
 assert report["max_rot_step_after"] < 0.5, report
+assert report["rot_rms_vs_truth_after"] < 0.1, report      # the rotation must still follow the true ramp, not just stop flipping
+assert report["rot_rms_vs_truth_after"] < report["rot_rms_vs_truth_before"] / 10, report
 result = report
 ```
 
 Result when run on Blender 5.2.3: location 120 keys down to 45 with 1 spike removed; rotation 120 keys down to 4; error against the
-known curve 0.141 down to 0.016; largest rotation step between frames 6.26 rad down to 0.025. The smoothed rotation ends
+known curve 0.141 down to 0.016; largest rotation step between frames 6.26 rad down to 0.025; rotation error against the true ramp 4.06 rad down to 0.043. The smoothed rotation ends
 sit about 0.04 rad off the truth because the filter pulls the first and last frames of a ramp toward their neighbours: for
 a loop, keep the end frames out of the smoothing.
 

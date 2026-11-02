@@ -51,7 +51,9 @@ means the two clicks agree. A gap of centimetres means you clicked different fea
 Two cameras look at known points. Each point is projected to pixel coordinates, 0.5 px of noise is added, and the point is
 triangulated back. It raises if any point comes back more than 1 cm off, if the ray gap is large for a correct pair, or if
 a deliberately wrong pair (the same feature clicked 100 px away in one view) does not show a large ray gap. It also
-refuses cameras whose rays are less than 15 degrees apart.
+refuses rays that are nearly parallel (under 15 degrees apart) or nearly opposite (over 165 degrees, which makes the
+intersection equation divide by zero), and a result that lies behind either camera. Its objects carry a tag, so a re-run
+removes only its own; same-name objects you already have are left alone.
 
 ```python
 import math
@@ -60,12 +62,12 @@ import bpy
 from mathutils import Vector
 from bpy_extras.object_utils import world_to_camera_view
 
-for name in ("TriCamA", "TriCamB"):
-    old = bpy.data.objects.get(name)
-    if old:
-        bpy.data.objects.remove(old)
-    if bpy.data.cameras.get(name):
-        bpy.data.cameras.remove(bpy.data.cameras[name])
+# A re-run removes only data this recipe tagged. Same-name data you already have is never touched: the new camera gets a
+# .001 name, and the recipe holds references instead of looking things up by name.
+TAG, OWNER = "recipe_owner", "reference-image-depth"
+for coll in (bpy.data.objects, bpy.data.cameras):
+    for stale in [d for d in coll if d.get(TAG) == OWNER]:
+        coll.remove(stale)
 
 sc = bpy.context.scene     # uses the scene's own render resolution and the camera sensor settings
 
@@ -73,6 +75,7 @@ def make_cam(name, loc, aim):
     cam = bpy.data.cameras.new(name)
     cam.lens = 50.0
     ob = bpy.data.objects.new(name, cam)
+    ob[TAG] = cam[TAG] = OWNER
     sc.collection.objects.link(ob)
     ob.location = loc
     ob.rotation_euler = (Vector(aim) - Vector(loc)).to_track_quat("-Z", "Y").to_euler()
@@ -95,12 +98,15 @@ def ray(cam, uv):
 
 def triangulate(ray_a, ray_b):
     (o1, d1), (o2, d2) = ray_a, ray_b
-    if math.degrees(d1.angle(d2)) < 15.0:
-        raise ValueError("rays are less than 15 degrees apart: depth is not measurable")
+    angle = math.degrees(d1.angle(d2))
+    if angle < 15.0 or angle > 165.0:
+        raise ValueError(f"rays are {angle:.1f} degrees apart: nearly parallel or opposite, depth is not measurable")
     w = o1 - o2
     a, b, c, d, e = d1.dot(d1), d1.dot(d2), d2.dot(d2), d1.dot(w), d2.dot(w)
     den = a * c - b * b
     s, t = (b * e - c * d) / den, (a * e - b * d) / den
+    if s <= 0.0 or t <= 0.0:
+        raise ValueError("the rays meet behind a camera: the two clicks cannot be the same point")
     p1, p2 = o1 + d1 * s, o2 + d2 * t
     return (p1 + p2) / 2, (p1 - p2).length
 
@@ -121,14 +127,29 @@ uv_b = to_pixel(cam_b, points[0])
 wrong = (uv_b[0] + 100 * px, uv_b[1])
 _, wrong_gap = triangulate(ray(cam_a, to_pixel(cam_a, points[0])), ray(cam_b, wrong))
 
+def refused(ray_a, ray_b):
+    try:
+        triangulate(ray_a, ray_b)
+    except ValueError as exc:
+        return str(exc)
+    return None
+
+o = Vector((0.0, 0.0, 0.0))
+up, down, tilt = Vector((0, 0, 1)), Vector((0, 0, -1)), Vector((0, math.sin(math.radians(5)), math.cos(math.radians(5))))
+assert refused((o, up), (Vector((1, 0, 0)), down)), "opposing rays were not refused"
+assert refused((o, up), (Vector((1, 0, 0)), up)), "parallel rays were not refused"
+assert refused((o, up), (Vector((1, 0, 0)), tilt)), "rays 5 degrees apart were not refused"
+assert refused((o, Vector((1, 0, 0))), (Vector((5, -5, 0)), Vector((0, -1, 0)))), "a point behind a camera was accepted"
 assert max(errors) < 0.01, f"triangulated point off by {max(errors)} m"
 assert max(gaps) < 0.01, f"ray gap {max(gaps)} m on a correct pair"
 assert wrong_gap > 0.05, f"wrong pair was not flagged (gap {wrong_gap})"
-result = {"max_error_m": round(max(errors), 5), "max_gap_m": round(max(gaps), 5), "wrong_pair_gap_m": round(wrong_gap, 4)}
+result = {"max_error_m": round(max(errors), 5), "max_gap_m": round(max(gaps), 5), "wrong_pair_gap_m": round(wrong_gap, 4),
+          "degenerate_rays_refused": 4}
 ```
 
 Result when run on Blender 5.2.3: largest point error 1.4 mm, largest ray gap 0.5 mm on correct pairs, 56 mm ray gap on the
-wrong pair.
+wrong pair. Four degenerate cases are refused: opposing rays (the unguarded formula raised `ZeroDivisionError` at 180
+degrees), parallel rays, rays 5 degrees apart, and rays that meet behind a camera.
 
 What the checks prove: with known cameras the ray intersection recovers points to millimetres, and a bad click shows up as
 a large gap. They do not cover the hard part in practice, which is getting the cameras right from real photos. Blender's
