@@ -1561,3 +1561,4 @@ ARGS = globals().get("ARGS") or _cli_args()
 result = main(**ARGS)
 if bpy.app.background and __name__ == "__main__":
     print(json.dumps({k: result[k] for k in ("passed", "total", "failures")}, indent=2))
+    sys.exit(0 if not result["failures"] else 1)
