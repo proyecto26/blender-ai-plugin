@@ -16,7 +16,9 @@ axis of the combined mesh bounds equals `target_size_m`; the combined bounds are
 there; every root object of the imported hierarchy also gets its origin there (children keep their world shape);
 mesh objects get the name prefix; transforms are baked into the meshes (children keep their world shape);
 finally `validate_asset.py` (same folder) is run on the imported meshes and returned as `validation`. A failure after
-the import removes everything the import created.
+the import removes everything the import created: its objects and collections, and every other datablock
+(meshes, materials, images, cameras, lights, ...) that did not exist before and has no user left. Scenes, workspaces and
+libraries are never touched.
 
 ARGS:
     path            (str, required) local file
@@ -129,6 +131,41 @@ def _sibling(scripts_dir, name):
     return path
 
 
+# ID collections of bpy.data that are never touched by a rollback: UI/session state, not import output
+_KEEP_TYPES = {"scenes", "workspaces", "screens", "window_managers", "libraries", "brushes", "palettes", "all_ids"}
+
+
+def _id_collections():
+    for attr in dir(bpy.data):
+        coll = getattr(bpy.data, attr, None)
+        if attr in _KEEP_TYPES or not isinstance(coll, bpy.types.bpy_prop_collection) or not hasattr(coll, "remove"):
+            continue
+        yield attr, coll
+
+
+def _id_pointers():
+    return {attr: {i.as_pointer() for i in coll} for attr, coll in _id_collections()}
+
+
+def _remove_created(before):
+    """Remove what an import created, whatever its type: compared with the snapshot of every bpy.data collection.
+    Objects and collections the import made always go; any other datablock goes only when it did not exist before
+    and nothing uses it any more (a pre-existing datablock, or one with a user such as a fake user, stays)."""
+    for o in [o for o in bpy.data.objects if o.as_pointer() not in before["objects"]]:
+        bpy.data.objects.remove(o)
+    for c in [c for c in bpy.data.collections if c.as_pointer() not in before["collections"]]:
+        bpy.data.collections.remove(c)
+    for _ in range(6):  # removing a material frees its images, and so on: repeat until nothing more is released
+        gone = 0
+        for attr, coll in _id_collections():
+            old = before.get(attr, set())
+            for d in [d for d in coll if d.as_pointer() not in old and d.users == 0]:
+                coll.remove(d)
+                gone += 1
+        if not gone:
+            break
+
+
 def main(path=None, collection=None, target_size_m=None, size_axis="z", up_axis_fix="none", prefix="SM_",
          apply_transforms=True, tri_budget=None, max_size_m=50.0, scripts_dir=None):
     full, ext = _check_path(path)
@@ -145,9 +182,7 @@ def main(path=None, collection=None, target_size_m=None, size_axis="z", up_axis_
     view_layer = bpy.context.view_layer
     objs_before = set(bpy.data.objects.keys())
     cols_before = set(bpy.data.collections.keys())
-    meshes_before = set(bpy.data.meshes.keys())
-    mats_before = set(bpy.data.materials.keys())
-    images_before = set(bpy.data.images.keys())
+    ids_before = _id_pointers()
     selected = [o.name for o in scene.objects if o.select_get()]
     active = view_layer.objects.active.name if view_layer.objects.active else None
     prev_layer_col = view_layer.active_layer_collection
@@ -255,19 +290,7 @@ def main(path=None, collection=None, target_size_m=None, size_axis="z", up_axis_
             "max_size_m": float(max_size_m)}}, run_name="__ingest_validate__")["result"]
     except Exception:
         # what the import made, even when it failed half way and `new` is still empty
-        made = [o for o in bpy.data.objects if o.name not in objs_before]
-        made_meshes = {o.data for o in made if o.type == "MESH" and o.data is not None and o.data.name not in meshes_before}
-        for o in made:
-            bpy.data.objects.remove(o)
-        for me in made_meshes:
-            if me.users == 0:
-                bpy.data.meshes.remove(me)
-        for c in [c for c in bpy.data.collections if c.name not in cols_before]:
-            bpy.data.collections.remove(c)
-        for mat in [m for m in bpy.data.materials if m.name not in mats_before and m.users == 0]:
-            bpy.data.materials.remove(mat)
-        for img in [i for i in bpy.data.images if i.name not in images_before and i.users == 0]:
-            bpy.data.images.remove(img)
+        _remove_created(ids_before)
         raise
     finally:
         try:

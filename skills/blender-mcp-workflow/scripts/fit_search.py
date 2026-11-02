@@ -55,6 +55,8 @@ def _cli_args():
 class Param:
     """One searchable number: an RNA property (or one component, or all components together) of an object."""
 
+    shared = {}  # (object, owner path, property) -> committed raw value: params on one property share one state
+
     def __init__(self, spec):
         if not isinstance(spec, dict) or not {"object", "path", "min", "max"} <= set(spec):
             raise ValueError(f"each param needs object, path, min and max: {spec!r}")
@@ -91,7 +93,8 @@ class Param:
         if self.step <= 0 or self.tol <= 0:
             raise ValueError(f"{self.label}: step and tol must be positive")
         self.original = self._raw()
-        self.accepted = False
+        self.key = (obj.name, parent_path or "", self.name)
+        self.committed = Param.shared.setdefault(self.key, [self.original])  # [raw] holder, shared across params
         v = self.get()
         if not self.lo <= v <= self.hi:
             raise ValueError(f"{self.label}: start value {v} is outside [{self.lo}, {self.hi}]")
@@ -107,28 +110,31 @@ class Param:
         return float(v[self.index if self.index is not None else 0])
 
     def set(self, value):
+        """Write a candidate on top of the committed state of the property, so no other param's accepted value
+        (or an untouched component of the original) is overwritten."""
         value = int(round(value)) if self.integer else float(value)
         if not self.count:
             setattr(self.owner, self.name, value)
             return
-        cur = self._raw()
+        cur = list(self.committed[0])
         if self.index is None:
             cur = [value] * self.count
         else:
             cur[self.index] = value
         setattr(self.owner, self.name, cur)
 
+    def accept(self):
+        """The current property value, as scored, becomes the committed state."""
+        self.committed[0] = self._raw()
+
+    def back_to_committed(self):
+        """Undo a rejected candidate: put back the committed state of the whole property, which holds every
+        accepted component and the original of every other one."""
+        setattr(self.owner, self.name, self.committed[0])
+
     def restore(self):
         setattr(self.owner, self.name, self.original)
-        self.accepted = False
-
-    def back_to(self, value):
-        """Undo a rejected candidate. Until a value has been accepted the scored state is the untouched original:
-        for a whole-vector param that start can be non-uniform, which a uniform write of its X would destroy."""
-        if self.accepted:
-            self.set(value)
-        else:
-            self.restore()
+        self.committed[0] = self.original
 
 
 def _scripts_dir(given):
@@ -152,6 +158,7 @@ def main(objects=None, views=None, params=None, max_evals=60, apply=False, bg_to
     sil = runpy.run_path(sil_path, init_globals={"ARGS": {"_library": True}}, run_name="__silhouette_lib__")
 
     # Everything that can be wrong is checked here, before the first property changes.
+    Param.shared.clear()
     ps = [Param(s) for s in params]
     cams, refs = [], []
     for v in views:
@@ -204,21 +211,21 @@ def main(objects=None, views=None, params=None, max_evals=60, apply=False, bg_to
                     s = score()
                     evals += 1
                     if s > best + 1e-9:
-                        x[i], best, improved = cand, s, True
-                        p.accepted = True
+                        best, improved = s, True
+                        p.accept()
+                        # a write can move other params that share this property: re-read them all
+                        for k, q in enumerate(ps):
+                            x[k] = q.get()
                         history.append({"eval": evals, "score": round(best, 5), "values": [round(v, 5) for v in x]})
                         break
-                    p.back_to(x[i])
+                    p.back_to_committed()
             if not improved:
                 steps = [st / 2 for st in steps]
                 if all(st < p.tol for st, p in zip(steps, ps)):
                     converged = True
                     break
-        for p, v in zip(ps, x):
-            if p.accepted:
-                p.set(v)  # a param that never improved keeps its original, scored value (which may be non-uniform)
-            else:
-                p.restore()
+        for p in ps:
+            p.back_to_committed()  # exactly the last scored state: accepted values kept, the rest as they started
         final_score = None
         if checked:
             final_score = score()  # the scene is at the best values here; the last evaluation of the budget

@@ -308,6 +308,35 @@ def test_clash(check, out_dir):
     check("H1r2 thin touching pair and a coincident thin duplicate at once: only the duplicate is a clash",
           r["verdict"] == "FAIL" and pairs == [["SlabA", "SlabA2"]] and r["clashes"][0].get("depth") == "coincident", r["clashes"])
 
+    # round 3 H: every decision about a pair depends on that pair only, never on the scene-wide size or other objects
+    reset_scene()
+    box("SlabA", (1, 1, 0.0005), (0, 0, 0))
+    box("SlabB", (1, 1, 0.0005), (0, 0, 0.0005))
+    box("FarAway", (1, 1, 1), (1000, 0, 0))
+    r = audit(objects=["SlabA", "SlabB", "FarAway"], require_connected=False)
+    check("H1r3 thin touching slabs still pass with an object 1000 m away", r["verdict"] == "PASS" and not r["clashes"], r["clashes"])
+    fixtures = {
+        "cube-in-cube": [("A", (2, 2, 2), (0, 0, 0)), ("B", (0.5, 0.5, 0.5), (0, 0, 0))],
+        "crossing bars": [("A", (4, 0.2, 0.2), (0, 0, 0)), ("B", (0.3, 4, 0.3), (0, 0, 0))],
+        "twins": [("A", (1, 1, 1), (0, 0, 0)), ("B", (1, 1, 1), (0, 0, 0))],
+        "poke": [("A", (2, 2, 2), (0, 0, 0)), ("B", (0.5, 1.98, 1.98), (1.0, 0, 0))],
+        "thin twins": [("A", (1, 1, 0.0005), (0, 0, 0)), ("B", (1, 1, 0.0005), (0, 0, 0))],
+        "touching cubes": [("A", (1, 1, 1), (0, 0, 0)), ("B", (1, 1, 1), (1, 0, 0))],
+    }
+    for label, specs in fixtures.items():
+        outs = []
+        for far in (None, (1000, 0, 0), (-5e4, 3e4, 0)):
+            reset_scene()
+            for n, dims, loc in specs:
+                box(n, dims, loc)
+            names = ["A", "B"]
+            if far:
+                box("Far", (1, 1, 1), far)
+                names.append("Far")
+            r = audit(objects=names, require_connected=False)
+            outs.append(json.dumps({k: r[k] for k in ("clashes", "contained", "touching")}, sort_keys=True))
+        check(f"H1r3 {label}: findings identical with unrelated distant geometry in the audit", len(set(outs)) == 1, outs)
+
     # a cube inside a cube: no surfaces cross, still a fail
     reset_scene()
     box("Outer", (2, 2, 2))
@@ -737,6 +766,29 @@ def test_fit(check, out_dir, measured):
               near(box_o.scale, (0.8, 1.3, 1.3)) and abs(iou - r["score_best"]) < 1e-6, (tuple(box_o.scale), iou, r["score_best"]))
     box_o.scale, box_o.location = (0.8, 0.8, 0.8), (0, 0, 0)
 
+    # round 3 H: several params on one property (components, or a component beside the whole vector): a rejected
+    # candidate must restore only its own component, and the applied state must be the scored best
+    sc = {"object": "Box", "min": 0.3, "max": 3.0}
+    combos = {"scale[0]+scale[2]": ["scale[0]", "scale[2]"], "scale[2]+scale[0]": ["scale[2]", "scale[0]"],
+              "scale[0]+scale[1]+scale[2]": ["scale[0]", "scale[1]", "scale[2]"],
+              "scale+scale[2]": ["scale", "scale[2]"], "scale[2]+scale": ["scale[2]", "scale"]}
+    for label, paths in combos.items():
+        for cap in (8, 40):
+            box_o.scale, box_o.location = (0.8, 1.3, 1.3), (0.25, 0, 0)
+            r = fit(objects=["Box"], views=views, params=[dict(sc, path=pth) for pth in paths], max_evals=cap, apply=True)
+            iou = sil(["Box"], views)["views"][0]["iou"]
+            check(f"H3r3 {label}, max_evals={cap}: applied state scores the reported best ({iou:.4f} vs {r['score_best']}, checked {r['score_checked']})",
+                  abs(iou - r["score_best"]) < 1e-6 and abs(r["score_checked"] - r["score_best"]) < 1e-6, (tuple(box_o.scale), iou, r["score_best"], r["score_checked"]))
+    box_o.scale, box_o.location = (0.8, 1.3, 1.3), (0.25, 0, 0)
+    r = fit(objects=["Box"], views=views, params=[dict(sc, path="scale[0]"), dict(sc, path="scale[2]")], max_evals=60, apply=True)
+    check("H3r3 accepted X survives a rejected Z (X reaches 1.3, Z stays 1.3)",
+          abs(box_o.scale[0] - 1.3) <= 0.03 and abs(box_o.scale[2] - 1.3) <= 0.03 and abs(box_o.scale[1] - 1.3) < 1e-6, tuple(box_o.scale))
+    box_o.scale, box_o.location = (0.8, 1.3, 1.3), (0.25, 0, 0)
+    before = snapshot()
+    fit(objects=["Box"], views=views, params=[dict(sc, path="scale[0]"), dict(sc, path="scale[2]")], max_evals=40)
+    check("H3r3 apply false restores every component", snapshot() == before and near(box_o.scale, (0.8, 1.3, 1.3)), tuple(box_o.scale))
+    box_o.scale, box_o.location = (0.8, 0.8, 0.8), (0, 0, 0)
+
     # every error comes before any change
     box_o.scale, box_o.location = (0.8, 0.8, 0.8), (0, 0, 0)
     before = snapshot()
@@ -907,6 +959,40 @@ def test_ingest(check, out_dir, measured):
     check("H4 refusal after the import removes the objects and the collection it made",
           set(bpy.data.objects.keys()) == names and set(bpy.data.collections.keys()) == cols,
           (set(bpy.data.objects.keys()) - names, set(bpy.data.collections.keys()) - cols))
+
+    # round 3 H: a refused import removes every datablock type it created (cameras, lights, ...), not only meshes
+    def all_ids():
+        out = {}
+        for attr in dir(bpy.data):
+            coll = getattr(bpy.data, attr, None)
+            if attr != "all_ids" and isinstance(coll, bpy.types.bpy_prop_collection) and hasattr(coll, "keys"):
+                out[attr] = set(coll.keys())
+        return out
+
+    reset_scene()
+    cd = bpy.data.cameras.new("OnlyCam")
+    co = bpy.data.objects.new("OnlyCam", cd)
+    bpy.context.scene.collection.objects.link(co)
+    ld = bpy.data.lights.new("OnlyLight", "POINT")
+    lo = bpy.data.objects.new("OnlyLight", ld)
+    bpy.context.scene.collection.objects.link(lo)
+    bpy.ops.object.select_all(action="DESELECT")
+    co.select_set(True)
+    lo.select_set(True)
+    camfile = os.path.join(d, "only_cam_light.glb")
+    bpy.ops.export_scene.gltf(filepath=camfile, export_format="GLB", use_selection=True, export_cameras=True,
+                              export_import_convert_lighting_mode="RAW", export_lights=True)
+    reset_scene()
+    box("Existing", (1, 1, 1))
+    keep = bpy.data.cameras.new("PreexistingCam")  # unused and pre-existing: must survive
+    before_ids = all_ids()
+    msg = raises(lambda: run("ingest_asset.py", {"path": camfile}))
+    after_ids = all_ids()
+    check("H4r3 a camera-and-light-only file is refused", msg and "no mesh" in msg, msg)
+    check("H4r3 refusal leaves every bpy.data collection as it was (cameras, lights, ...)",
+          before_ids == after_ids and "PreexistingCam" in bpy.data.cameras,
+          {k: sorted(before_ids.get(k, set()) ^ after_ids.get(k, set())) for k in after_ids if before_ids.get(k) != after_ids.get(k)})
+    bpy.data.cameras.remove(keep)
 
     # review (non-blocking): an importer that creates an object and then raises must not leave it behind
     reset_scene()
