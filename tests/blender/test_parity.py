@@ -1298,6 +1298,179 @@ def test_round5_ingest(check, out_dir, measured):
     measured["ingest_round5"] = out
 
 
+def test_round9_containment(check, out_dir):
+    """A solid that touches the outer wall at its vertices is still inside it: the verdict follows the volume, not
+    the vertices. Controls: a cube strictly inside, external face contact and side-by-side objects keep their results."""
+    audit = lambda **kw: run("clash_audit.py", {"objects": None, **kw})
+    shapes = (("slab spanning wall to wall in x and y", (1, 1, 0.5), (0, 0, 0)),
+              ("rod spanning wall to wall in x", (1, 0.1, 0.1), (0, 0, 0)),
+              ("half box sharing five faces", (1, 1, 0.5), (0, 0, -0.25)),
+              ("slab 1 mm off the walls at 0.499", (0.998, 0.998, 0.2), (0, 0, 0)),
+              ("box 1 mm off every wall", (0.998, 0.998, 0.998), (0, 0, 0)))
+    for label, dims, loc in shapes:
+        reset_scene()
+        box("Outer", (1, 1, 1))
+        box("Inner", dims, loc)
+        r = audit(objects=["Outer", "Inner"])
+        found = bool(r["clashes"]) or any(c["inner"] == "Inner" and c["outer"] == "Outer" for c in r["contained"])
+        check(f"H1r9 {label}: fails as a clash or contained", r["verdict"] == "FAIL" and found,
+              {k: r[k] for k in ("verdict", "clashes", "contained", "touching")})
+    # the strictly inside cube keeps its verdict and its depth
+    reset_scene()
+    box("Outer", (1, 1, 1))
+    box("Inner", (0.5, 0.5, 0.5))
+    r = audit(objects=["Outer", "Inner"])
+    check("H1r9 control: cube strictly inside is contained with depth 0.25",
+          r["verdict"] == "FAIL" and not r["clashes"] and len(r["contained"]) == 1
+          and abs(r["contained"][0]["depth_m"] - 0.25) < 0.01, {k: r[k] for k in ("verdict", "clashes", "contained")})
+    # external face contact and a gap stay passes; so does a layer thinner than min_depth_m lying on the wall
+    for label, loc in (("face contact", (1, 0, 0)), ("side by side with a gap", (1.5, 0, 0))):
+        reset_scene()
+        box("Outer", (1, 1, 1))
+        box("Inner", (1, 1, 1), loc)
+        r = audit(objects=["Outer", "Inner"], require_connected=False)
+        check(f"H1r9 control: {label} passes", r["verdict"] == "PASS" and not r["clashes"] and not r["contained"],
+              {k: r[k] for k in ("verdict", "clashes", "contained")})
+    reset_scene()
+    box("Outer", (1, 1, 1))
+    box("Inner", (1, 1, 0.0005), (0, 0, 0.49975))
+    r = audit(objects=["Outer", "Inner"])
+    check("H1r9 control: a layer thinner than min_depth_m lying on the wall is touching",
+          r["verdict"] == "PASS" and not r["contained"], {k: r[k] for k in ("verdict", "clashes", "contained", "touching")})
+
+
+def _world_state(sc):
+    w = sc.world
+    out = {"worlds": sorted(x.name for x in bpy.data.worlds), "active": w.name if w else None,
+           "frames": (sc.frame_start, sc.frame_end, sc.frame_current), "fps": (sc.render.fps, sc.render.fps_base)}
+    if w and w.node_tree:
+        nt = w.node_tree
+        out["nodes"] = sorted((n.name, n.bl_idname) for n in nt.nodes)
+        out["links"] = sorted((l.from_node.name, l.from_socket.identifier, l.to_node.name, l.to_socket.identifier)
+                              for l in nt.links)
+        out["values"] = sorted((n.name, i.identifier, round(float(i.default_value), 5))
+                               for n in nt.nodes for i in n.inputs if hasattr(i, "default_value")
+                               and isinstance(i.default_value, (int, float)))
+        out["use_nodes"] = w.use_nodes
+    return out
+
+
+def _make_node_world(name, strength, with_env):
+    w = bpy.data.worlds.new(name)
+    w.use_nodes = True
+    nt = w.node_tree
+    bg = next(n for n in nt.nodes if n.bl_idname == "ShaderNodeBackground")
+    bg.inputs["Strength"].default_value = strength
+    if with_env:
+        img = bpy.data.images.new(name + "_env", 8, 4)
+        tc = nt.nodes.new("ShaderNodeTexCoord")
+        mp = nt.nodes.new("ShaderNodeMapping")
+        env = nt.nodes.new("ShaderNodeTexEnvironment")
+        env.image = img
+        nt.links.new(tc.outputs["Generated"], mp.inputs["Vector"])
+        nt.links.new(mp.outputs["Vector"], env.inputs["Vector"])
+        nt.links.new(env.outputs["Color"], bg.inputs["Color"])
+    return w
+
+
+def test_round9_ingest_scene_state(check, out_dir, measured):
+    """Ingesting adds the imported objects only: the scene's world, frame range, fps and current frame stay as they
+    were, for every format and also when the import fails after the importer ran."""
+    d = os.path.join(out_dir, "h9ing")
+    os.makedirs(d, exist_ok=True)
+    out = {}
+    paths, empties = {}, {}
+    for kind, ext in (("glb", ".glb"), ("gltf", ".gltf"), ("fbx", ".fbx"), ("obj", ".obj"), ("usd", ".usd")):
+        # source scene: node world with an environment texture, strength 5, animation on frames 10-20
+        reset_scene()
+        sc = bpy.context.scene
+        sc.world = _make_node_world("SrcWorld", 5.0, True)
+        sc.frame_start, sc.frame_end, sc.render.fps = 10, 20, 24
+        body, head = build_source()
+        for fr, x in ((10, 0.0), (20, 50.0)):
+            body.location.x = x
+            body.keyframe_insert("location", frame=fr)
+        sc.frame_set(10)
+        paths[kind] = os.path.join(d, "anim_" + kind + ext)
+        try:
+            export_src(kind, paths[kind])
+        except Exception:
+            check(f"H9 {kind}: fixture exported", False, tb())
+            paths[kind] = None
+            continue
+        if kind in ("glb", "fbx", "usd"):  # an animated file with no mesh: the import runs, then the script refuses it
+            reset_scene()
+            sc = bpy.context.scene
+            sc.frame_start, sc.frame_end = 10, 20
+            e = bpy.data.objects.new("Anim_Empty", None)
+            sc.collection.objects.link(e)
+            for fr, x in ((10, 0.0), (20, 2.0)):
+                e.location.x = x
+                e.keyframe_insert("location", frame=fr)
+            bpy.ops.object.select_all(action="DESELECT")
+            e.select_set(True)
+            empties[kind] = os.path.join(d, "empty_" + kind + ext)
+            try:
+                if kind == "glb":
+                    bpy.ops.export_scene.gltf(filepath=empties[kind], export_format="GLB", use_selection=True)
+                elif kind == "fbx":
+                    bpy.ops.export_scene.fbx(filepath=empties[kind], use_selection=True)
+                else:
+                    bpy.ops.wm.usd_export(filepath=empties[kind], selected_objects_only=True)
+            except Exception:
+                empties.pop(kind, None)
+
+    def target_scene(with_world):
+        reset_scene()
+        sc = bpy.context.scene
+        sc.frame_start, sc.frame_end, sc.frame_current = 1, 250, 7
+        sc.render.fps, sc.render.fps_base = 30, 1.0
+        if with_world:
+            sc.world = _make_node_world("UserWorld", 1.0, False)
+        box("Existing", (1, 1, 1), (3, 3, 0.5))
+        bpy.context.view_layer.update()
+        return sc
+
+    for kind, path in paths.items():
+        if not path:
+            continue
+        for with_world in (True, False):
+            tag = f"H9 {kind} ({'with' if with_world else 'without'} a world)"
+            sc = target_scene(with_world)
+            before = _world_state(sc)
+            try:
+                run("ingest_asset.py", {"path": path})
+            except Exception:
+                check(f"{tag}: ingest ran", False, tb())
+                continue
+            after = _world_state(sc)
+            check(f"{tag}: world, frame range, fps and current frame unchanged", after == before,
+                  {"before": before, "after": after})
+            out[f"{kind}_{'world' if with_world else 'noworld'}"] = {"frames": after["frames"], "ok": after == before}
+        # failure after the importer ran: also unchanged
+        if kind in empties:
+            sc = target_scene(True)
+            before = _world_state(sc)
+            msg = raises(lambda: run("ingest_asset.py", {"path": empties[kind]}))
+            after = _world_state(sc)
+            check(f"H9 {kind} failed import (no mesh): refused", msg is not None, msg)
+            check(f"H9 {kind} failed import: world, frame range, fps and current frame unchanged", after == before,
+                  {"before": before, "after": after})
+    # a failed glTF (buffer missing) leaves the scene alone too
+    import shutil
+    if paths.get("gltf"):
+        lone = os.path.join(d, "lone9")
+        os.makedirs(lone, exist_ok=True)
+        shutil.copy(paths["gltf"], os.path.join(lone, "anim_gltf.gltf"))
+        sc = target_scene(True)
+        before = _world_state(sc)
+        msg = raises(lambda: run("ingest_asset.py", {"path": os.path.join(lone, "anim_gltf.gltf")}), (ValueError, RuntimeError))
+        after = _world_state(sc)
+        check("H9 gltf without its .bin: refused, scene state unchanged", msg is not None and after == before,
+              {"msg": msg, "before": before, "after": after})
+    measured["ingest_scene_state"] = out
+
+
 def run_all(out_dir):
     results, measured = [], {}
 
@@ -1309,7 +1482,9 @@ def run_all(out_dir):
                                       ("fit_search", test_fit, True), ("ingest_asset", test_ingest, True),
                                       ("round5 clash_audit", test_round5_clash, False),
                                       ("round5 silhouette_score", test_round5_silhouette, True),
-                                      ("round5 ingest_asset", test_round5_ingest, True)):
+                                      ("round5 ingest_asset", test_round5_ingest, True),
+                                      ("round9 clash_audit", test_round9_containment, False),
+                                      ("round9 ingest_asset", test_round9_ingest_scene_state, True)):
         try:
             fn(check, out_dir, measured) if wants_measured else fn(check, out_dir)
         except Exception:
