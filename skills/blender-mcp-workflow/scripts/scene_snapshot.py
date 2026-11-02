@@ -26,8 +26,9 @@ list:    snapshots in <dir>, oldest first (name, created, object count, size). R
 diff:    added / removed / changed objects between two manifests: changed lists the largest transform delta,
          whether the mesh hash differs (base mesh vertices to 1e-5 and face corners; modifiers and materials are
          not hashed), and parent changes. Read-only; an object in Edit Mode is read from its edit mesh without leaving the mode.
-restore: appends the named objects (and what they depend on, e.g. a parent or mesh) from the snapshot file into a
-         "_Restored" collection under the scene collection. It removes and overwrites nothing: an object that still
+restore: appends the named objects (and what they depend on, e.g. a parent, mesh or instanced collection) from the
+         snapshot file; only the named objects are linked into a "_Restored" collection under the scene collection, so
+         dependencies are loaded but do not become visible in the scene. It removes and overwrites nothing: an object that still
          exists keeps its name and the restored copy gets Blender's ".001" name; `restored` maps requested name to the
          name it got, and `dependencies` lists extra objects the append pulled in. The file becomes dirty (it was edited).
 """
@@ -96,7 +97,8 @@ def _mesh_arrays(obj):
         vid = {v: i for i, v in enumerate(bm.verts)}
         co = np.array([c for v in bm.verts for c in v.co], dtype=np.float32)
         corners = np.array([vid[lp.vert] for f in bm.faces for lp in f.loops], dtype=np.int32)
-        starts = np.cumsum([0] + [len(f.loops) for f in bm.faces][:-1]).astype(np.int32)
+        lens = [len(f.loops) for f in bm.faces]
+        starts = (np.cumsum(lens) - lens).astype(np.int32)  # empty for a faceless mesh, like polygons.foreach_get
         edges = np.array([vid[v] for e in bm.edges for v in e.verts], dtype=np.int32)
         return co, corners, starts, edges
     co = np.empty(len(me.vertices) * 3, dtype=np.float32)
@@ -244,10 +246,10 @@ def _restore(d, name, objects):
     if coll.name not in scene.collection.children:
         scene.collection.children.link(coll)
     new = [o for o in bpy.data.objects if o not in before]
-    for o in new:
-        if o.name not in coll.objects:
-            coll.objects.link(o)
     got = set(requested.values())
+    for o in new:  # only what was asked for becomes visible; parents and instance sources stay reachable but unlinked
+        if o.name in got and o.name not in coll.objects:
+            coll.objects.link(o)
     return {"restored": requested, "dependencies": sorted(o.name for o in new if o.name not in got),
             "collection": coll.name}
 

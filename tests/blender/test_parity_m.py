@@ -757,6 +757,117 @@ def run_review_round4(out_dir, check):
           and stored_xs(new_q) == orig and orig != edited, (stored_xs(new_q), orig, edited))
 
 
+def run_review_round5(out_dir, check):
+    """Findings from the round-5 review of batch M. Each check failed on 03f5808 before its fix."""
+    import bmesh
+    base = os.path.join(out_dir, "review5")
+    snaps = os.path.join(base, "snaps")
+    snap = lambda **kw: run("blender-mcp-workflow", "scene_snapshot.py", kw)  # noqa: E731
+
+    # M3: unchanged meshes of any shape hash the same in Edit Mode and Object Mode
+    def shape_wire(me):
+        me.from_pydata([(0, 0, 0), (1, 0, 0), (1, 1, 0)], [(0, 1), (1, 2)], [])
+
+    def shape_loose(me):
+        me.from_pydata([(0, 0, 0), (1, 0, 0), (2, 3, 4)], [], [])
+
+    def shape_empty(me):
+        pass
+
+    def shape_mixed(me):
+        me.from_pydata([(0, 0, 0), (1, 0, 0), (1, 1, 0), (5, 5, 5), (6, 5, 5), (9, 9, 9)],
+                       [(3, 4)], [(0, 1, 2)])
+
+    for label, build in (("faceless wire", shape_wire), ("loose vertices", shape_loose), ("empty mesh", shape_empty),
+                         ("face + loose edge + loose vertex", shape_mixed)):
+        bpy.ops.wm.read_factory_settings(use_empty=True)
+        me = bpy.data.meshes.new("M5")
+        build(me)
+        me.update()
+        ob = bpy.data.objects.new("W", me)
+        bpy.context.scene.collection.objects.link(ob)
+        bpy.context.view_layer.objects.active = ob
+        ob.select_set(True)
+        d5 = os.path.join(snaps, label.replace(" ", "_").replace("+", "p"))
+        snap(action="save", dir=d5, name="w0")
+        bpy.ops.object.mode_set(mode="EDIT")
+        d = snap(action="diff", dir=d5, a="w0")
+        check(f"M3 (r5): entering Edit Mode on a {label} mesh does not change its hash",
+              d["changed"] == [] and d["unchanged"] == 1, d)
+        bpy.ops.object.mode_set(mode="OBJECT")
+
+    # M3: restoring a collection instance does not expose its source collection
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    scene = bpy.context.scene
+    src = bpy.data.collections.new("SRC")  # deliberately not linked to the scene
+    cube_me = bpy.data.meshes.new("SRCmesh")
+    bm = bmesh.new()
+    bmesh.ops.create_cube(bm, size=1.0)
+    bm.to_mesh(cube_me)
+    bm.free()
+    cube = bpy.data.objects.new("SrcCube", cube_me)
+    src.objects.link(cube)
+    inst = bpy.data.objects.new("Inst", None)
+    inst.instance_type = "COLLECTION"
+    inst.instance_collection = src
+    inst.location = (10, 0, 0)
+    scene.collection.objects.link(inst)
+    bpy.ops.mesh.primitive_cube_add(location=(0, 5, 0))
+    bpy.context.active_object.name = "Keep"
+    d6 = os.path.join(base, "inst")
+    snap(action="save", dir=d6, name="i0")
+
+    def world_xs():
+        dg = bpy.context.evaluated_depsgraph_get()
+        dg.update()
+        return sorted(round(i.matrix_world.translation.x, 3) for i in dg.object_instances
+                      if i.object.type == "MESH" and i.object.name.startswith(("SrcCube", "Keep")))
+
+    scene_before = sorted(o.name for o in scene.objects)
+    colls_before = {c.name: sorted(o.name for o in c.objects) for c in bpy.data.collections}
+    objs_before = set(bpy.data.objects.keys())
+    xs_before = world_xs()
+    r = snap(action="restore", dir=d6, name="i0", objects=["Inst"])
+    new_inst = bpy.data.objects[r["restored"]["Inst"]]
+    in_scene = sorted(o.name for o in scene.objects)
+    check("M3 (r5): restoring an instance links only that object into the scene",
+          sorted(set(in_scene) - set(scene_before)) == [new_inst.name], in_scene)
+    check("M3 (r5): the instance's source cube is not independently visible",
+          not any(o.name.startswith("SrcCube") for o in scene.objects)
+          and world_xs() == sorted(xs_before + [10.0]), (world_xs(), xs_before))
+    check("M3 (r5): the restored instance still points at a collection holding the cube",
+          new_inst.instance_collection is not None and any(o.name.startswith("SrcCube") for o in new_inst.instance_collection.objects)
+          and abs(new_inst.location.x - 10.0) < 1e-4, new_inst.instance_collection)
+    check("M3 (r5): existing objects and collections are unchanged",
+          objs_before <= set(bpy.data.objects.keys()) and "Inst" in scene.objects and "SrcCube" in src.objects
+          and all(sorted(o.name for o in bpy.data.collections[n].objects) == v for n, v in colls_before.items()),
+          colls_before)
+
+    # M3: a restored child still sits where it was saved, and its restored parent is not newly visible
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    for n, loc in (("P", (0, 0, 0)), ("Q", (4, 0, 0))):
+        bpy.ops.mesh.primitive_cube_add(location=loc)
+        bpy.context.active_object.name = n
+    q = bpy.data.objects["Q"]
+    q.parent = bpy.data.objects["P"]
+    q.matrix_parent_inverse = bpy.data.objects["P"].matrix_world.inverted()
+    bpy.data.objects["P"].location = (0, 2, 0)
+    bpy.context.view_layer.update()
+    saved_world = [round(v, 4) for row in q.matrix_world for v in row]
+    d7 = os.path.join(base, "parent")
+    snap(action="save", dir=d7, name="p0")
+    names0 = sorted(o.name for o in bpy.context.scene.objects)
+    r = snap(action="restore", dir=d7, name="p0", objects=["Q"])
+    bpy.context.view_layer.update()
+    nq = bpy.data.objects[r["restored"]["Q"]]
+    check("M3 (r5): only the requested child is linked; its parent stays out of the scene",
+          sorted(set(o.name for o in bpy.context.scene.objects) - set(names0)) == [nq.name]
+          and nq.parent is not None and nq.parent.name not in bpy.context.scene.objects
+          and r["dependencies"] == [nq.parent.name], (r, [o.name for o in bpy.context.scene.objects]))
+    check("M3 (r5): the restored child appears where it was saved",
+          [round(v, 4) for row in nq.matrix_world for v in row] == saved_world, (list(nq.matrix_world), saved_world))
+
+
 def run_all(out_dir):
     results = []
 
@@ -767,7 +878,7 @@ def run_all(out_dir):
     for label, fn in (("flicker_check", run_flicker), ("scene_snapshot", run_snapshot),
                       ("surface_tools", run_surface), ("review_round1", run_review_round1),
                       ("review_round2", run_review_round2), ("review_round3", run_review_round3),
-                      ("review_round4", run_review_round4)):
+                      ("review_round4", run_review_round4), ("review_round5", run_review_round5)):
         try:
             fn(out_dir, check)
         except Exception:
