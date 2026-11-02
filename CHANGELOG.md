@@ -35,6 +35,8 @@ Iteration 12: example parity and the open roadmap. Plan: `docs/plans/iteration-1
   Eevee jobs, and is now within 1.00 to 1.17 of real time over 15 Windows runs
 - `score_run.py` sees PowerShell launches and foreground renders, checks the duration claim, and judges the window by platform
 - `rigid_body_setup.py` rejects an invalid collision shape before changing anything
+- `validate_asset.py` and `clash_audit.py` refuse a mesh in Edit Mode rather than judge stale data; `export_asset.py` exports the current edit
+- `fix_asset.py` scales shape keys together with the mesh
 
 Iteration 11: fixes from a measured run of the real orchestrator agent, reviewed by Codex, then from a macOS review.
 
