@@ -342,7 +342,9 @@ def args_file_cases():
         ("launch names .\\args.json: the name decides", announce(writes_then_launch([plan], with_file(".\\args.json"))), "OK"),
         ("earlier write is a bare name", announce(writes_then_launch([("args.json", plan[1])])), "OK"),
         ("relative folder tail matches the absolute write", announce(writes_then_launch([plan], with_file("run\\args.json"))), "OK"),
-        ("relative launch path cannot be told from another folder: state unknown stays a plan", announce(writes_then_launch([other], with_file("run\\args.json"))), "OK"),
+        ("relative folder tail does not match another folder", announce(writes_then_launch([other], with_file("run\\args.json"))), "FLAG"),
+        ("grant is strict: a plan Written to another folder does not exempt a relative launch even after a Write there", announce(writes_then_launch([other, ("C:\\unrelated2\\args.json", other[1])], with_file("run\\args.json"))), "FLAG"),
+        ("invalidate is loose: a $dir sed after a plan Write to the launched file", announce(edits_then_launch(plan[1], [("Bash", {"command": "sed -i s/true/false/ $dir/args.json"})], with_file("C:/run/args.json"))), "FLAG"),
         ("--args-file=path form, real file last", announce(writes_then_launch([other, real], eq_form)), "FLAG"),
         ("case and slash style differ", announce(writes_then_launch([("c:/RUN/args.json", plan[1])])), "OK"),
     ] + spaced_cases() + incremental_edit_cases()

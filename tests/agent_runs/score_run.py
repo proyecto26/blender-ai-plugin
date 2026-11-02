@@ -347,12 +347,22 @@ def resolved(path):
 
 
 def same_file(a, b):
-    """Whether two normalized paths can name one file. They are different files only when both are fully resolved absolute
+    """The loose matching that INVALIDATES the plan state: whether two normalized paths can name one file. They are different files only when both are fully resolved absolute
     paths that differ. A relative path, a ./ path or one holding a variable has the same name and could be anywhere, so
     it counts as this file: the state is then unknown."""
     if resolved(a) and resolved(b):
         return a == b
     return True
+
+
+def strict_same_file(a, b):
+    """The matching that GRANTS the plan exemption. Equal paths; or a bare name against anything (one side has no
+    directory); or a relative path with directories that is the tail of the other. A relative path never matches a
+    different absolute folder."""
+    if a == b or "/" not in a or "/" not in b:
+        return True
+    short, long_ = (a, b) if len(a) <= len(b) else (b, a)
+    return not re.match(r"[a-z]:/|/|~", short) and long_.endswith("/" + short)
 
 
 # A shell command naming the args file is a read only when each piece naming it starts with one of these (or is the
@@ -400,15 +410,16 @@ def args_file_text(call, run, ref, base):
         if not any(same_file(m, ref) for m in names):
             continue
         body = inp.get("content")
+        strict = any(strict_same_file(m, ref) for m in names)  # only a strict match may establish or replay the state
         if name == "Write":
-            if isinstance(body, str):
+            if isinstance(body, str) and strict:
                 text, unknown = body, False
             else:
                 unknown = True
         elif name in ("Edit", "MultiEdit"):
             for e in inp.get("edits") or [inp]:
                 old, new = e.get("old_string"), e.get("new_string")
-                if unknown or not isinstance(old, str) or not isinstance(new, str) or not old or old not in text:
+                if not strict or unknown or not isinstance(old, str) or not isinstance(new, str) or not old or old not in text:
                     unknown = True
                 else:
                     text = text.replace(old, new) if e.get("replace_all") else text.replace(old, new, 1)
