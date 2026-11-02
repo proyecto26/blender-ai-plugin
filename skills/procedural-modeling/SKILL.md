@@ -135,6 +135,7 @@ path of this installed script and their ARGS. Don't inline or rewrite the script
 | Script | What it does |
 |--------|--------------|
 | `scripts/gn_curve_profile.py` | Curve-swept pipe/cable/rail: poly curve + Geometry Nodes (Curve to Mesh, Curve Circle profile) with Radius / Resolution / Fill Caps exposed on the modifier. |
+| `scripts/surface_tools.py` | `loft` through ordered sections (resampled to one point count, optional Catmull-Rom rows), `patch` (Coons surface from four boundary curves; refuses curves whose corners do not meet), `continuity` (G0 / G1 / G2 along a shared seam of two surfaces; refuses boundaries that do not coincide). Use `loft` / `patch` for a free-form surface from curves, and `continuity` to prove a join is smooth (a crease fails G1; a tangent join with a curvature jump passes G1 and fails G2) before calling it done. `loft` and `patch` add a new mesh object and change nothing else; `continuity` is read-only. |
 
 ```python
 import runpy
