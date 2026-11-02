@@ -211,7 +211,10 @@ def main(path=None, collection=None, target_size_m=None, size_axis="z", up_axis_
             for c in empty:
                 bpy.data.collections.remove(c)
         new_names = {o.name for o in new}
-        meshes = [o for o in new if o.type == "MESH"]
+        # an armature import adds helper meshes that only draw its bones (pose bone custom shapes, e.g. glTF's
+        # "Icosphere"): they are not part of the asset's body, so they never set its size, name or validation
+        bone_shapes = {pb.custom_shape for o in new if o.type == "ARMATURE" for pb in o.pose.bones if pb.custom_shape}
+        meshes = [o for o in new if o.type == "MESH" and o not in bone_shapes]
         if not meshes:
             raise ValueError("the file contains no mesh objects")
         roots = [o for o in new if o.parent is None or o.parent.name not in new_names]
@@ -261,6 +264,8 @@ def main(path=None, collection=None, target_size_m=None, size_axis="z", up_axis_
         # every root gets its origin at the world origin, which is the base centre now (set origin without moving
         # anything: a mesh root's data is shifted to compensate, and the children keep their world matrices)
         for r in roots:
+            if r in bone_shapes:
+                continue
             if r.type == "MESH" and not apply_transforms:
                 notes.append(f"origin of {r.name} left as imported: it can only be reset after the transforms are baked")
                 continue
@@ -273,7 +278,7 @@ def main(path=None, collection=None, target_size_m=None, size_axis="z", up_axis_
             if r.type == "MESH":
                 if r.data.users > 1:
                     r.data = r.data.copy()
-                r.data.transform(Matrix.Translation(r.matrix_world.to_translation()))
+                r.data.transform(Matrix.Translation(r.matrix_world.to_translation()), shape_keys=True)
             at_origin = r.matrix_world.copy()  # an empty may carry rotation and scale for its children: keep those
             at_origin.translation = (0.0, 0.0, 0.0)
             r.matrix_world = at_origin

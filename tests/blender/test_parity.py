@@ -1099,6 +1099,205 @@ def test_ingest(check, out_dir, measured):
     check("H4 collection argument names the collection", run("ingest_asset.py", {"path": os.path.join(d, "model_glb.glb"), "collection": "MyAsset"})["collection"].startswith("MyAsset"))
 
 
+# ---------------------------------------------------------------- round 5 H: review findings
+def test_round5_clash(check, out_dir):
+    """Partial face contact is touching, not a clash; real penetration keeps failing."""
+    audit = lambda **kw: run("clash_audit.py", {"objects": None, **kw})
+    # (label, A dims, A location, B dims, B location): every pair shares part of a face plane and nothing more
+    cases = (("offset on one face", (1, 1, 1), (0, 0, 0), (1, 1, 1), (1, 0.25, 0.25)),
+             ("diagonal offset on one face", (1, 1, 1), (0, 0, 0), (1, 1, 1), (0.3, 0.2, 1.0)),
+             ("small cube on a big plate", (2, 2, 0.4), (0, 0, 0), (0.4, 0.4, 0.4), (0.3, -0.2, 0.4)),
+             ("offset on the -x face, shifted in z", (1, 1, 1), (0, 0, 0), (1, 1, 1), (-1.0, -0.4, 0.1)))
+    for label, da, la, db, lb in cases:
+        reset_scene()
+        box("A", da, la)
+        box("B", db, lb)
+        r = audit(objects=["A", "B"])
+        check(f"H1r5 partial face contact ({label}) is touching, not a clash",
+              not r["clashes"] and not r["contained"] and r["verdict"] == "PASS" and len(r["touching"]) == 1,
+              {k: r[k] for k in ("verdict", "clashes", "contained", "touching")})
+        check(f"H1r5 partial face contact ({label}) keeps the pair joined", len(r["groups"]) == 1, r["groups"])
+    # penetration with the same offsets still fails, with a sensible depth
+    for label, loc_b, depth in (("0.1 into the x face", (0.9, 0.25, 0.25), 0.1), ("0.2 into the z face", (0.3, 0.2, 0.8), 0.2)):
+        reset_scene()
+        box("A", (1, 1, 1))
+        box("B", (1, 1, 1), loc_b)
+        r = audit(objects=["A", "B"])
+        d = r["clashes"][0]["depth_m"] if r["clashes"] else None
+        check(f"H1r5 offset penetration ({label}) still fails", r["verdict"] == "FAIL" and len(r["clashes"]) == 1
+              and d is not None and abs(d - depth) <= 0.2 * depth, (r["verdict"], r["clashes"]))
+
+
+def test_round5_silhouette(check, out_dir, measured):
+    """A reference rendered with a non-square pixel aspect is scored with the same projection."""
+    d = os.path.join(out_dir, "h5sil")
+    os.makedirs(d, exist_ok=True)
+    reset_scene()
+    mesh_obj("Chair", boxes(((1.0, 1.0, 0.2), (0, 0, 0)), ((0.2, 1.0, 1.0), (-0.4, 0, 0.6)),
+                            ((0.3, 0.3, 0.7), (0.35, 0.3, -0.45))), rot=(0, 0, math.radians(35)))
+    cam = camera("CamP", (2.6, -3.0, 1.9), look_at=(0, 0, 0.2), lens=28)
+    sc = bpy.context.scene
+    try:
+        for ax, ay in ((2.0, 1.0), (1.0, 2.0), (1.0, 1.0)):
+            sc.render.pixel_aspect_x, sc.render.pixel_aspect_y = ax, ay
+            ref = render(os.path.join(d, f"aspect_{int(ax)}_{int(ay)}.png"), cam)
+            v = run("silhouette_score.py", {"objects": ["Chair"], "views": [{"camera": "CamP", "reference": ref}]})["views"][0]
+            measured[f"pixel_aspect_{int(ax)}to{int(ay)}_iou"] = v["iou"]
+            check(f"H2r5 pixel aspect {int(ax)}:{int(ay)} render scores IoU > 0.98", v["iou"] > 0.98, v)
+            if (ax, ay) != (1.0, 1.0):  # the square-pixel projection must be clearly worse, so the test tells them apart
+                sc.render.pixel_aspect_x, sc.render.pixel_aspect_y = 1.0, 1.0
+                wrong = run("silhouette_score.py", {"objects": ["Chair"], "views": [{"camera": "CamP", "reference": ref}]})["views"][0]
+                measured[f"pixel_aspect_{int(ax)}to{int(ay)}_iou_if_ignored"] = wrong["iou"]
+                check(f"H2r5 pixel aspect {int(ax)}:{int(ay)}: a square-pixel scene scores clearly lower (test is discriminating)",
+                      wrong["iou"] < v["iou"] - 0.05, (wrong["iou"], v["iou"]))
+    finally:
+        sc.render.pixel_aspect_x = sc.render.pixel_aspect_y = 1.0
+    check("H2r5 no images leaked", not leaked_images(), leaked_images())
+
+
+def eval_world(obj):
+    dg = bpy.context.evaluated_depsgraph_get()
+    ev = obj.evaluated_get(dg)
+    me = ev.to_mesh()
+    try:
+        co = np.array([tuple(ev.matrix_world @ v.co) for v in me.vertices])
+    finally:
+        ev.to_mesh_clear()
+    return co
+
+
+def test_round5_ingest(check, out_dir, measured):
+    d = os.path.join(out_dir, "h5ing")
+    os.makedirs(d, exist_ok=True)
+    target = 1.8
+    out = {}
+
+    # ---- shape keys: a real exported GLB with a morph target
+    reset_scene()
+    body, head = build_source()
+    body.shape_key_add(name="Basis", from_mix=False)
+    key = body.shape_key_add(name="Morph", from_mix=False)
+    for i, v in enumerate(body.data.vertices):
+        if v.co.z > 0:
+            key.data[i].co.x += 40.0
+            key.data[i].co.z += 15.0
+    key.value = 0.0
+    bpy.context.view_layer.update()
+    state0 = np.concatenate([eval_world(body), eval_world(head)])
+    key.value = 1.0
+    bpy.context.view_layer.update()
+    state1 = np.concatenate([eval_world(body), eval_world(head)])
+    key.value = 0.0
+    bpy.context.view_layer.update()
+    height = state0[:, 2].max() - state0[:, 2].min()
+    s = target / height
+    centre = np.array([(state0[:, 0].max() + state0[:, 0].min()) / 2, (state0[:, 1].max() + state0[:, 1].min()) / 2, state0[:, 2].min()])
+    exp0, exp1 = (state0 - centre) * s, (state1 - centre) * s
+    check("H4r5 fixture: the morph really moves the mesh", hausdorff(state0, state1) > 10.0, hausdorff(state0, state1))
+    path = os.path.join(d, "morph.glb")
+    export_src("glb", path)  # selects Body and Head
+    check("H4r5 fixture: exported GLB carries a morph target", b'"targets"' in open(path, "rb").read(), None)
+    reset_scene()
+    r = run("ingest_asset.py", {"path": path, "target_size_m": target})
+    imp = next(bpy.data.objects[n] for n in r["meshes"] if "Body" in n)
+    imp_head = next(bpy.data.objects[n] for n in r["meshes"] if "Head" in n)
+    sk = imp.data.shape_keys
+    check("H4r5 imported body kept its shape key", sk is not None and len(sk.key_blocks) == 2,
+          None if sk is None else [k.name for k in sk.key_blocks])
+    if sk is not None and len(sk.key_blocks) == 2:
+        kb = sk.key_blocks[1]
+        got = {}
+        for val, expected in ((0.0, exp0), (1.0, exp1)):
+            kb.value = val
+            bpy.context.view_layer.update()
+            actual = np.concatenate([eval_world(imp), eval_world(imp_head)])
+            hd = hausdorff(expected, actual)
+            got[str(val)] = round(hd, 6)
+            check(f"H4r5 shape key at {val:g}: evaluated shape matches the normalized source (Hausdorff < 0.2% of height)",
+                  hd < 0.002 * target, hd)
+            if val == 0.0:
+                z = actual[:, 2]
+                check("H4r5 shape key at 0: height equals the target and the base sits on the origin plane",
+                      abs((z.max() - z.min()) - target) < 1e-3 * target and abs(z.min()) < 2e-3, (z.max() - z.min(), z.min()))
+        out["shape_key_hausdorff_m"] = got
+        kb.value = 0.0
+
+    # ---- armature-driven asset: either normalized correctly or refused clearly
+    reset_scene()
+    arm_data = bpy.data.armatures.new("Rig")
+    rig = bpy.data.objects.new("Rig", arm_data)
+    bpy.context.scene.collection.objects.link(rig)
+    bpy.context.view_layer.objects.active = rig
+    rig.select_set(True)
+    bpy.ops.object.mode_set(mode="EDIT")
+    lo_b = arm_data.edit_bones.new("Lower")
+    lo_b.head, lo_b.tail = (0, 0, 0), (0, 0, 50)
+    up_b = arm_data.edit_bones.new("Upper")
+    up_b.head, up_b.tail, up_b.parent, up_b.use_connect = (0, 0, 50), (0, 0, 100), lo_b, True
+    bpy.ops.object.mode_set(mode="OBJECT")
+
+    def skin(bm):
+        bmesh.ops.create_cube(bm, size=1.0, matrix=Matrix.Translation((0, 0, 50)) @ Matrix.Diagonal((30, 30, 100, 1.0)))
+        bmesh.ops.subdivide_edges(bm, edges=bm.edges[:], cuts=7, use_grid_fill=True)
+
+    skinned = mesh_obj("Skin", skin)
+    skinned.parent = rig
+    skinned.vertex_groups.new(name="Lower")
+    skinned.vertex_groups.new(name="Upper")
+    for v in skinned.data.vertices:
+        w = min(1.0, max(0.0, (v.co.z - 35.0) / 30.0))  # smooth blend across the joint
+        skinned.vertex_groups["Lower"].add([v.index], 1.0 - w, "REPLACE")
+        skinned.vertex_groups["Upper"].add([v.index], w, "REPLACE")
+    skinned.modifiers.new("Armature", "ARMATURE").object = rig
+    rig.location = (10, -20, 0)
+    bpy.context.view_layer.update()
+    pb = rig.pose.bones["Upper"]
+    pb.rotation_mode = "QUATERNION"
+    pb.rotation_quaternion = Matrix.Rotation(math.radians(50), 3, "Y").to_quaternion()
+    pb.keyframe_insert("rotation_quaternion", frame=1)
+    bpy.context.scene.frame_set(1)
+    bpy.context.view_layer.update()
+    src = eval_world(skinned)
+    check("H4r5 fixture: the pose bends the skin", src[:, 0].max() - src[:, 0].min() > 40.0, src[:, 0].max() - src[:, 0].min())
+    height = src[:, 2].max() - src[:, 2].min()
+    s = target / height
+    centre = np.array([(src[:, 0].max() + src[:, 0].min()) / 2, (src[:, 1].max() + src[:, 1].min()) / 2, src[:, 2].min()])
+    expected = (src - centre) * s
+    arm_path = os.path.join(d, "rig.glb")
+    bpy.ops.object.select_all(action="DESELECT")
+    rig.select_set(True)
+    skinned.select_set(True)
+    bpy.context.view_layer.objects.active = rig
+    bpy.ops.export_scene.gltf(filepath=arm_path, export_format="GLB", use_selection=True, export_animations=True,
+                              export_skins=True)
+    reset_scene()
+    box("Existing", (1, 1, 1))
+    names, cols = set(bpy.data.objects.keys()), set(bpy.data.collections.keys())
+    all_before = {a: set(getattr(bpy.data, a).keys()) for a in ("meshes", "armatures", "actions", "materials")}
+    got = []
+    msg = raises(lambda: got.append(run("ingest_asset.py", {"path": arm_path, "target_size_m": target})), (ValueError,))
+    if msg is not None:
+        check("H4r5 armature asset refused: the message says why", "armature" in msg.lower() or "skin" in msg.lower(), msg)
+        check("H4r5 armature asset refused: nothing left behind",
+              set(bpy.data.objects.keys()) == names and set(bpy.data.collections.keys()) == cols
+              and all(set(getattr(bpy.data, a).keys()) == v for a, v in all_before.items()),
+              (set(bpy.data.objects.keys()) - names, {a: set(getattr(bpy.data, a).keys()) - v for a, v in all_before.items()}))
+        out["armature"] = "refused: " + msg[:120]
+    else:
+        r = got[0]
+        bpy.context.scene.frame_set(1)
+        bpy.context.view_layer.update()
+        actual = np.concatenate([eval_world(bpy.data.objects[n]) for n in r["meshes"]])
+        hd = hausdorff(expected, actual)
+        z = actual[:, 2]
+        out["armature"] = {"hausdorff_m": round(hd, 6), "height_m": round(float(z.max() - z.min()), 5)}
+        check("H4r5 armature asset normalized: posed evaluated shape matches the normalized source", hd < 0.003 * target,
+              out["armature"])
+        check("H4r5 armature asset normalized: height is the target and the base is on the origin plane",
+              abs((z.max() - z.min()) - target) < 2e-3 * target and abs(z.min()) < 5e-3, out["armature"])
+    measured["ingest_round5"] = out
+
+
 def run_all(out_dir):
     results, measured = [], {}
 
@@ -1107,7 +1306,10 @@ def run_all(out_dir):
 
     os.makedirs(out_dir, exist_ok=True)
     for label, fn, wants_measured in (("clash_audit", test_clash, False), ("silhouette_score", test_silhouette, True),
-                                      ("fit_search", test_fit, True), ("ingest_asset", test_ingest, True)):
+                                      ("fit_search", test_fit, True), ("ingest_asset", test_ingest, True),
+                                      ("round5 clash_audit", test_round5_clash, False),
+                                      ("round5 silhouette_score", test_round5_silhouette, True),
+                                      ("round5 ingest_asset", test_round5_ingest, True)):
         try:
             fn(check, out_dir, measured) if wants_measured else fn(check, out_dir)
         except Exception:
