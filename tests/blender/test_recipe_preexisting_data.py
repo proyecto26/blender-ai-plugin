@@ -1,13 +1,13 @@
 """Maintainer test: pre-existing same-name data must survive two runs of the six cleanup-sensitive recipes, and the
 recipe's own data must not accumulate. Run:
-    blender -b --factory-startup --python tests/blender/test_recipe_preexisting_data.py -- '{"out": "<dir>"}'
+    blender -b --factory-startup --python tests/blender/test_recipe_preexisting_data.py -- '{"out_dir": "<dir>"}'
 Writes <out>/preexisting_report.json and exits 1 when any recipe destroyed a decoy, errored, or accumulated data."""
 import json, re, sys, traceback, os
 import bpy
 HERE = os.path.dirname(os.path.abspath(globals().get("__file__") or sys.argv[0]))
 SK = os.path.normpath(os.path.join(HERE, "..", "..", "skills"))
 _a = json.loads(sys.argv[sys.argv.index("--") + 1]) if "--" in sys.argv else {}
-OUT = os.path.join(_a.get("out", os.environ.get("TEMP", ".")), "preexisting_report.json")
+OUT = os.path.join(_a.get("out_dir", _a.get("out", os.environ.get("TEMP", "."))), "preexisting_report.json")
 SPEC = {
  "animation/references/mocap-cleanup.md": [("objects","MocapDemo"),("actions","MocapDemo"),("actions","MocapDemo_Run"),("actions","MocapDemoAction")],
  "blender-mcp-workflow/references/reference-image-depth.md": [("objects","TriCamA"),("objects","TriCamB"),("cameras","TriCamA"),("cameras","TriCamB")],
