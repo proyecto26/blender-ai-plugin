@@ -236,6 +236,49 @@ def _work_copy_twice():
     return {"error": err, "pending_after": _wc({"action": "status"})["pending"]}
 
 
+def _edit_mode_evidence(d):
+    """Evidence scripts read obj.data, which is the stale pre-edit mesh while the object is in Edit Mode. A prop whose
+    base sits on its origin, lifted 3 m in Edit Mode, must not PASS the origin check from the old coordinates: the
+    read-only producers refuse (naming Edit Mode, no evidence written); the export loads the edit mesh and writes it."""
+    obj = _cube("SM_EditStale", 1.0, loc=(70, 60, 1))
+    obj.data.materials.append(bpy.data.materials.new("MAT_EditStale"))
+    view_layer = bpy.context.view_layer
+    for o in view_layer.objects:
+        o.select_set(False)
+    view_layer.objects.active = obj
+    obj.select_set(True)
+    bpy.ops.object.mode_set(mode="EDIT")
+    out = {}
+    try:
+        bm = bmesh.from_edit_mesh(obj.data)  # pending edit: not flushed to obj.data.vertices
+        for v in bm.verts:
+            v.co.z += 3.0
+        for key, (skill, script, args) in {
+            "validate": ("blender-mcp-workflow", "validate_asset.py", {"objects": [obj.name]}),
+            "clash": ("blender-mcp-workflow", "clash_audit.py", {"objects": [obj.name]}),
+        }.items():
+            ev = os.path.join(d, f"edit_stale_{key}.json")
+            res, err = None, None
+            try:
+                res = run(skill, script, dict(args, evidence_path=ev))
+            except Exception as exc:
+                err = str(exc)
+            out[key] = {"error": err, "evidence": os.path.exists(ev), "still_edit": obj.data.is_editmode,
+                        "verdict": (res or {}).get("verdict")}
+        # export must write the edited geometry (min height 3 m), not the stale mesh (0 m), and stay in Edit Mode
+        glb = os.path.join(d, "edit_stale.glb")
+        run("export-pipeline", "export_asset.py", {"objects": [obj.name], "out_path": glb, "evidence_path": os.path.join(d, "edit_stale_export.json")})
+        out["export_still_edit"] = obj.data.is_editmode
+        with open(glb, "rb") as fh:
+            raw = fh.read()
+        length = struct.unpack("<I", raw[12:16])[0]
+        doc = json.loads(raw[20:20 + length].decode("utf-8"))
+        out["export_min_y"] = min(a["min"][1] for a in doc["accessors"] if a.get("type") == "VEC3" and "min" in a)
+    finally:
+        bpy.ops.object.mode_set(mode="OBJECT")
+    return out
+
+
 def _expect_error(fn):
     try:
         fn()
@@ -773,6 +816,7 @@ def _manifest_evidence_binding():
     rm(stage="model", script="manual", verdict="PASS", **summary)
     out["stale_fast"] = _expect_error(lambda: rm(stage="validate", script="validate_asset.py", verdict="PASS", evidence=ev,
                                                  **summary, **warn_ok(verdict)))
+    out["stale_fast_gate"] = gates()["validate"]
     out["event_time_fraction"] = "." in json.load(open(os.path.join(d, "run_manifest.json")))["events"][-1]["time"]
     # 5. a fresh file passes; clash_audit.py is an allowed validate producer, export_asset.py the only export producer
     ev, verdict = _validate_evidence(d, "fresh.json")
@@ -1167,6 +1211,9 @@ def build_cases(out_dir):
          and r["plan_clean"] and r["after_plan"] == "done" and "already exist" in (r["plan_done"] or "")
          and "device" in (r["plan_bad"] or "") and r["plan_bad_clean"]
          and r["handlers_kept"]),
+        ("scripts.edit_mode_is_never_stale_evidence", lambda: _edit_mode_evidence(tempfile.mkdtemp(dir=OUT)),
+         lambda r: all(r[k]["still_edit"] and not r[k]["evidence"] and "Edit Mode" in (r[k]["error"] or "") for k in ("validate", "clash"))
+         and r["export_still_edit"] and abs(r["export_min_y"] - 3.0) < 1e-3),
         ("director.evidence_binds_producers", lambda: _manifest_evidence_binding(),
          lambda r: "without evidence" in (r["summary_only"] or "") and r["summary_only_gate"] == "NOT_CHECKED"
          and "reports FAIL" in (r["failing"] or "") and r["failing_gate"] == "NOT_CHECKED"
@@ -1176,6 +1223,7 @@ def build_cases(out_dir):
          and "must come from" in (r["unknown_script"] or "") and "script-evidence/1" in (r["not_evidence"] or "")
          and "outside" in (r["outside"] or "") and list(r["gates_after_refusals"]) == ["NOT_CHECKED", "NOT_CHECKED"] and r["export_gate_after_refusals"] == "NOT_CHECKED"
          and "stale" in (r["stale"] or "") and r["stale_gate"] == "NOT_CHECKED"
+         and "stale" in (r["stale_fast"] or "") and r["stale_fast_gate"] == "NOT_CHECKED" and r["event_time_fraction"]
          and r["fresh"] == "PASS" and r["clash_allowed"] == "PASS" and "must come from" in (r["clash_for_export"] or "")
          and r["export"] == "PASS"
          and r["recorded"] == [("validate", "validate_asset.py", 64), ("validate", "clash_audit.py", 64), ("export", "export_asset.py", 64)]

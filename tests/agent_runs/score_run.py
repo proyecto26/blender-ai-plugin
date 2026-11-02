@@ -338,6 +338,43 @@ def same_file(a, b):
     return not re.match(r"[a-z]:/|/|~", short) and long_.endswith("/" + short)
 
 
+SHELL_WRITE = (r"sed\s+(?:-\w*i|--in-place)|set-content|add-content|out-file|-replace|\btee\b|\bmv\b|move-item|\bcp\b|"
+               r"copy-item|\.write|writealltext")
+
+
+def args_file_text(call, run, ref, base):
+    """What the args file held when this job launched: its latest full write (a call naming the file with an out_dir),
+    then every later in-place Edit replayed on it. A call that only reads the file changes nothing. When a later change
+    cannot be replayed (an Edit whose old text is not in the file, a shell rewrite, another tool), the content is not
+    known: return the text with `plan` made unreadable, so no plan exemption is granted. Leaning to flag costs one
+    message; a stale `plan: true` hides a real render."""
+    text, unknown = "", False
+    for c in run["calls"]:
+        if c is call or c["seq"] >= call["seq"]:
+            continue
+        inp, raw = c["input"], str(c["input"])
+        if not any(same_file(m, ref) for m in path_mentions(raw, base)):
+            continue
+        if re.search(r"out_dir", raw):
+            body = inp.get("content")
+            text = body if isinstance(body, str) and re.search(r"out_dir", body) else raw
+            unknown = False
+        elif c["name"] in ("Edit", "MultiEdit"):
+            for e in inp.get("edits") or [inp]:
+                old, new = e.get("old_string"), e.get("new_string")
+                if not isinstance(old, str) or not isinstance(new, str) or not old or old not in text:
+                    unknown = True
+                else:
+                    text = text.replace(old, new) if e.get("replace_all") else text.replace(old, new, 1)
+        elif c["name"] in SHELLS:
+            redirect = re.search(r">>?\s*[\"']?[^\s\"'|&;>]*" + re.escape(base), norm_path(raw))
+            if redirect or re.search(SHELL_WRITE, raw, re.I):
+                unknown = True
+        elif c["name"] not in ("Read", "Grep", "Glob"):
+            unknown = True
+    return re.sub(PLAN_ON, "plan: unknown", text, flags=re.I) if unknown else text
+
+
 def related_text(call, run):
     """The launch command plus the text of the args file it names, if an earlier call wrote it."""
     command = call["input"].get("command", "")
@@ -348,12 +385,8 @@ def related_text(call, run):
         base = ref.rsplit("/", 1)[-1]
         # Match by the whole normalized path: two folders can each hold an args.json. The name alone decides only
         # when the launch (or the earlier call) gives no directory, since then nothing else can tell them apart.
-        # Only the latest earlier call that names the file: what it held when this job launched, not its history.
-        # A call that only reads or mentions the file does not change it: the writer carries the out_dir.
-        earlier = [c for c in run["calls"] if c is not call and c["seq"] < call["seq"]
-                   and re.search(r"out_dir", str(c["input"]))
-                   and any(same_file(m, ref) for m in path_mentions(str(c["input"]), base))]
-        parts += [str(c["input"]) for c in earlier[-1:]]
+        # What the file held when this job launched, not its history: see args_file_text.
+        parts.append(args_file_text(call, run, ref, base))
     return "\n".join(parts)
 
 

@@ -183,6 +183,35 @@ def writes_then_launch(writes, command=PS_LAUNCH, say=None, tool_name="PowerShel
     return replay(rows)
 
 
+def edits_then_launch(first, calls, command=PS_LAUNCH):
+    """Write the args file (dict), then incremental calls (name, input) that touch it, then launch silently."""
+    rows, t = [(T0, assistant(tool("w", "Write", file_path="C:\\run\\args.json", content=json.dumps(first)))), (T0 + 1, done("w"))], T0 + 2
+    for i, (name, inp) in enumerate(calls):
+        rows += [(t, assistant(tool(f"e{i}", name, **inp))), (t + 1, done(f"e{i}"))]
+        t += 2
+    rows += [(t, assistant(tool("j", "PowerShell", command=command))), (t + 1, done("j"))]
+    return replay(rows)
+
+
+def incremental_edit_cases():
+    """An args file changed by Edit (no out_dir in the call) still decides whether `plan` exempts the launch."""
+    path = "C:\\run\\args.json"
+    on = {"out_dir": "C:\\run\\out", "plan": True}
+    off = {"out_dir": "C:\\run\\out", "plan": False}
+    edit = lambda old, new: ("Edit", {"file_path": path, "old_string": old, "new_string": new})
+    return [
+        ("Edit turns plan true into false: a real job", announce(edits_then_launch(on, [edit("true", "false")])), "FLAG"),
+        ("Edit turns plan false into true: a plan", announce(edits_then_launch(off, [edit("false", "true")])), "OK"),
+        ("Edit elsewhere keeps the plan", announce(edits_then_launch(on, [edit("out", "out2")])), "OK"),
+        ("two Edits, last one turns plan off", announce(edits_then_launch(on, [edit("out", "o"), edit("true", "false")])), "FLAG"),
+        ("Edit that matches nothing: cannot reconstruct, no exemption", announce(edits_then_launch(on, [edit("zzz", "yyy")])), "FLAG"),
+        ("shell rewrite of the file: cannot reconstruct, no exemption", announce(edits_then_launch(on, [
+            ("PowerShell", {"command": "(Get-Content C:\\run\\args.json) -replace 'true','false' | Set-Content C:\\run\\args.json"})])), "FLAG"),
+        ("shell read of the file does not change it", announce(edits_then_launch(on, [
+            ("PowerShell", {"command": "Get-Content C:\\run\\args.json"})])), "OK"),
+    ]
+
+
 def flag_cases():
     """Every spelling of a Blender render, animation or script flag, launched silently: a job that is seen scores FLAG."""
     quiet = lambda cmd, **kw: announce(launch_run(None, "Bash", cmd, **kw))
@@ -236,7 +265,7 @@ def args_file_cases():
         ("relative folder tail does not match another folder", announce(writes_then_launch([other], with_file("run\\args.json"))), "FLAG"),
         ("--args-file=path form, real file last", announce(writes_then_launch([other, real], eq_form)), "FLAG"),
         ("case and slash style differ", announce(writes_then_launch([("c:/RUN/args.json", plan[1])])), "OK"),
-    ] + spaced_cases()
+    ] + spaced_cases() + incremental_edit_cases()
 
 
 def spaced_cases():

@@ -133,10 +133,16 @@ def _write_evidence(path, verdict, summary):
 
 
 def main(objects=None, tri_budget=None, prefix="SM_", max_size_m=50.0, evidence_path=None):
+    targets = _targets(objects)
+    editing = [o.name for o in targets if o.type == "MESH" and o.data.is_editmode]
+    if editing:
+        raise ValueError(f"{', '.join(editing)} {'is' if len(editing) == 1 else 'are'} in Edit Mode: obj.data holds the "
+                         "pre-edit mesh, so a result read now could PASS on stale geometry. Leave Edit Mode "
+                         "(Tab, or bpy.ops.object.mode_set(mode='OBJECT')) and run again; nothing was written")
     depsgraph = bpy.context.evaluated_depsgraph_get()
     report, overall = {}, "PASS"
     rank = {"PASS": 0, "WARN": 1, "FAIL": 2}
-    for obj in _targets(objects):
+    for obj in targets:
         if obj.type != "MESH":
             continue
         tris, checks = _check(obj, tri_budget, prefix, max_size_m, depsgraph)

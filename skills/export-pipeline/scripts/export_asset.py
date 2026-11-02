@@ -171,6 +171,9 @@ def main(out_path, objects=None, engine="generic", animation=False, evidence_pat
             raise ValueError(clash)
         before = _stamp(evidence_path)
     targets = _targets(objects)
+    for o in targets:
+        if o.type == "MESH" and o.data.is_editmode:
+            o.update_from_editmode()  # exporters read obj.data, the pre-edit mesh: load the live edit mesh into it first
     ext = os.path.splitext(out_path)[1].lower()
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
     view_layer = bpy.context.view_layer

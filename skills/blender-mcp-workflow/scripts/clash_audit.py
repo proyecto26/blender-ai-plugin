@@ -281,6 +281,11 @@ def main(objects=None, gap_max_m=0.005, min_depth_m=0.001, require_connected=Tru
         raise ValueError("gap_max_m and min_depth_m must be >= 0 and max_samples >= 100")
     ignore = {frozenset(p) for p in (ignore_pairs or [])}
     objs = _targets(objects)
+    editing = [o.name for o in objs if o.type == "MESH" and o.data.is_editmode]
+    if editing:
+        raise ValueError(f"{', '.join(editing)} {'is' if len(editing) == 1 else 'are'} in Edit Mode: obj.data holds the "
+                         "pre-edit mesh, so a result read now could PASS on stale geometry. Leave Edit Mode "
+                         "(Tab, or bpy.ops.object.mode_set(mode='OBJECT')) and run again; nothing was written")
     if anchor and anchor not in [o.name for o in objs]:
         raise ValueError(f"anchor {anchor!r} is not among the audited objects")
     depsgraph = bpy.context.evaluated_depsgraph_get()
