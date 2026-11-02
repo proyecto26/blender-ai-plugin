@@ -298,9 +298,6 @@ def main(objects=None, gap_max_m=0.005, min_depth_m=0.001, require_connected=Tru
             result["evidence"] = _write_evidence(evidence_path, result)
         return result
 
-    allv = np.concatenate([r.verts for r in recs])
-    diag = float(np.linalg.norm(allv.max(0) - allv.min(0)))
-    eps, adv = max(1e-6, 1e-6 * diag), max(2e-6, 2e-6 * diag)
     rng = np.random.default_rng(0)
     clashes, contained, touching, not_measured = [], [], [], []
     parent = list(range(len(recs)))
@@ -319,6 +316,10 @@ def main(objects=None, gap_max_m=0.005, min_depth_m=0.001, require_connected=Tru
     for i in range(len(recs)):
         for j in range(i + 1, len(recs)):
             a, b = recs[i], recs[j]
+            # every tolerance below belongs to this pair alone: sized from the pair's own bounds, so a distant or
+            # unrelated object elsewhere in the audit can never loosen or tighten a decision about a and b
+            diag = float(np.linalg.norm(np.maximum(a.hi, b.hi) - np.minimum(a.lo, b.lo)))
+            eps, adv = max(1e-6, 1e-6 * diag), max(2e-6, 2e-6 * diag)
             gap = _aabb_gap(a, b)
             if gap > gap_max_m + eps:
                 continue
