@@ -166,5 +166,5 @@ ARGS: `surface`, `collection`, `density`, `seed`, `scale_min`, `scale_max`, `ali
 
 | Topic | Reference | Load When |
 |-------|-----------|-----------|
-| Scatter recipes | `references/scatter-systems.md` | Environment scatter |
+| Scatter: density masks, collision-aware clearance, instancing (tested recipe) | `references/scatter-systems.md` | Environment scatter |
 | Building generators | `references/building-generators.md` | Architectural procedural |

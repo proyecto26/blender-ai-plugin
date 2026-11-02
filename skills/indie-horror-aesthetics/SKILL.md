@@ -53,3 +53,9 @@ Scale reference for first-person indie horror:
 | Ceiling height | 2.4 to 2.7 m |
 | Eye height | 1.6 m |
 | Flashlight range | 8 to 12 m |
+
+## Reference Guide
+
+| Topic | Reference | Load When |
+|-------|-----------|-----------|
+| Bloober Team lane (Layers of Fear, Observer, Blair Witch, Silent Hill 2) | `references/bloober-team.md` | The brief names Bloober Team or one of its games |

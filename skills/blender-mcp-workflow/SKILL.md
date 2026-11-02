@@ -186,6 +186,7 @@ Model training data is full of Blender 2.8-4.0 code. Treat every API you did not
 | Validation checklist | `references/validation-checklist.md` |
 | Reference image matching | `references/reference-image-match.md`, `references/reference-analysis-template.md`, `references/visual-match-checklist.md` |
 | Reference folder first (style bible, engine screenshots vs refs) | `references/reference-folder-workflow.md` |
+| Depth from several reference images (flat views, triangulation) | `references/reference-image-depth.md` |
 
 ## Anti-Patterns
 

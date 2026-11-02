@@ -162,3 +162,4 @@ ARGS: `armature`, `meshes`, `max_influences`
 |-------|-----------|-----------|
 | Humanoid rig | `references/humanoid-rig.md` | Characters |
 | Mechanical rig | `references/mechanical-rig.md` | Props, vehicles |
+| Facial shape keys and drivers (tested recipe) | `references/facial-shape-keys-drivers.md` | Face poses driven by bones or sliders |

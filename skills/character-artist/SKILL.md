@@ -118,6 +118,7 @@ See `references/facial-topology.md` for face-specific loops.
 |-------|-----------|-----------|
 | Facial topology | `references/facial-topology.md` | Face modeling |
 | Body proportions | `references/body-proportions.md` | Blockout |
+| Clothing for a simulated character | `references/clothing-sim.md` | Garments that drape or move (then load `cloth-sim`) |
 | Pipeline | `blender-mcp-workflow` skill → `references/asset-pipeline.md` | Phase context |
 
 ## Style Integration
