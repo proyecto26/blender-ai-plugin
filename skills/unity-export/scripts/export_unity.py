@@ -55,6 +55,17 @@ def _verify(path, targets):
             "ok": not missing and not leaked}
 
 
+def _restore_state(camera, active, mode):
+    """Put back the scene camera and the active object's mode. Never raises, so an export error stays the reported one."""
+    try:
+        bpy.context.scene.camera = camera
+        if active and active.mode != mode:
+            with bpy.context.temp_override(active_object=active, object=active):
+                bpy.ops.object.mode_set(mode=mode)
+    except (RuntimeError, ReferenceError) as exc:
+        print(f"export: could not restore camera/mode: {exc}", file=sys.stderr)
+
+
 def main(objects, out_path, animation=False, strict=True):
     targets = [bpy.data.objects[n] for n in objects if n in bpy.data.objects]
     if not targets:
@@ -76,6 +87,9 @@ def main(objects, out_path, animation=False, strict=True):
         return {"exported": False, "checks": checks, "reason": "fix FAIL checks or pass strict=False"}
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
     prev = [o for o in bpy.context.selected_objects]
+    prev_active = bpy.context.view_layer.objects.active
+    prev_mode = prev_active.mode if prev_active else "OBJECT"
+    prev_camera = bpy.context.scene.camera
     for o in prev:
         o.select_set(False)
     for o in targets:
@@ -93,6 +107,7 @@ def main(objects, out_path, animation=False, strict=True):
             o.select_set(False)
         for o in prev:
             o.select_set(True)
+        _restore_state(prev_camera, prev_active, prev_mode)
     ok = os.path.exists(out_path)
     return {"exported": ok, "path": out_path, "bytes": os.path.getsize(out_path) if ok else 0, "checks": checks,
             "verify": _verify(out_path, targets),

@@ -58,6 +58,17 @@ def _verify(path, targets):
             "ok": not missing and not leaked}
 
 
+def _restore_state(camera, active, mode):
+    """Put back the scene camera and the active object's mode. Never raises, so an export error stays the reported one."""
+    try:
+        bpy.context.scene.camera = camera
+        if active and active.mode != mode:
+            with bpy.context.temp_override(active_object=active, object=active):
+                bpy.ops.object.mode_set(mode=mode)
+    except (RuntimeError, ReferenceError) as exc:
+        print(f"export: could not restore camera/mode: {exc}", file=sys.stderr)
+
+
 def main(mesh, out_dir, strict=True):
     obj = bpy.data.objects.get(mesh)
     if obj is None or obj.type != "MESH":
@@ -82,6 +93,9 @@ def main(mesh, out_dir, strict=True):
     os.makedirs(out_dir, exist_ok=True)
     path = os.path.join(out_dir, f"{obj.name}.fbx")
     prev = [o for o in bpy.context.selected_objects]
+    prev_active = bpy.context.view_layer.objects.active
+    prev_mode = prev_active.mode if prev_active else "OBJECT"
+    prev_camera = bpy.context.scene.camera
     for o in prev:
         o.select_set(False)
     for o in targets:
@@ -98,6 +112,7 @@ def main(mesh, out_dir, strict=True):
             o.select_set(False)
         for o in prev:
             o.select_set(True)
+        _restore_state(prev_camera, prev_active, prev_mode)
     return {"exported": os.path.exists(path), "path": path, "bytes": os.path.getsize(path) if os.path.exists(path) else 0,
             "verify": _verify(path, targets),
             "checks": checks, "collision": [o.name for o in ucx], "sockets": [o.name for o in sockets],

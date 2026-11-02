@@ -73,7 +73,8 @@ def main(out_dir, target=None, views=None, resolution=768, engine="BLENDER_WORKB
 
     r = scene.render
     saved = dict(engine=r.engine, x=r.resolution_x, y=r.resolution_y, pct=r.resolution_percentage,
-                 path=r.filepath, fmt=r.image_settings.file_format, camera=scene.camera)
+                 path=r.filepath, fmt=r.image_settings.file_format, depth=r.image_settings.color_depth,
+                 camera=scene.camera)
     cam_data = bpy.data.cameras.new("__capture_cam")
     cam_data.lens = 50
     cam = bpy.data.objects.new("__capture_cam", cam_data)
@@ -110,6 +111,7 @@ def main(out_dir, target=None, views=None, resolution=768, engine="BLENDER_WORKB
         r.engine, r.resolution_x, r.resolution_y = saved["engine"], saved["x"], saved["y"]
         r.resolution_percentage, r.filepath = saved["pct"], saved["path"]
         r.image_settings.file_format = saved["fmt"]
+        r.image_settings.color_depth = saved["depth"]
         scene.camera = saved["camera"]
         bpy.data.objects.remove(cam, do_unlink=True)
         bpy.data.cameras.remove(cam_data)

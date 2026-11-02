@@ -99,9 +99,20 @@ the installed version). Recipes: [`skills/blender-mcp-workflow/references/mcp-to
 This runs Blender 5.2.3 LTS headless, but the alias does not forward stdout, so the tests write JSON
 reports to `out_dir`; read those instead of the console.
 
-The MCP tool `execute_blender_code_for_cli` launches a background Blender and needs the `BLENDER_PATH`
-environment variable set (to the Blender executable or launcher alias) in the environment of the MCP server
-process. Set it in whichever way your client passes environment variables to MCP servers, then restart the agent.
+## Which tools work on your install
+
+Live work in the open window does not need `BLENDER_PATH`, and it is how the plugin works by default.
+
+The `*_for_cli` tools start a background Blender. They use `BLENDER_PATH` from the environment of the MCP server process,
+or `blender` on that process's `PATH` if it is not set. To set it, use whichever way your client passes environment
+variables to MCP servers, then restart the agent.
+
+| Install | `BLENDER_PATH` | `*_for_cli` tools |
+|---------|----------------|-------------------|
+| Microsoft Store | Do not set it to the launcher | **Do not work** ([upstream issue](https://projects.blender.org/lab/blender_mcp/issues/69)): the launcher runs the code but drops its output, so the tool reports `No result marker` after the code ran. Check for its outputs before running anything again. Run background work through the launcher with a script that writes JSON, as above |
+| Windows zip or installer | Path to `blender.exe` | Should work, not tested here; [a hang is reported upstream](https://projects.blender.org/lab/blender_mcp/issues/42) |
+| macOS | Optional: `/Applications/Blender.app/Contents/MacOS/Blender`, or `blender` on `PATH` (Homebrew cask) | Work, tested on macOS 26 with Blender 5.2.3. Blender is killed at the 120 s timeout |
+| Linux | Optional: path to the Blender binary, or `blender` on `PATH` | Not tested here |
 
 ## Headless runs on macOS and Linux
 
@@ -109,12 +120,14 @@ Use the app's binary directly; the commands are otherwise the same:
 
 ```bash
 # macOS
-/Applications/Blender.app/Contents/MacOS/Blender -b --factory-startup --python tests/blender/test_skill_scripts.py -- '{"out_dir": "/tmp/bst"}'
+out=$(mktemp -d)  # a new folder each run: a reused one produces false failures
+/Applications/Blender.app/Contents/MacOS/Blender -b --factory-startup --python tests/blender/test_skill_scripts.py -- "{\"out_dir\": \"$out\"}"
 # Linux
-blender -b --factory-startup --python tests/blender/test_skill_scripts.py -- '{"out_dir": "/tmp/bst"}'
+out=$(mktemp -d)
+blender -b --factory-startup --python tests/blender/test_skill_scripts.py -- "{\"out_dir\": \"$out\"}"
 ```
 
-On macOS set `BLENDER_PATH=/Applications/Blender.app/Contents/MacOS/Blender` for `execute_blender_code_for_cli`.
+On macOS you can optionally set `BLENDER_PATH=/Applications/Blender.app/Contents/MacOS/Blender` for `execute_blender_code_for_cli`.
 
 ## Passing ARGS to scripts on any shell
 
@@ -135,7 +148,8 @@ with forward slashes on Windows too.
 | Symptom | Fix |
 |---------|-----|
 | Tools missing in the agent | Restart the agent after `mcp add`; check `claude mcp list` |
-| "Connection refused" / timeouts | Blender is closed or the MCP add-on is disabled |
+| "Connection refused" | Blender is closed or the MCP add-on is disabled |
+| A call timed out | The code or a render may still be running. Do not restart Blender or run it again: see "After a Timeout" in [`live-session.md`](../skills/blender-mcp-workflow/references/live-session.md) |
 | `result must be a dict` | Scripts must assign `result = {...}` |
 | API errors like `use_auto_smooth` / `scene.node_tree` | Old Blender API - see `blender-5-api-notes.md` |
 | Running scripts without the add-on | Use `execute_blender_code_for_cli` (background Blender) or `blender -b file.blend --python script.py -- '{json}'` |

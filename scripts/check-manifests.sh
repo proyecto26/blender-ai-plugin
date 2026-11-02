@@ -157,7 +157,7 @@ if errs:
 print("OK: plugin.json valid against the Agent Plugins 1.0.0 schema")
 PY
 else
-  skip "Agent Plugins schema check needs python jsonschema and network access to $schema_url"
+  skip "Agent Plugins schema check needs python jsonschema (python3 -m pip install jsonschema, in a venv if pip refuses) and network access to $schema_url"
 fi
 
 echo "NOTE: no host validator exists for Codex/Copilot manifests — structural checks only"

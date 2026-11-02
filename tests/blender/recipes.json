@@ -734,6 +734,11 @@
    "reason": "fragment: not a complete recipe (relies on names/context defined elsewhere, no script call)"
   },
   {
+   "file": "blender-mcp-workflow/references/live-session.md",
+   "block": 0,
+   "reason": "fragment: not a complete recipe (relies on names/context defined elsewhere, no script call)"
+  },
+  {
    "file": "blender-mcp-workflow/references/mcp-tools.md",
    "block": 0,
    "reason": "fragment: not a complete recipe (relies on names/context defined elsewhere, no script call)"

@@ -35,10 +35,14 @@ docs/                            # setup guide, skills guide, demo video
 ```bash
 python3 scripts/validate_skills.py                 # frontmatter, links, deprecated APIs, script safety
 bash scripts/check-manifests.sh                    # manifest consistency + claude plugin validate + schema
-blender -b --factory-startup --python tests/blender/test_skill_scripts.py -- '{"out_dir": "/tmp/bst"}'
-blender -b --factory-startup --python tests/blender/run_recipes.py -- '{"out_dir": "/tmp/bst_recipes"}'   # recipe runner
+out=$(mktemp -d)  # a new folder each run: a reused one produces false failures
+blender -b --factory-startup --python tests/blender/test_skill_scripts.py -- "{\"out_dir\": \"$out\"}"
+blender -b --factory-startup --python tests/blender/run_recipes.py -- "{\"out_dir\": \"$(mktemp -d)\"}"   # recipe runner
+python3 tests/blender/race_background_render.py --blender <path>   # two real processes on one out_dir
 claude plugin eval --runs 1                        # pilot the eval suite (uses tokens)
 ```
 
 With the official Blender MCP connected, the smoke tests can also run headless via
-`execute_blender_code_for_cli` on a scratch `.blend` — never against the user's open file.
+`execute_blender_code_for_cli` on a scratch `.blend` (not on Microsoft Store installs). Automated tests never run
+against the user's open file. The one exception is an attended live acceptance: the user has agreed, is watching, and
+the open file is disposable. See `docs/local_skill_development.md`.

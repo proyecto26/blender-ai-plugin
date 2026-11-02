@@ -75,7 +75,15 @@ def main(target, frames=120, lens_mm=70.0, elevation_deg=15.0, set_active=True):
         cam = bpy.data.objects.new("CAM_Turntable", bpy.data.cameras.new("CAM_Turntable"))
         col.objects.link(cam)
     cam.data.lens = lens_mm
-    fov = 2 * math.atan(cam.data.sensor_width / (2 * lens_mm))
+    # Fit the bounding sphere in the narrower of the two view angles, set by the render aspect.
+    r = scene.render
+    res_x, res_y = r.resolution_x * r.pixel_aspect_x, r.resolution_y * r.pixel_aspect_y
+    fit = cam.data.sensor_fit
+    along_x = fit == "HORIZONTAL" or (fit == "AUTO" and res_x >= res_y)
+    sensor = cam.data.sensor_height if fit == "VERTICAL" else cam.data.sensor_width
+    half = sensor / (2 * lens_mm)
+    half_x, half_y = (half, half * res_y / res_x) if along_x else (half * res_x / res_y, half)
+    fov = 2 * math.atan(min(half_x, half_y))
     distance = radius / math.sin(fov * 0.75 / 2)
     e = math.radians(elevation_deg)
     cam.parent = pivot

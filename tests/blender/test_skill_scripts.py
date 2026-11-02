@@ -4,13 +4,13 @@ Builds a throwaway test scene in a NEW scene datablock, runs each script with
 representative ARGS, asserts on the returned result dict, then deletes the test
 scene. Never saves the file.
 
-Run headless (recommended):
-    blender -b --factory-startup --python tests/blender/test_skill_scripts.py -- '{"out_dir": "/tmp/blender-skill-tests"}'
+Run headless (recommended), with a new out_dir each run because a reused one produces false failures:
+    blender -b --factory-startup --python tests/blender/test_skill_scripts.py -- '{"out_dir": "/tmp/bst-<new folder>"}'
 
 Or through the official Blender MCP, against a scratch .blend:
     execute_blender_code_for_cli(blend_file="/tmp/empty.blend", code=
         'import runpy; result = runpy.run_path("<repo>/tests/blender/test_skill_scripts.py", '
-        'init_globals={"ARGS": {"out_dir": "/tmp/blender-skill-tests"}})["result"]')
+        'init_globals={"ARGS": {"out_dir": "/tmp/bst-<new folder>"}})["result"]')
 """
 import json
 import os
@@ -377,6 +377,99 @@ def _capture_ignores_marker_cameras(out_dir):
         bpy.data.cameras.remove(cam_data)
 
 
+def _export_keeps_state(skill, script, args):
+    """An export must leave the scene camera and the Edit Mode it found: the exporters leave Edit Mode and move
+    frames, which lets a marker bound to another camera replace scene.camera."""
+    scene = bpy.context.scene
+    view_layer = bpy.context.view_layer
+    saved = (scene.camera, view_layer.objects.active, list(bpy.context.selected_objects))
+    objs, marker = [], None
+    edit = bpy.data.objects["SM_Crate_01"]
+    try:
+        for n in ("__StateCam", "__StateMarkerCam"):
+            objs.append(bpy.data.objects.new(n, bpy.data.cameras.new(n)))
+            scene.collection.objects.link(objs[-1])
+        marker = scene.timeline_markers.new("__StateMarker", frame=scene.frame_current)
+        marker.camera = objs[1]
+        scene.camera = objs[0]
+        view_layer.objects.active = edit
+        edit.select_set(True)
+        bpy.ops.object.mode_set(mode="EDIT")
+        r = run(skill, script, args)
+        return {"exported": r.get("exists", r.get("exported")), "verify_ok": (r.get("verify") or {}).get("ok"),
+                "camera": scene.camera.name if scene.camera else None, "mode": edit.mode,
+                "active": view_layer.objects.active.name if view_layer.objects.active else None}
+    finally:
+        try:
+            if edit.mode != "OBJECT":
+                bpy.ops.object.mode_set(mode="OBJECT")
+        finally:
+            scene.camera, view_layer.objects.active = saved[0], saved[1]
+            for o in bpy.context.selected_objects:
+                o.select_set(False)
+            for o in saved[2]:
+                o.select_set(True)
+            if marker:
+                scene.timeline_markers.remove(marker)
+            for o in objs:
+                data = o.data
+                bpy.data.objects.remove(o)
+                bpy.data.cameras.remove(data)
+
+
+def _kept_state(r):
+    return r["exported"] and r["camera"] == "__StateCam" and r["mode"] == "EDIT" and r["active"] == "SM_Crate_01"
+
+
+def _export_empty_mesh(skill, script, out_path):
+    """glTF omits a mesh with no geometry and keeps the node: the read-back must not call that a good export."""
+    mesh = bpy.data.meshes.new("__EmptyMesh")
+    obj = bpy.data.objects.new("SM_EmptyProbe", mesh)
+    bpy.context.scene.collection.objects.link(obj)
+    try:
+        args = {"objects": [obj.name], "out_path": out_path}
+        if skill == "export-pipeline":
+            args["engine"] = "godot"
+        return run(skill, script, args)["verify"]
+    finally:
+        bpy.data.objects.remove(obj)
+        bpy.data.meshes.remove(mesh)
+
+
+def _export_instancer(out_path):
+    """A vertex instancer that hides itself exports as a transform node plus its child: that is a good export."""
+    bm_mesh = bpy.data.meshes.new("__InstancerMesh")
+    bm_mesh.from_pydata([(0, 0, 0), (3, 0, 0)], [], [])
+    inst = bpy.data.objects.new("SM_InstancerProbe", bm_mesh)
+    inst.instance_type = "VERTS"
+    inst.show_instancer_for_render = False
+    bpy.context.scene.collection.objects.link(inst)
+    child = bpy.data.objects["SM_Crate_01"].copy()
+    child.name = "SM_InstancerChild"
+    bpy.context.scene.collection.objects.link(child)
+    child.parent = inst
+    try:
+        return run("export-pipeline", "export_asset.py", {"objects": [inst.name, child.name], "engine": "godot",
+                                                          "out_path": out_path})["verify"]
+    finally:
+        bpy.data.objects.remove(child)
+        bpy.data.objects.remove(inst)
+        bpy.data.meshes.remove(bm_mesh)
+
+
+def _capture_keeps_depth(out_dir):
+    im = bpy.context.scene.render.image_settings
+    saved = (im.media_type, im.file_format, im.color_depth)
+    im.file_format, im.color_depth = "OPEN_EXR", "32"
+    try:
+        run("blender-mcp-workflow", "capture_views.py", {"target": "SM_Crate_01", "out_dir": out_dir,
+                                                         "views": ["front"], "resolution": 64})
+        return {"fmt": im.file_format, "depth": im.color_depth}
+    finally:
+        im.media_type, im.file_format = saved[0], saved[1]
+        im.color_depth = saved[2]
+
+
 def _work_copy_child_world():
     parent, kid = _kid_scene("SM_WcKidP", "SOCKET_WcKid")
     before = kid.matrix_world.copy()
@@ -410,22 +503,226 @@ def _work_copy_set_checkpoint():
             "prev_parent_is_prev": prev_p.name}
 
 
+def _manifest_evidence():
+    import hashlib
+    d = os.path.join(OUT, "manifest_evidence")
+    os.makedirs(d, exist_ok=True)
+    with open(os.path.join(d, "shot.png"), "wb") as fh:
+        fh.write(b"png")
+    base = {"out_dir": d, "skill": "lighting", "script": "camera_rig.py", "stage": "light_camera"}
+    rm = lambda **kw: run("blender-director", "run_manifest.py", dict(base, **kw))
+    summary = {"occluded_by": []}
+    no_capture = _expect_error(lambda: rm(verdict="PASS", result_summary=summary))
+    ghost = _expect_error(lambda: rm(verdict="PASS", result_summary=summary, capture="missing.png"))
+    empties = [_expect_error(lambda v=v: rm(verdict="PASS", capture="shot.png", result_summary=v)) for v in (None, {}, "  ")]
+    no_capture_nc = rm(verdict="NOT_CHECKED", reason="window minimized")
+    good = rm(verdict="PASS", result_summary=summary, capture="shot.png")
+    with open(os.path.join(d, "run_manifest.json"), encoding="utf-8") as fh:
+        last = json.load(fh)["events"][-1]
+    return {"no_capture": no_capture, "ghost": ghost, "empties": empties, "nc": no_capture_nc["gates"]["light_camera"],
+            "good": good["gates"]["light_camera"], "hash": last.get("capture_sha256"), "bytes": last.get("capture_bytes"),
+            "expect": hashlib.sha256(b"png").hexdigest()}
+
+
+def _turntable_tall_fits():
+    from bpy_extras.object_utils import world_to_camera_view
+    scene = bpy.context.scene
+    r = scene.render
+    saved = (r.resolution_x, r.resolution_y, r.resolution_percentage, scene.frame_start, scene.frame_end,
+             scene.frame_current, scene.camera)
+    box = _cube("SM_TallFit", 1.0, loc=(30, 30, 0))
+    cam = bpy.data.objects["CAM_Turntable"]
+    xs, ys = [], []
+    try:
+        r.resolution_percentage = 100
+        for size, res, fit in (((0.3, 0.3, 2.0), (1280, 720), "AUTO"), ((2.0, 0.3, 0.3), (720, 1280), "AUTO"),
+                               ((0.3, 0.3, 2.0), (1280, 720), "VERTICAL"), ((0.3, 0.3, 2.0), (1280, 720), "HORIZONTAL"),
+                               ((2.0, 0.3, 0.3), (720, 1280), "VERTICAL"), ((2.0, 0.3, 0.3), (720, 1280), "HORIZONTAL")):
+            box.scale = size
+            r.resolution_x, r.resolution_y = res
+            cam.data.sensor_fit = fit
+            bpy.context.view_layer.update()
+            run("animation", "turntable.py", {"target": "SM_TallFit", "frames": 8, "set_active": False})
+            for frame in range(scene.frame_start, scene.frame_start + 8):
+                scene.frame_set(frame)
+                for corner in box.bound_box:
+                    p = world_to_camera_view(scene, cam, box.matrix_world @ Vector(corner))
+                    xs.append(p.x)
+                    ys.append(p.y)
+        return {"x": [round(min(xs), 3), round(max(xs), 3)], "y": [round(min(ys), 3), round(max(ys), 3)]}
+    finally:
+        cam.data.sensor_fit = "AUTO"
+        r.resolution_x, r.resolution_y, r.resolution_percentage = saved[:3]
+        run("animation", "turntable.py", {"target": "SM_Crate_01", "frames": 48})
+        scene.frame_start, scene.frame_end = saved[3], saved[4]
+        scene.frame_set(saved[5])
+        scene.camera = saved[6]
+        bpy.data.objects.remove(box)
+
+
+def _hold_render_lock(out_dir):
+    """Hold an out_dir's lock the way a running background_render.py does, from a separate descriptor."""
+    fd = os.open(os.path.join(out_dir, "render.lock"), os.O_CREAT | os.O_RDWR)
+    if os.name == "nt":
+        import msvcrt
+        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+    else:
+        import fcntl
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    return fd
+
+
+def _release_render_lock(fd):
+    if os.name == "nt":
+        import msvcrt
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+    os.close(fd)
+
+
+def _background_render():
+    scene = bpy.context.scene
+    r = scene.render
+    saved = (r.engine, r.filepath, r.resolution_x, r.resolution_y, r.resolution_percentage, r.use_overwrite,
+             scene.frame_start, scene.frame_end, scene.frame_current, r.image_settings.media_type,
+             r.image_settings.file_format)
+    handlers = len(bpy.app.handlers.render_post)
+    d = os.path.join(OUT, "bg_render")
+    status_path = os.path.join(d, "render_status.json")
+    read = lambda: json.load(open(status_path, encoding="utf-8"))
+    args = {"out_dir": d, "frame_start": 1, "frame_end": 2}
+    try:
+        r.engine = "BLENDER_WORKBENCH"
+        r.resolution_x, r.resolution_y, r.resolution_percentage = 32, 32, 100
+        r.image_settings.media_type = "IMAGE"
+        r.image_settings.file_format = "PNG"
+        res = run("rendering", "background_render.py", args)
+        first = read()
+        repeat = _expect_error(lambda: run("rendering", "background_render.py", args))
+        repeat_state = read()["state"]
+        again = run("rendering", "background_render.py", dict(args, overwrite=True))["state"]
+        kept_error = _expect_error(lambda: run("rendering", "background_render.py", dict(args, overwrite=True, device="NOPE")))
+        kept_state = read()["state"]
+        refused = json.load(open(os.path.join(d, "render_refused.json"), encoding="utf-8"))
+        refused_later = refused["time"] > read()["started"] and "device" in refused["error"]
+        with open(os.path.join(d, "render_status.json"), encoding="utf-8") as fh:
+            good_status = fh.read()
+        with open(os.path.join(d, "render_status.json"), "w", encoding="utf-8") as fh:
+            fh.write("[]")
+        unreadable = _expect_error(lambda: run("rendering", "background_render.py", dict(args)))
+        with open(os.path.join(d, "render_status.json"), "w", encoding="utf-8") as fh:
+            fh.write(good_status)
+        bad_dir = d + "_bad"
+        bad_device = _expect_error(lambda: run("rendering", "background_render.py", dict(args, out_dir=bad_dir, device="NOPE")))
+        bad_state = json.load(open(os.path.join(bad_dir, "render_status.json"), encoding="utf-8"))
+        busy_dir = d + "_busy"
+        os.makedirs(busy_dir, exist_ok=True)
+        with open(os.path.join(busy_dir, "render_status.json"), "w", encoding="utf-8") as fh:
+            json.dump({"state": "running"}, fh)
+        busy = _expect_error(lambda: run("rendering", "background_render.py", dict(args, out_dir=busy_dir)))
+        busy_state = json.load(open(os.path.join(busy_dir, "render_status.json"), encoding="utf-8"))["state"]
+        died = run("rendering", "background_render.py", dict(args, out_dir=busy_dir, overwrite=True))["state"]
+        held_dir = d + "_held"
+        os.makedirs(held_dir, exist_ok=True)
+        held_status = os.path.join(held_dir, "render_status.json")
+        lock = _hold_render_lock(held_dir)
+        try:
+            held = _expect_error(lambda: run("rendering", "background_render.py", dict(args, out_dir=held_dir)))
+            held_no_status = not os.path.exists(held_status)
+            with open(held_status, "w", encoding="utf-8") as fh:
+                json.dump({"state": "running", "started": 1}, fh)
+            held_over = _expect_error(lambda: run("rendering", "background_render.py", dict(args, out_dir=held_dir, overwrite=True)))
+            held_kept = json.load(open(held_status, encoding="utf-8")) == {"state": "running", "started": 1}
+            held_reason = json.load(open(os.path.join(held_dir, "render_refused.json"), encoding="utf-8"))["error"]
+        finally:
+            _release_render_lock(lock)
+        after_held = run("rendering", "background_render.py", dict(args, out_dir=held_dir, overwrite=True))["state"]
+        # bad_dir's run took the lock and was refused inside it, so this shows the refusal gave the lock back.
+        _release_render_lock(_hold_render_lock(bad_dir))
+        r.engine = "CYCLES"
+        cycles_prefs = bpy.context.preferences.addons["cycles"].preferences
+        have = {t[0] for t in cycles_prefs.get_device_types(bpy.context)}
+        absent = next(t for t in ("OPTIX", "CUDA", "HIP", "ONEAPI", "METAL") if t not in have)
+        no_backend = _expect_error(lambda: run("rendering", "background_render.py", dict(args, out_dir=d + "_none", device=absent)))
+        r.engine = "BLENDER_WORKBENCH"
+        strays = _expect_error(lambda: run("rendering", "background_render.py", dict(args, frame_start=3, frame_end=4)))
+        r.image_settings.media_type = "VIDEO"
+        movie = _expect_error(lambda: run("rendering", "background_render.py", dict(args, overwrite=True)))
+        r.image_settings.media_type = "IMAGE"
+        r.image_settings.file_format = "PNG"
+        # A plan measures one frame and leaves the folder ready; its refusals never become a status.
+        plan_dir = d + "_plan"
+        plan = run("rendering", "background_render.py", dict(args, out_dir=plan_dir, plan=True))
+        plan_saved = json.load(open(os.path.join(plan_dir, "render_plan.json"), encoding="utf-8"))
+        plan_clean = not os.path.exists(os.path.join(plan_dir, "render_status.json")) and not os.listdir(os.path.join(plan_dir, "frames"))
+        after_plan = run("rendering", "background_render.py", dict(args, out_dir=plan_dir))["state"]
+        plan_done = _expect_error(lambda: run("rendering", "background_render.py", dict(args, plan=True)))
+        plan_bad_dir = d + "_plan_bad"
+        plan_bad = _expect_error(lambda: run("rendering", "background_render.py", dict(args, out_dir=plan_bad_dir, plan=True, device="NOPE")))
+        plan_bad_clean = not os.path.exists(os.path.join(plan_bad_dir, "render_status.json"))
+        return {"state": res["state"], "done": first["frames_done"], "total": first["frames_total"],
+                "files": sorted(os.listdir(os.path.join(d, "frames"))), "ended": first["ended"], "repeat": repeat,
+                "repeat_state": repeat_state, "again": again, "bad_device": bad_device, "bad_state": bad_state["state"],
+                "bad_error": bad_state["error"], "kept_error": kept_error, "kept_state": kept_state, "refused_later": refused_later,
+                "unreadable": unreadable, "busy": busy, "died": died, "held": held, "held_no_status": held_no_status,
+                "held_over": held_over, "held_kept": held_kept, "held_reason": held_reason, "after_held": after_held,
+                "plan": plan, "plan_saved": plan_saved, "plan_clean": plan_clean, "after_plan": after_plan, "plan_done": plan_done,
+                "plan_bad": plan_bad, "plan_bad_clean": plan_bad_clean,
+                "busy_state": busy_state, "no_backend": no_backend, "strays": strays, "movie": movie, "handlers_kept": len(bpy.app.handlers.render_post) == handlers}
+    finally:
+        r.image_settings.media_type, r.image_settings.file_format = saved[9], saved[10]
+        r.engine, r.filepath, r.resolution_x, r.resolution_y, r.resolution_percentage, r.use_overwrite = saved[:6]
+        scene.frame_start, scene.frame_end = saved[6], saved[7]
+        scene.frame_set(saved[8])
+
+
 def _manifest_validate_gate():
     d = os.path.join(OUT, "manifest_gate")
     os.makedirs(d, exist_ok=True)
     base = {"out_dir": d, "skill": "blender-mcp-workflow", "script": "validate_asset.py"}
     rm = lambda **kw: run("blender-director", "run_manifest.py", dict(base, **kw))
-    rm(stage="model", verdict="PASS")
+    ok = {"result_summary": {"fails": 0}}
+    rm(stage="model", verdict="PASS", **ok)
     missing = _expect_error(lambda: rm(stage="export", verdict="PASS"))
     rm(stage="validate", verdict="NOT_CHECKED", reason="not run yet")
     not_checked = _expect_error(lambda: rm(stage="export", verdict="PASS"))
     verify_nc = _expect_error(lambda: rm(stage="verify", verdict="PASS"))
     rm(stage="validate", verdict="N/A", reason="no mesh output")
-    ok_na = rm(stage="export", verdict="PASS")
-    rm(stage="validate", verdict="PASS")
-    ok_verify = rm(stage="verify", verdict="PASS")
+    ok_na = rm(stage="export", verdict="PASS", **ok)
+    rm(stage="validate", verdict="PASS", **ok)
+    ok_verify = rm(stage="verify", verdict="PASS", **ok)
     return {"missing": missing, "not_checked": not_checked, "verify_nc": verify_nc,
             "export_after_na": ok_na["gates"]["export"], "verify_after_pass": ok_verify["gates"]["verify"]}
+
+
+def _convex_closed():
+    """Convex proxies must be closed, and hold no faces or stray vertices from the source."""
+    def hull(name, build, **extra):
+        bm = bmesh.new()
+        build(bm)
+        me = bpy.data.meshes.new(name)
+        bm.to_mesh(me)
+        bm.free()
+        bpy.context.scene.collection.objects.link(bpy.data.objects.new(name, me))
+        made = run("collision-proxy", "make_collision.py", dict({"objects": [name], "shape": "convex", "engine": "godot"}, **extra))
+        bm = bmesh.new()
+        bm.from_mesh(bpy.data.objects[made["proxies"][0]["name"]].data)
+        stats = {"verts": len(bm.verts), "faces": len(bm.faces), "open": sum(not e.is_manifold for e in bm.edges)}
+        bm.free()
+        return stats
+
+    def inner_point(bm):
+        bmesh.ops.create_cube(bm, size=2.0)
+        bm.verts.new((0.0, 0.0, 0.0))
+
+    flat = _expect_error(lambda: hull("SM_HullFlat", lambda bm: bmesh.ops.create_grid(bm, x_segments=1, y_segments=1, size=1.0)))
+    flat_ngon = _expect_error(lambda: hull("SM_HullNgon", lambda bm: bmesh.ops.create_circle(bm, cap_ends=True, segments=14, radius=1.0)))
+    return {"flat": flat, "flat_ngon": flat_ngon, "cylinder": hull("SM_HullCyl", lambda bm: bmesh.ops.create_cone(
+                bm, cap_ends=True, segments=14, radius1=1.0, radius2=1.0, depth=2.0)),
+            "cube": hull("SM_HullCube", lambda bm: bmesh.ops.create_cube(bm, size=2.0)),
+            "inner": hull("SM_HullInner", inner_point),
+            "capped": hull("SM_HullCap", lambda bm: bmesh.ops.create_uvsphere(bm, u_segments=32, v_segments=16, radius=1.0),
+                           max_hull_verts=32)}
 
 
 def _collision_dup_survives():
@@ -503,12 +800,43 @@ def build_cases(out_dir):
         ("collision-proxy.make_collision", lambda: run("collision-proxy", "make_collision.py", {
             "objects": ["SM_Sphere_01"], "shape": "convex", "engine": "unreal", "max_hull_verts": 32}),
          lambda r: r["proxies"][0]["name"].startswith("UCX_SM_Sphere_01") and r["proxies"][0]["verts"] <= 32),
+        ("collision-proxy.convex_closed", lambda: _convex_closed(),
+         lambda r: "flat" in (r["flat"] or "") and "flat" in (r["flat_ngon"] or "")
+         and all(c["open"] == 0 and c["faces"] == 2 * c["verts"] - 4 for k, c in r.items() if not k.startswith("flat"))
+         and r["cylinder"]["verts"] == 28 and r["cube"]["verts"] == 8 and r["inner"]["verts"] == 8
+         and r["capped"]["verts"] <= 32),
         ("export-pipeline.fbx", lambda: run("export-pipeline", "export_asset.py", {
             "objects": ["SM_Crate_01"], "engine": "unreal", "out_path": os.path.join(out_dir, "SM_Crate_01.fbx")}),
          lambda r: r["exists"] and r["bytes"] > 1000),
         ("export-pipeline.glb", lambda: run("export-pipeline", "export_asset.py", {
             "objects": ["SM_Crate_01"], "engine": "web", "out_path": os.path.join(out_dir, "SM_Crate_01.glb")}),
          lambda r: r["bytes"] > 500 and _glb_check(r, {"SM_Crate_01"}) and set(glb_nodes(r["path"])) == {"SM_Crate_01"}),
+        ("core.capture_keeps_color_depth", lambda: _capture_keeps_depth(out_dir),
+         lambda r: r == {"fmt": "OPEN_EXR", "depth": "32"}),
+        ("export-pipeline.glb_keeps_camera_and_mode", lambda: _export_keeps_state("export-pipeline", "export_asset.py", {
+            "objects": ["SM_Crate_01"], "engine": "web", "out_path": os.path.join(out_dir, "state.glb")}), _kept_state),
+        ("export-pipeline.fbx_keeps_camera_and_mode", lambda: _export_keeps_state("export-pipeline", "export_asset.py", {
+            "objects": ["SM_Crate_01"], "engine": "unity", "out_path": os.path.join(out_dir, "state.fbx")}), _kept_state),
+        ("godot-export.keeps_camera_and_mode", lambda: _export_keeps_state("godot-export", "export_godot.py", {
+            "objects": ["SM_Crate_01"], "out_path": os.path.join(out_dir, "state_godot.glb")}), _kept_state),
+        ("unity-export.keeps_camera_and_mode", lambda: _export_keeps_state("unity-export", "export_unity.py", {
+            "objects": ["SM_Crate_01"], "out_path": os.path.join(out_dir, "state_unity.fbx"), "strict": False}), _kept_state),
+        ("unity-export.animated_keeps_camera_and_mode", lambda: _export_keeps_state("unity-export", "export_unity.py", {
+            "objects": ["SM_Crate_01"], "out_path": os.path.join(out_dir, "state_unity_anim.fbx"), "strict": False,
+            "animation": True}), _kept_state),
+        ("export-pipeline.fbx_animated_keeps_camera_and_mode", lambda: _export_keeps_state("export-pipeline", "export_asset.py", {
+            "objects": ["SM_Crate_01"], "engine": "unity", "animation": True,
+            "out_path": os.path.join(out_dir, "state_anim.fbx")}), _kept_state),
+        ("export-pipeline.glb_instancer_is_ok", lambda: _export_instancer(os.path.join(out_dir, "instancer.glb")),
+         lambda r: r["no_geometry"] == []),
+        ("unreal-export.keeps_camera_and_mode", lambda: _export_keeps_state("unreal-export", "export_unreal.py", {
+            "mesh": "SM_Crate_01", "out_dir": os.path.join(out_dir, "state_unreal"), "strict": False}), _kept_state),
+        ("export-pipeline.glb_empty_mesh_not_ok", lambda: _export_empty_mesh(
+            "export-pipeline", "export_asset.py", os.path.join(out_dir, "empty.glb")),
+         lambda r: r["ok"] is False and r["no_geometry"] == ["SM_EmptyProbe"]),
+        ("godot-export.empty_mesh_not_ok", lambda: _export_empty_mesh(
+            "godot-export", "export_godot.py", os.path.join(out_dir, "empty_godot.glb")),
+         lambda r: r["ok"] is False and r["no_geometry"] == ["SM_EmptyProbe"]),
         ("unreal-export.export_unreal", lambda: run("unreal-export", "export_unreal.py", {
             "mesh": "SM_Sphere_01", "out_dir": out_dir, "strict": False}),
          lambda r: r["exported"] and r["collision"] and r["checks"]["prefix"] == "PASS"
@@ -537,8 +865,10 @@ def build_cases(out_dir):
          lambda r: r["objects"]["SM_Rock_B"]["faces"] > 6),
         ("isometric-style.iso_camera", lambda: run("isometric-style", "iso_camera.py", {"projection": "dimetric_2_1", "pixel_tile": 32}),
          lambda r: r["ortho_scale"] > 0 and r["resolution"][0] % 32 == 0),
+        # The crate, not GEO_Ground, is the collider: GEO_Ground scatters COL_Rocks, so a rigid body ground makes a
+        # dependency cycle that crashed Blender 5.2.3 on macOS in Instance on Points (exit 139, 2 of 3 runs).
         ("physics-sim.rigid_body_setup", lambda: run("physics-sim", "rigid_body_setup.py", {
-            "active": ["SM_Rock_B"], "passive": ["GEO_Ground"], "material": "stone", "frames": 20, "bake": True}),
+            "active": ["SM_Rock_B"], "passive": ["SM_Crate_01"], "material": "stone", "frames": 20, "bake": True}),
          lambda r: r["active"]["SM_Rock_B"]["mass_kg"] > 0 and r.get("baked") is True),
         ("cloth-sim.cloth_setup", lambda: run("cloth-sim", "cloth_setup.py", {
             "cloth": "SM_Flag", "fabric": "silk", "pin_group": "Pin", "colliders": ["SM_Crate_01"]}),
@@ -633,6 +963,28 @@ def build_cases(out_dir):
          lambda r: r["mid_pending"] and r["before"] == r["after"] and not r["pending_after"]),
         ("work-copy.begin_twice_errors", lambda: _work_copy_twice(),
          lambda r: r["error"] and "pending" in r["error"] and not r["pending_after"]),
+        ("director.manifest_needs_evidence", lambda: _manifest_evidence(),
+         lambda r: "capture" in (r["no_capture"] or "") and "not found" in (r["ghost"] or "")
+         and all(e and "result_summary" in e for e in r["empties"]) and r["nc"] == "NOT_CHECKED"
+         and r["good"] == "PASS" and r["hash"] == r["expect"] and r["bytes"] == 3),
+        ("animation.turntable_fits_any_aspect", lambda: _turntable_tall_fits(),
+         lambda r: r["y"][0] >= 0 and r["y"][1] <= 1 and r["x"][0] >= 0 and r["x"][1] <= 1),
+        ("rendering.background_render", lambda: _background_render(),
+         lambda r: r["state"] == "done" and r["done"] == 2 and r["total"] == 2 and len(r["files"]) == 2 and r["ended"]
+         and "already exist" in (r["repeat"] or "") and r["repeat_state"] == "done" and r["again"] == "done"
+         and "device" in (r["kept_error"] or "") and r["kept_state"] == "done" and r["refused_later"]
+         and "cannot read" in (r["unreadable"] or "")
+         and "running" in (r["busy"] or "") and r["busy_state"] == "running" and r["died"] == "done"
+         and "another process" in (r["held"] or "") and r["held_no_status"] and "another process" in (r["held_over"] or "")
+         and r["held_kept"] and "another process" in r["held_reason"] and r["after_held"] == "done"
+         and "not available on this machine" in (r["no_backend"] or "")
+         and "device" in (r["bad_device"] or "") and r["bad_state"] == "error" and "device" in (r["bad_error"] or "")
+         and "outside this frame range" in (r["strays"] or "") and "image format" in (r["movie"] or "")
+         and r["plan"] == r["plan_saved"] and r["plan"]["frames_total"] == 2 and r["plan"]["expected_s"] > 0
+         and r["plan"]["status_path"] in r["plan"]["tell_user"] and "2 frames" in r["plan"]["tell_user"]
+         and r["plan_clean"] and r["after_plan"] == "done" and "already exist" in (r["plan_done"] or "")
+         and "device" in (r["plan_bad"] or "") and r["plan_bad_clean"]
+         and r["handlers_kept"]),
         ("director.run_manifest", lambda: _manifest_case(),
          lambda r: r["events"] == 2 and r["r2_events"] == 2 and r["hash"] == r["expect_hash"]
          and r["outside"] and "outside" in r["outside"] and r["outside_cap"] and "outside" in r["outside_cap"]

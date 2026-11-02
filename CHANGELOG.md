@@ -8,6 +8,61 @@ Format: [Semantic Versioning](https://semver.org/) — `Major.Minor.Patch`
 
 ## [Unreleased]
 
+Iteration 11: fixes from a measured run of the real orchestrator agent, reviewed by Codex, then from a macOS review.
+
+### Fixed after the macOS review
+- `background_render.py`: a refused run no longer overwrites the status of the previous run, a second launch on a folder
+  whose status says `running` is refused, and a backend the machine lacks gets a clear error naming the available ones
+- `background_render.py`: one process owns an `out_dir`, through an OS lock released when it ends. Two launches at the
+  same moment both rendered before, and `overwrite` no longer gets past a run that is still going.
+  `tests/blender/race_background_render.py` starts two real processes to check it
+- `animation` -> `turntable.py`: frames by the narrower view angle, so a tall subject is no longer cropped at 16:9
+- Docs: black captures of a minimized window are Windows-only, `BLENDER_PATH` is optional, and the `*_for_cli` timeout
+  kills a directly started Blender
+- `tests/blender/test_skill_scripts.py`: the rigid body case collides with the crate, not `GEO_Ground`, which scatters
+  `COL_Rocks`; the dependency cycle crashed Blender on macOS (exit 139) in 2 of 3 suite runs
+- `score_run.py`: announcements also sees a background render started with `nohup` or a trailing `&`
+- `collision-proxy` -> `make_collision.py`: a convex proxy is now a closed hull. It kept the source's faces beside the hull
+  (a 14-sided cylinder gave 104 faces and 50 non-manifold edges). A flat mesh is now an error that points to `shape: box`
+- `background_render.py`: `plan: true` checks everything, measures one frame and writes the line to send the user before a
+  long render starts
+- Orchestrator: a render starts with `plan` and a message to the user, and plugin files are read-only during a task
+
+### Added
+- `rendering` -> `scripts/background_render.py`: render in a background Blender with an atomic progress status file; it
+  refuses to run in the open window and sets the Cycles device in its own process
+- `tests/agent_runs/score_run.py`: compares a run's claims with its session trace (preferences, window, skills, gates,
+  claims, early finish). It catches regressions; it does not stop a bad report, and one run proves one case
+
+### Changed
+- `run_manifest.py`: a capture must exist and is hashed; look_dev and light_camera need one to PASS; any PASS needs a
+  non-empty `result_summary`. These check that evidence is present and linked, not that it is true
+- The orchestrator names only loaded skills, records gates as stages end, reports a running job as still running, and
+  uses its caller line only with a calling agent
+- `live-session.md`: no preference changes in the open window, one Blender call at a time, tell the user at once about an
+  unusable screenshot
+
+### Fixed
+- `live-session.md` said `*_for_cli` stops the process at 120 s; the tool gives up, and through the launcher Blender kept
+  running to at least 150 s
+
+Iteration 10: fixes found by running the skills live in an open Blender window.
+
+### Changed
+- Live work in the open window is the documented default; long renders and batches run in a background process from a
+  saved snapshot. New `blender-mcp-workflow` -> `references/live-session.md` covers undo checkpoints, minimized-window
+  screenshots, blocking renders and timeouts, all measured
+
+### Fixed
+- Docs no longer offer the Microsoft Store launcher as `BLENDER_PATH`: the `*_for_cli` tools cannot return results
+  through it, and `No result marker` now means "outcome unknown"
+- Docs no longer say `print` output is lost, or treat `bpy.data.is_dirty` as proof that a file is saved
+- `export_asset.py` and `export_godot.py`: `verify` reports `no_geometry` and is not `ok` when a requested mesh
+  was written without geometry (glTF omits an empty mesh and keeps its node, so a 176-byte file passed)
+- The four export scripts restore the scene camera and the active object's mode, also when the export fails
+  (glTF left Edit Mode; moving frames, as glTF and animated FBX do, let a camera marker replace `scene.camera`)
+- `capture_views.py` and `preview_frames.py` restore the image colour depth (an EXR at 32 bits came back at 16)
+
 Iteration 9: fixes found by an end-to-end film and export test (a fox short, Blender 5.2.3 headless).
 
 ### Fixed

@@ -42,7 +42,7 @@ Stages: inspect, brief, model, look_dev, light_camera, animate, validate, export
 | `physics-sim` | animate | Rigid body, soft body and destruction sims with bakes. | rigid_body_setup.py |
 | `procedural-modeling` | model | Procedural assets from a swept curve profile: pipes, cables, rails, trim, roads. | gn_curve_profile.py |
 | `prop-artist` | model | Prop modeling: furniture, tools, bottles, household objects, kitbash parts. | - |
-| `rendering` | light_camera | Final render setup: Cycles/Eevee sampling, denoise, resolution, color management. | render_preset.py |
+| `rendering` | light_camera | Final render setup: Cycles/Eevee sampling, denoise, resolution, color management. | background_render.py, render_preset.py |
 | `retopology` | model | Retopology: clean quad-dominant, animation-ready topology from sculpts or messy meshes. | topology_report.py |
 | `rigging` | animate | Rigging: armatures, IK/FK, weight painting, facial rigs, drivers. | rig_check.py |
 | `scene-assembly` | model | Scene assembly: collections, linking, library overrides, collection instances. | - |

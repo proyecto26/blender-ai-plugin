@@ -111,7 +111,7 @@ def settings_snapshot(sc):
     r, im = sc.render, sc.render.image_settings
     return {"fps": r.fps, "res": (r.resolution_x, r.resolution_y, r.resolution_percentage), "engine": r.engine,
             "filepath": r.filepath, "range": (sc.frame_start, sc.frame_end, sc.frame_current),
-            "camera": sc.camera.name if sc.camera else None, "fmt": im.file_format, "media": im.media_type,
+            "camera": sc.camera.name if sc.camera else None, "fmt": im.file_format, "depth": im.color_depth, "media": im.media_type,
             "samples": sc.eevee.taa_render_samples, "color_mode": im.color_mode, "seq": sc.sequence_editor is not None,
             "markers": [(m.name, m.frame, m.camera.name if m.camera else None) for m in sc.timeline_markers]}
 
@@ -241,6 +241,19 @@ def build_cases(out_dir, scene):
         sizes = [read_png(os.path.join(pre, n))[:2] for n in want]
         ok = exist and all(s == (160, 90) for s in sizes) and settings_snapshot(scene) == before
         return ok, {"exist": exist, "sizes": sizes[:2], "restored": settings_snapshot(scene) == before}
+
+    def pv_keeps_depth():
+        im = scene.render.image_settings
+        saved = (im.media_type, im.file_format, im.color_depth)
+        im.file_format, im.color_depth = "OPEN_EXR", "32"
+        try:
+            run("preview_frames.py", {"out_dir": pre, "shots": ["S010"], "frames_per_shot": 1, "resolution": [64, 36],
+                                      "sheet": False})
+            got = (im.file_format, im.color_depth)
+            return got == ("OPEN_EXR", "32"), {"got": got}
+        finally:
+            im.media_type, im.file_format = saved[0], saved[1]
+            im.color_depth = saved[2]
 
     def pv_sheet_layout():
         lay = state["pv"]["contact_sheet"]
@@ -513,7 +526,7 @@ def build_cases(out_dir, scene):
         ("shot_list.validation", sl_validation), ("shot_list.merge_no_duplicate_markers", sl_merge_no_duplicate_markers),
         ("preview.files_and_restore", pv_files), ("preview.sheet_layout", pv_sheet_layout),
         ("preview.tile_colors", pv_tile_colors), ("preview.subset_cols", pv_subset),
-        ("preview.restore_on_failure", pv_restore_on_failure), ("preview.marker_conflict", pv_marker_conflict),
+        ("preview.keeps_color_depth", pv_keeps_depth), ("preview.restore_on_failure", pv_restore_on_failure), ("preview.marker_conflict", pv_marker_conflict),
         ("assemble.structure", ae_structure), ("assemble.scene_strip_trim", ae_scene_strip_content),
         ("assemble.edit_stills", ae_edit_stills), ("assemble.fades_keyframed", ae_fades), ("assemble.ffmpeg_settings", ae_output_settings),
         ("assemble.credits", ae_credits), ("assemble.license_required", ae_requires_license),

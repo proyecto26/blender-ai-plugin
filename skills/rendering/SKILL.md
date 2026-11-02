@@ -115,6 +115,7 @@ path of this installed script and their ARGS. Don't inline or rewrite the script
 
 | Script | What it does |
 |--------|--------------|
+| `scripts/background_render.py` | Render the animation in a background Blender with a progress status file; refuses to run in the window |
 | `scripts/render_preset.py` | Apply a render preset (engine, samples, denoise, resolution, color management). Returns the previous values so the change can be reverted. |
 
 ```python
@@ -123,6 +124,31 @@ result = runpy.run_path("<skill_dir>/scripts/render_preset.py", init_globals={"A
 ```
 
 ARGS: `preset`, `resolution_percentage`, `device`
+
+### Long renders
+
+Do not run a long render in the user's window: it freezes until the render ends. Save a copy of the file, then start
+`scripts/background_render.py` from your shell in a background task. It refuses to run inside the window, and sets the
+Cycles device in its own process, so the user's preferences stay as they are.
+
+```bash
+blender -b snapshot.blend --python-exit-code 1 --python <skill_dir>/scripts/background_render.py -- --args-file args.json
+```
+
+ARGS: `out_dir`, `frame_start`, `frame_end`, `device`, `overwrite`, `plan`
+
+Start it in this order, because the user sees nothing while a shell command runs, and a silent window looks like a hang:
+
+1. Run it once in the foreground with the same arguments plus `plan: true`. It checks everything, renders one frame without
+   saving it, and writes `<out_dir>/render_plan.json`.
+2. Send the user its `tell_user` line as a message: frames, expected time, and the status file.
+3. Then start the job, without `plan`. A tool call is not a message: the text has to come first.
+
+If one frame may take more than a few minutes, tell the user before step 1 as well, because the plan renders that frame.
+
+Follow `<out_dir>/render_status.json`, which gives progress and time left. `done` means the run named by `started` rendered every frame and they are on disk. Check the exit code too: a refused
+launch exits 1, keeps the earlier status, and writes its reason to `render_refused.json`. One process owns an `out_dir`
+at a time, and `overwrite` does not get past one that is still rendering. Encode the video as a separate step and check it with `ffprobe`.
 
 ## Reference Image Validation
 
