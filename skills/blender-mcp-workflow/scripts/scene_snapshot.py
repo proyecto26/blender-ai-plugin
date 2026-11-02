@@ -18,7 +18,8 @@ ARGS:
 
 save:    writes <dir>/<name>.blend (the scene's objects and the data they use, via bpy.data.libraries.write, a
          data-level write that does not go through File > Save) and <dir>/<name>.json (manifest: per object
-         type, parent, collections, world matrix, mesh hash). Refuses an existing name. Nothing in the open
+         type, parent, collections, world matrix, mesh hash); relative external paths ('//textures/a.png') are re-based so
+         they still resolve to the same files from the snapshot folder. Refuses an existing name. Nothing in the open
          session changes: file path, dirty flag, objects and selection are the same afterwards.
 list:    snapshots in <dir>, oldest first (name, created, object count, size). Read-only.
 diff:    added / removed / changed objects between two manifests: changed lists the largest transform delta,
@@ -150,7 +151,8 @@ def _save(d, name):
         raise ValueError("the scene has no objects to snapshot")
     manifest = _manifest(name)
     os.makedirs(d, exist_ok=True)
-    bpy.data.libraries.write(blend, set(objs), compress=True)
+    # RELATIVE re-bases '//' paths onto the snapshot folder; the default NONE leaves them pointing under it
+    bpy.data.libraries.write(blend, set(objs), compress=True, path_remap='RELATIVE')
     with open(js, "w", encoding="utf-8") as fh:
         json.dump(manifest, fh, indent=1)
     return {"name": name, "blend": blend, "manifest": js, "objects": len(objs), "bytes": os.path.getsize(blend)}
