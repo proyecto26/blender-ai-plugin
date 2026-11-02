@@ -22,7 +22,8 @@ ARGS:
                 curve (str) curve object name; half_width (float) fully flat half width in m (default 3);
                 falloff (float) blend distance outside the flat part in m (default 5); offset (float) lowers the
                 bed below the curve by this many metres (default 0). Heights inside half_width equal the curve
-                height (minus offset); the curve is read in world space and only its XY position and Z are used.
+                height (minus offset); the curve is read in world space and only its XY position and Z are used. Every spline
+                of the curve object is flattened (reported as `splines`); a branching curve is refused.
     collection  (str|None) collection to link into (default: the scene collection)
     replace     (bool)  replace the mesh of an existing object of that name (default False = refuse)
 """
@@ -50,8 +51,9 @@ def _cli_args():
                          "cmd/PowerShell mangle JSON quotes, so pass --args-file <path.json> instead") from exc
 
 
-def _curve_points(name):
-    """World-space polyline (N x 3) of the evaluated curve, in curve order."""
+def _curve_polylines(name):
+    """World-space polylines (each N x 3, in curve order) of the evaluated curve: one per connected chain, so a
+    curve object with several splines yields several. A cyclic chain gets its closing segment."""
     obj = bpy.data.objects.get(name)
     if obj is None or obj.type != "CURVE":
         raise ValueError(f"corridor curve {name!r} is not a curve object")
@@ -60,42 +62,56 @@ def _curve_points(name):
     mesh = ev.to_mesh()
     try:
         pts = np.array([(obj.matrix_world @ v.co)[:] for v in mesh.vertices], dtype=np.float64)
-        order, closed = _chain_order(mesh)
+        chains = _chains(mesh)
     finally:
         ev.to_mesh_clear()
-    if len(pts) < 2:
+    lines = []
+    for order, closed in chains:
+        if len(order) < 2:
+            continue  # a lone point (a one-point spline) has no direction to flatten along
+        line = pts[order]
+        lines.append(np.vstack([line, line[:1]]) if closed else line)  # a cyclic chain needs its closing segment
+    if not lines:
         raise ValueError(f"curve {name!r} evaluates to fewer than two points")
-    pts = pts[order]
-    return np.vstack([pts, pts[:1]]) if closed else pts  # a cyclic curve needs its closing segment
+    return lines
 
 
-def _chain_order(mesh):
-    """Vertex indices walked along the evaluated edges (a single open or closed chain)."""
+def _chains(mesh):
+    """Every connected chain of the evaluated edges as (vertex indices in walk order, closed). Nothing is dropped:
+    a vertex that branches (not possible for splines) is refused rather than silently skipped."""
     adj = {}
     for e in mesh.edges:
         a, b = e.vertices
         adj.setdefault(a, []).append(b)
         adj.setdefault(b, []).append(a)
     if not adj:
-        return list(range(len(mesh.vertices))), False
-    closed = len(adj) > 2 and all(len(n) == 2 for n in adj.values())
-    start = next((v for v, n in adj.items() if len(n) == 1), min(adj))
-    order, seen, cur = [start], {start}, start
-    while True:
-        nxt = next((n for n in adj[cur] if n not in seen), None)
-        if nxt is None:
-            break
-        order.append(nxt)
-        seen.add(nxt)
-        cur = nxt
-    return order, closed
+        return [(list(range(len(mesh.vertices))), False)]
+    if any(len(n) > 2 for n in adj.values()):
+        raise ValueError("corridor curve branches (a vertex joins more than two segments); use plain splines")
+    chains, seen = [], set()
+    ends = sorted(v for v, n in adj.items() if len(n) == 1)
+    for start in ends + sorted(adj):  # open chains from an end first, then whatever is left is a closed loop
+        if start in seen:
+            continue
+        closed = len(adj[start]) == 2 and start not in ends
+        order, cur = [start], start
+        seen.add(start)
+        while True:
+            nxt = next((n for n in adj[cur] if n not in seen), None)
+            if nxt is None:
+                break
+            order.append(nxt)
+            seen.add(nxt)
+            cur = nxt
+        chains.append((order, closed))
+    return chains
 
 
-def _nearest_on_polyline(px, py, pts):
-    """For every (px, py): distance in XY to the polyline and the polyline's Z at the nearest point."""
+def _nearest_on_polyline(px, py, lines):
+    """For every (px, py): distance in XY to the nearest of the polylines and that polyline's Z at the nearest point."""
     best_d = np.full(px.shape, np.inf)
     best_z = np.zeros(px.shape)
-    for a, b in zip(pts[:-1], pts[1:]):
+    for a, b in (seg for pts in lines for seg in zip(pts[:-1], pts[1:])):
         abx, aby = b[0] - a[0], b[1] - a[1]
         den = abx * abx + aby * aby
         t = np.zeros(px.shape) if den < 1e-12 else np.clip(((px - a[0]) * abx + (py - a[1]) * aby) / den, 0.0, 1.0)
@@ -138,16 +154,17 @@ def main(name="GEO_Terrain", size=50.0, resolution=65, seed=0, height=5.0, frequ
     z = z * height + cz
     info = None
     if corridor:
-        pts = _curve_points(corridor["curve"])
+        lines = _curve_polylines(corridor["curve"])
         half = float(corridor.get("half_width", 3.0))
         fall = max(1e-6, float(corridor.get("falloff", 5.0)))
         bed = float(corridor.get("offset", 0.0))
-        dist, cz_curve = _nearest_on_polyline(wx, wy, pts)
+        dist, cz_curve = _nearest_on_polyline(wx, wy, lines)
         w = np.clip(1.0 - (dist - half) / fall, 0.0, 1.0)
         w = w * w * (3.0 - 2.0 * w)  # smoothstep; exactly 1 inside half_width
         z = z * (1.0 - w) + (cz_curve - bed) * w
         info = {"curve": corridor["curve"], "half_width": half, "falloff": fall, "offset": bed,
-                "curve_points": int(len(pts)), "flat_vertices": int((dist <= half).sum())}
+                "splines": len(lines),
+                "curve_points": int(sum(len(p) for p in lines)), "flat_vertices": int((dist <= half).sum())}
     # x/y are relative to the object origin, which sits at (center.x, center.y, 0); z is already world height
     verts = [(float(gx[j, i]), float(gy[j, i]), float(z[j, i])) for j in range(resolution)
              for i in range(resolution)]
