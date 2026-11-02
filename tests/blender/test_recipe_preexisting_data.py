@@ -12,7 +12,7 @@ SPEC = {
  "animation/references/mocap-cleanup.md": [("objects","MocapDemo"),("actions","MocapDemo"),("actions","MocapDemo_Run"),("actions","MocapDemoAction")],
  "blender-mcp-workflow/references/reference-image-depth.md": [("objects","TriCamA"),("objects","TriCamB"),("cameras","TriCamA"),("cameras","TriCamB")],
  "geometry-nodes/references/scatter-systems.md": [("objects","ScatterGround"),("objects","ScatterBlocker"),("objects","ScatterRock"),("meshes","ScatterGround"),("meshes","ScatterBlocker"),("meshes","ScatterRock"),("node_groups","GN_Scatter_Masked"),("node_groups","GN_Scatter_Masked_mine"),("collections","ScatterSources")],
- "realistic-style/references/scan-match.md": [("objects","ScanSrc"),("objects","ScanLow"),("objects","ScanLowShifted"),("meshes","ScanSrc"),("meshes","ScanLow"),("meshes","ScanLowShifted")],
+ "realistic-style/references/scan-match.md": [("objects","ScanSrc"),("objects","ScanLow"),("objects","ScanLowShifted"),("objects","ScanLowModded"),("meshes","ScanLowModded"),("meshes","ScanSrc"),("meshes","ScanLow"),("meshes","ScanLowShifted")],
  "rigging/references/facial-shape-keys-drivers.md": [("objects","FaceDemo"),("objects","ARM_FaceDemo"),("meshes","FaceDemo"),("armatures","ARM_FaceDemo")],
  "unity-export/references/hdrp-material-mapping.md": [("images","T_metal"),("images","T_ao"),("images","T_rough"),("images","T_Test_MaskMap")],
 }

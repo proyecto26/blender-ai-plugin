@@ -25,7 +25,8 @@ ARGS:
                 height (minus offset); the curve is read in world space and only its XY position and Z are used. Every spline
                 of the curve object is flattened (reported as `splines`); a branching curve is refused.
     collection  (str|None) collection to link into (default: the scene collection)
-    replace     (bool)  replace the mesh of an existing object of that name (default False = refuse)
+    replace     (bool)  replace the mesh of an existing object of that name (default False = refuse); refused when that
+                object has a parent, scale, rotation or delta transform, because vertex Z is world height
 """
 import json
 import random
@@ -137,6 +138,19 @@ def main(name="GEO_Terrain", size=50.0, resolution=65, seed=0, height=5.0, frequ
         raise ValueError(f"object {name!r} exists; pass replace=true to give it a new mesh (a mesh shared with other objects is left alone; the object gets its own)")
     if existing is not None and existing.type != "MESH":
         raise ValueError(f"object {name!r} exists and is not a mesh")
+    if existing is not None:
+        bad = [what for what, off in (
+            ("a parent", existing.parent is not None),
+            ("a non-identity scale", any(abs(v - 1.0) > 1e-6 for v in existing.scale)),
+            ("a rotation", any(abs(v) > 1e-6 for v in existing.rotation_euler)
+             or (existing.rotation_mode == "QUATERNION" and any(abs(a - b) > 1e-6 for a, b in zip(existing.rotation_quaternion, (1, 0, 0, 0))))),
+            ("a delta transform", any(abs(v) > 1e-6 for v in existing.delta_location)
+             or any(abs(v) > 1e-6 for v in existing.delta_rotation_euler)
+             or any(abs(v - 1.0) > 1e-6 for v in existing.delta_scale))) if off]
+        if bad:
+            raise ValueError(f"object {name!r} has {', '.join(bad)}: replace writes world-space heights and resets only the "
+                             "location, so the terrain would land at the wrong height. Clear the parent, scale and rotation "
+                             "(or delete the object) and run again.")
     target_coll = bpy.data.collections.get(collection) if collection else bpy.context.scene.collection
     if target_coll is None:
         raise ValueError(f"collection {collection!r} not found")

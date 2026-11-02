@@ -82,16 +82,18 @@ def _render_levels(objs):
 def _describe(obj, depsgraph, imported=False):
     """`imported`: the object came from the USD import, which may add its own .001 to a name that already existed.
     Names of the originals are kept whole (Material.001 is a real name; USD writes it as Material_001)."""
-    mats = sorted({_clean_key(SUFFIX_RE.sub("", s.material.name) if imported else s.material.name)
-                   for s in obj.material_slots if s.material})
     verts = faces = None
+    slots = obj.material_slots
     if obj.type == "MESH":
         ev = obj.evaluated_get(depsgraph)
+        slots = ev.material_slots  # the exporter writes the evaluated materials (e.g. Geometry Nodes Set Material)
         me = ev.to_mesh()
         try:
             verts, faces = len(me.vertices), len(me.polygons)
         finally:
             ev.to_mesh_clear()
+    mats = sorted({_clean_key(SUFFIX_RE.sub("", s.material.name) if imported else s.material.name)
+                   for s in slots if s.material})
     return {"type": obj.type, "verts": verts, "faces": faces, "materials": mats,
             "matrix": [list(row) for row in obj.matrix_world]}
 

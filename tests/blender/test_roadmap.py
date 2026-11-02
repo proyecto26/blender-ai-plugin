@@ -930,6 +930,100 @@ def test_review4(rec, scene, out_dir):
               "any one in the file name" not in doc and "end of the file name" in doc)
 
 
+# ---------------------------------------------------------------- review findings (round 5)
+
+def test_review5(rec, scene, out_dir):
+    import math
+    # R2: a replace on a terrain object that carries scale / rotation / a parent must keep world heights, or refuse.
+    cu = bpy.data.curves.new("CRV_RT_R5", "CURVE")
+    cu.dimensions = "3D"
+    sp = cu.splines.new("POLY")
+    sp.points.add(1)
+    for p, co in zip(sp.points, [(-8, 0, 3, 1), (8, 0, 3, 1)]):
+        p.co = co
+    scene.collection.objects.link(bpy.data.objects.new("CRV_RT_R5", cu))
+    corr = {"curve": "CRV_RT_R5", "half_width": 2.0, "falloff": 1.0}
+    args = {"size": 30, "resolution": 61, "seed": 3, "height": 3, "frequency": 0.05, "corridor": corr}
+    cases = {
+        "scaled Z": lambda o, par: setattr(o, "scale", (1, 1, 2)),
+        "rotated": lambda o, par: setattr(o, "rotation_euler", (0, math.radians(30), 0)),
+        "parented": lambda o, par: (setattr(o, "parent", par), setattr(par, "location", (0, 0, 5))),
+    }
+    for tag, mutate in cases.items():
+        nm = "RT_TerrXf_" + tag.replace(" ", "")
+        run("procedural-modeling", "terrain_heightfield.py", {**args, "name": nm})
+        o = bpy.data.objects[nm]
+        par = bpy.data.objects.new(nm + "_Par", None)
+        scene.collection.objects.link(par)
+        mutate(o, par)
+        bpy.context.view_layer.update()
+        err = raises(lambda: run("procedural-modeling", "terrain_heightfield.py", {**args, "name": nm, "replace": True}))
+        bpy.context.view_layer.update()
+        if err is not None:
+            rec.check(f"R2-review5 ({tag}): refused with a message naming the transform",
+                      any(w in err for w in ("scale", "rotation", "parent")), err)
+            continue
+        w = np.array([tuple(o.matrix_world @ v.co) for v in o.data.vertices])
+        bed = (np.abs(w[:, 1]) <= 1.5) & (np.abs(w[:, 0]) <= 6)
+        e = float(np.abs(w[bed, 2] - 3.0).max()) if bed.any() else 99
+        rec.check(f"R2-review5 ({tag}): corridor bed sits at the curve's world height (<= 1 mm)", bed.sum() > 5 and e < 1e-3,
+                  f"n={bed.sum()} err={e}")
+
+    # R1: PS1 flat shading in Edit Mode must take effect (live edit faces) or refuse, not be overwritten on exit.
+    me = bpy.data.meshes.new("RT_PS1Edit")
+    bm = bmesh.new()
+    bmesh.ops.create_cube(bm, size=1.0)
+    bm.to_mesh(me)
+    bm.free()
+    for poly in me.polygons:
+        poly.use_smooth = True
+    ob = bpy.data.objects.new("RT_PS1Edit", me)
+    scene.collection.objects.link(ob)
+    bpy.context.view_layer.objects.active = ob
+    ob.select_set(True)
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="SELECT")
+    bpy.ops.mesh.extrude_region_move(TRANSFORM_OT_translate={"value": (0, 0, 0.5)})
+    refused = raises(lambda: run("lowpoly-style", "ps1_look.py", {"objects": ["RT_PS1Edit"], "snap": 0.02, "flat": True,
+                                                                  "fog": False, "dither": False, "texture": False,
+                                                                  "resolution": [32, 24]}))
+    smooth_live = None
+    if refused is None:
+        smooth_live = sum(1 for f in bmesh.from_edit_mesh(me).faces if f.smooth)
+    bpy.ops.object.mode_set(mode="OBJECT")
+    if refused is not None:
+        rec.check("R1-review5: Edit Mode flat shading refused with a message naming Edit Mode", "Edit" in refused, refused)
+    else:
+        smooth_after = sum(1 for p in me.polygons if p.use_smooth)
+        rec.check("R1-review5: Edit Mode flat shading leaves no smooth face, live or after leaving Edit Mode",
+                  smooth_live == 0 and smooth_after == 0, (smooth_live, smooth_after, len(me.polygons)))
+
+    # R5: USD material comparison uses the evaluated state the exporter writes (Geometry Nodes Set Material).
+    mat = bpy.data.materials.new("RT_USD_GNMat")
+    me2 = bpy.data.meshes.new("RT_USD_GN")
+    bm = bmesh.new()
+    bmesh.ops.create_cube(bm, size=1.0)
+    bm.to_mesh(me2)
+    bm.free()
+    gob = bpy.data.objects.new("RT_USD_GN", me2)
+    scene.collection.objects.link(gob)
+    ng = bpy.data.node_groups.new("RT_USD_GN_Group", "GeometryNodeTree")
+    ng.interface.new_socket("Geometry", in_out="INPUT", socket_type="NodeSocketGeometry")
+    ng.interface.new_socket("Geometry", in_out="OUTPUT", socket_type="NodeSocketGeometry")
+    gi, go = ng.nodes.new("NodeGroupInput"), ng.nodes.new("NodeGroupOutput")
+    sm = ng.nodes.new("GeometryNodeSetMaterial")
+    sm.inputs["Material"].default_value = mat
+    ng.links.new(gi.outputs[0], sm.inputs["Geometry"])
+    ng.links.new(sm.outputs[0], go.inputs[0])
+    gob.modifiers.new("GN", "NODES").node_group = ng
+    gob.location = (6, 0, 0)
+    bpy.context.view_layer.update()
+    r = run("usd-pipeline", "usd_roundtrip.py", {"objects": ["RT_USD_GN"],
+                                                  "out_path": os.path.join(out_dir, "r5_gnmat", "gn.usdc")})["result"]
+    rec.check("R5-review5: a material set by Geometry Nodes round-trips ok (compared as the exporter writes it)",
+              r["ok"], r["problems"])
+
+
 # ---------------------------------------------------------------- harness
 
 def run_all(out_dir):
@@ -951,7 +1045,8 @@ def run_all(out_dir):
                              ("R1-review", test_review_r1), ("R2-review", test_review_r2),
                              ("R3-review", test_review_r3), ("R4-review", test_review_r4),
                              ("R5-review", test_review_r5), ("review2", test_review2),
-                             ("review3", test_review3), ("review4", test_review4)):
+                             ("review3", test_review3), ("review4", test_review4),
+                             ("review5", test_review5)):
                 rec.section(name, lambda r, fn=fn: fn(r, scene, out_dir))
         finally:
             if ctx:

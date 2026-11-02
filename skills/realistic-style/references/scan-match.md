@@ -37,7 +37,9 @@ decimated high-poly stage, which is judged by silhouette.
 ### Recipe (tested)
 
 Builds a dense sphere as the "scan" and a 32 by 16 sphere as the "model" at the same size, measures both ways, and checks
-that the check can fail: the same model shifted 5 cm must exceed the worst-case tolerance. It raises on any mismatch.
+that the check can fail: the same model shifted 5 cm must exceed the worst-case tolerance. The measurement reads the
+evaluated mesh (modifiers such as Shrinkwrap or Displace count; a model pushed 5 cm by a modifier must fail) and refuses
+an object in Edit Mode (leave Edit Mode first; the evaluated mesh would lag the live edit). It raises on any mismatch.
 Everything it creates carries a `recipe_owner` tag; re-running removes only tagged data from an earlier run, and same-name
 objects or meshes you already have are left alone (the recipe's copies get a `.001` suffix).
 
@@ -75,8 +77,15 @@ shifted = sphere("ScanLowShifted", (0.05, 0, 0), False)
 bpy.context.view_layer.update()
 
 def world_bvh(ob):
+    """World-space BVH of the object as it renders now: the evaluated mesh, so modifiers (Shrinkwrap, Displace) count.
+    Edit Mode is refused, because the evaluated mesh then lags the live edit; leave Edit Mode first."""
+    if ob.mode == "EDIT":
+        raise RuntimeError(f"{ob.name} is in Edit Mode; switch to Object Mode before measuring")
+    ev = ob.evaluated_get(bpy.context.evaluated_depsgraph_get())
+    me = ev.to_mesh()
     bm = bmesh.new()
-    bm.from_mesh(ob.data)
+    bm.from_mesh(me)
+    ev.to_mesh_clear()
     bm.transform(ob.matrix_world)
     tree = BVHTree.FromBMesh(bm)
     pts = [v.co.copy() for v in bm.verts]
@@ -107,7 +116,26 @@ good = verdict(low)
 bad = verdict(shifted)
 assert good["ok"], good
 assert not bad["ok"], f"a 5 cm shift passed the check: {bad}"
-result = {"matching_model": good, "shifted_model": bad}
+
+# The check must also see the model as it is now: modifiers count, and Edit Mode is refused.
+modded = sphere("ScanLowModded", (0, 0, 0), False)
+disp = modded.modifiers.new("Push", "DISPLACE")
+disp.strength, disp.mid_level = 0.05, 0.0  # no texture: pushes every vertex 5 cm along its normal
+bpy.context.view_layer.update()
+with_mod = verdict(modded)
+assert not with_mod["ok"], f"a model pushed 5 cm by a modifier passed the check: {with_mod}"
+edit_refused = False
+bpy.context.view_layer.objects.active = low
+low.select_set(True)
+bpy.ops.object.mode_set(mode="EDIT")
+try:
+    verdict(low)
+except RuntimeError:
+    edit_refused = True
+finally:
+    bpy.ops.object.mode_set(mode="OBJECT")
+assert edit_refused, "verdict() measured a model that is in Edit Mode"
+result = {"matching_model": good, "shifted_model": bad, "modifier_model": with_mod, "edit_mode_refused": edit_refused}
 ```
 
 Result when run on Blender 5.2.3: matching model mean 0.15% and worst 0.26% of the diagonal (pass); the model shifted 5 cm
