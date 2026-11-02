@@ -145,9 +145,10 @@ def main(name="GEO_Terrain", size=50.0, resolution=65, seed=0, height=5.0, frequ
             raise ValueError(f"mesh of {name!r} has shape keys: replacing its geometry would leave stale keys, so nothing was "
                              "changed. Remove the shape keys (or delete the object) and run again.")
         # a transform that reasserts later (keyframes, drivers, constraints) cannot be caught by comparing the current matrix
-        if existing.animation_data is not None and (existing.animation_data.action is not None
-                                                    or len(existing.animation_data.drivers)):
-            what = "an action (keyframes)" if existing.animation_data.action is not None else "a driver"
+        ad = existing.animation_data
+        if ad is not None and (ad.action is not None or len(ad.drivers) or len(ad.nla_tracks)):
+            what = ("an action (keyframes)" if ad.action is not None
+                    else "a driver" if len(ad.drivers) else "an NLA track (a pushed-down action)")
             raise ValueError(f"object {name!r} has {what}: it would move the terrain again after replace writes world-space "
                              "heights, so nothing was changed. Remove the animation data (or delete the object) and run again.")
         if len(existing.constraints):

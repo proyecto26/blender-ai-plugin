@@ -1167,6 +1167,18 @@ def test_review7(rec, scene, out_dir):
         o.keyframe_insert("location", frame=1)
         o.location = (0, 0, 0)
 
+    def pushed_down(o):
+        o.location = (0, 0, 5)
+        o.keyframe_insert("location", frame=1)
+        o.location = (0, 0, 12)
+        o.keyframe_insert("location", frame=50)
+        ad = o.animation_data
+        act = ad.action
+        track = ad.nla_tracks.new()
+        track.strips.new("pushed", 1, act)
+        ad.action = None  # the real pushed-down state: no active action, the motion lives in an NLA strip
+        o.location = (0, 0, 0)
+
     def driven(o):
         fc = o.driver_add("location", 2)
         fc.driver.type = "SCRIPTED"
@@ -1186,7 +1198,8 @@ def test_review7(rec, scene, out_dir):
         c = o.constraints.new("COPY_LOCATION")
         c.target = tgt
 
-    for tag, setup, word in (("keyframed location", keyframed, "keyframe"), ("driver on location", driven, "driver"),
+    for tag, setup, word in (("keyframed location", keyframed, "keyframe"), ("NLA pushed-down strip", pushed_down, "NLA"),
+                             ("driver on location", driven, "driver"),
                              ("Limit Location", limit, "constraint"),
                              ("Copy Location at own position", copy_here, "constraint")):
         nm = "RT_TerrAn_" + tag.replace(" ", "")
