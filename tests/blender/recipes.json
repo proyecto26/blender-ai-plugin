@@ -951,6 +951,11 @@
    "reason": "template: ARGS is a {...} placeholder, not a runnable call"
   },
   {
+   "file": "usd-pipeline/SKILL.md",
+   "block": 0,
+   "reason": "template: ARGS is a {...} placeholder, not a runnable call"
+  },
+  {
    "file": "uv-workflow/SKILL.md",
    "block": 0,
    "reason": "template: ARGS is a {...} placeholder, not a runnable call"

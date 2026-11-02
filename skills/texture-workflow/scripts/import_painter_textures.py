@@ -69,8 +69,11 @@ def _cli_args():
 def _classify(filename, patterns):
     stem = os.path.splitext(filename)[0].lower()
     tokens = set(re.split(r"[^a-z0-9]+", stem))
+    for kind, words in patterns.items():  # whole name tokens first: "MetalDoor_Normal" is a normal map, not metallic
+        if any(w in tokens for w in words):
+            return kind
     for kind, words in patterns.items():
-        if any((w in tokens) if len(w) <= 4 else (w in stem) for w in words):
+        if any(len(w) > 4 and w in stem for w in words):
             return kind
     return None
 
@@ -132,8 +135,12 @@ def main(folder, material=None, texture_set=None, normal_convention="OPENGL", pa
     wired, images, row = {}, [], [0]
 
     def load(kind):
-        img = bpy.data.images.load(os.path.join(folder, found[kind]), check_existing=True)
-        img.colorspace_settings.name = "sRGB" if kind in COLOR_KINDS else "Non-Color"
+        path, space = os.path.join(folder, found[kind]), "sRGB" if kind in COLOR_KINDS else "Non-Color"
+        img = bpy.data.images.load(path, check_existing=True)
+        if img.users and img.colorspace_settings.name != space:
+            # already used elsewhere: changing its colour space would change every material using it
+            img = bpy.data.images.load(path, check_existing=False)
+        img.colorspace_settings.name = space
         if pack:
             img.pack()
         images.append(img.name)

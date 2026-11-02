@@ -60,12 +60,13 @@ def _curve_points(name):
     mesh = ev.to_mesh()
     try:
         pts = np.array([(obj.matrix_world @ v.co)[:] for v in mesh.vertices], dtype=np.float64)
-        order = _chain_order(mesh)
+        order, closed = _chain_order(mesh)
     finally:
         ev.to_mesh_clear()
     if len(pts) < 2:
         raise ValueError(f"curve {name!r} evaluates to fewer than two points")
-    return pts[order]
+    pts = pts[order]
+    return np.vstack([pts, pts[:1]]) if closed else pts  # a cyclic curve needs its closing segment
 
 
 def _chain_order(mesh):
@@ -76,7 +77,8 @@ def _chain_order(mesh):
         adj.setdefault(a, []).append(b)
         adj.setdefault(b, []).append(a)
     if not adj:
-        return list(range(len(mesh.vertices)))
+        return list(range(len(mesh.vertices))), False
+    closed = len(adj) > 2 and all(len(n) == 2 for n in adj.values())
     start = next((v for v, n in adj.items() if len(n) == 1), min(adj))
     order, seen, cur = [start], {start}, start
     while True:
@@ -86,7 +88,7 @@ def _chain_order(mesh):
         order.append(nxt)
         seen.add(nxt)
         cur = nxt
-    return order
+    return order, closed
 
 
 def _nearest_on_polyline(px, py, pts):
