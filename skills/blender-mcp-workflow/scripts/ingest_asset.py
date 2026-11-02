@@ -18,7 +18,9 @@ mesh objects get the name prefix; transforms are baked into the meshes (children
 finally `validate_asset.py` (same folder) is run on the imported meshes and returned as `validation`. A failure after
 the import removes everything the import created: its objects and collections, and every other datablock
 (meshes, materials, images, cameras, lights, ...) that did not exist before and has no user left. Scenes, workspaces and
-libraries are never touched.
+libraries are never touched. The scene itself is left as it was: the USD importer is told not to set the frame
+range or build a world material, and whatever an importer still changes (the FBX importer sets the scene fps from the
+file) is put back, also after a failure, and listed in `notes` (`scene_timing_restored`, `scene_world_restored`).
 
 ARGS:
     path            (str, required) local file
@@ -83,7 +85,9 @@ def _run_import(kind, path):
         return bpy.ops.wm.fbx_import(filepath=path)
     if kind == "obj":
         return bpy.ops.wm.obj_import(filepath=path)
-    return bpy.ops.wm.usd_import(filepath=path)
+    # the defaults of the USD importer write to the scene: the file's time range becomes the frame range, and a
+    # world material (Environment Texture, Mapping, Texture Coordinate; Background strength) is built or rewritten
+    return bpy.ops.wm.usd_import(filepath=path, set_frame_range=False, create_world_material=False)
 
 
 def _layer_collection(root, col):
@@ -166,6 +170,36 @@ def _remove_created(before):
             break
 
 
+def _timing():
+    sc = bpy.context.scene
+    return {"frame_start": sc.frame_start, "frame_end": sc.frame_end, "frame_current": sc.frame_current,
+            "fps": sc.render.fps, "fps_base": sc.render.fps_base}
+
+
+def _restore_scene(before, world_before, worlds_before, notes):
+    """Put back what an importer may have changed outside the objects it made: the frame range, current frame and
+    frame rate (the FBX importer sets the scene fps from the file) and the scene's world; says so in notes. A world
+    the import created and nothing uses is removed."""
+    sc = bpy.context.scene
+    if sc.world != world_before:
+        notes.append({"scene_world_restored": [world_before.name if world_before else None,
+                                              sc.world.name if sc.world else None]})
+        sc.world = world_before
+    for w in [w for w in bpy.data.worlds if w.as_pointer() not in worlds_before and w.users == 0]:
+        bpy.data.worlds.remove(w)
+    now = _timing()
+    changed = {k: [before[k], now[k]] for k in before if before[k] != now[k]}
+    if not changed:
+        return
+    sc.render.fps, sc.render.fps_base = before["fps"], before["fps_base"]
+    # the range is set end first when it moves up and start first when it moves down, so start <= end holds throughout
+    sc.frame_end = max(before["frame_end"], sc.frame_start)
+    sc.frame_start = before["frame_start"]
+    sc.frame_end = before["frame_end"]
+    sc.frame_current = before["frame_current"]
+    notes.append({"scene_timing_restored": changed})
+
+
 def main(path=None, collection=None, target_size_m=None, size_axis="z", up_axis_fix="none", prefix="SM_",
          apply_transforms=True, tri_budget=None, max_size_m=50.0, scripts_dir=None):
     full, ext = _check_path(path)
@@ -183,6 +217,9 @@ def main(path=None, collection=None, target_size_m=None, size_axis="z", up_axis_
     objs_before = set(bpy.data.objects.keys())
     cols_before = set(bpy.data.collections.keys())
     ids_before = _id_pointers()
+    timing_before, world_before = _timing(), scene.world
+    worlds_before = {w.as_pointer() for w in bpy.data.worlds}
+    notes = []
     selected = [o.name for o in scene.objects if o.select_get()]
     active = view_layer.objects.active.name if view_layer.objects.active else None
     prev_layer_col = view_layer.active_layer_collection
@@ -220,7 +257,6 @@ def main(path=None, collection=None, target_size_m=None, size_axis="z", up_axis_
         roots = [o for o in new if o.parent is None or o.parent.name not in new_names]
         imported_verts = sum(len(o.data.vertices) for o in meshes)
         _update()
-        notes = []
 
         if up_axis_fix != "none":
             rx = Matrix.Rotation(np.radians(90.0 if up_axis_fix == "y_up_to_z_up" else -90.0), 4, "X")
@@ -293,7 +329,9 @@ def main(path=None, collection=None, target_size_m=None, size_axis="z", up_axis_
         validation = runpy.run_path(validate_path, init_globals={"ARGS": {
             "objects": [o.name for o in meshes], "tri_budget": tri_budget, "prefix": prefix,
             "max_size_m": float(max_size_m)}}, run_name="__ingest_validate__")["result"]
+        _restore_scene(timing_before, world_before, worlds_before, notes)
     except Exception:
+        _restore_scene(timing_before, world_before, worlds_before, [])
         # what the import made, even when it failed half way and `new` is still empty
         _remove_created(ids_before)
         raise

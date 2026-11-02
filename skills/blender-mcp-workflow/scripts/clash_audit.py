@@ -21,7 +21,10 @@ What is reported:
   coincident  two meshes whose sampled points all lie on each other's surface (duplicate geometry in the same
               place) are a clash with depth "coincident": nothing crosses and nothing is inside, yet they overlap
               completely.
-  contained   an object whose surfaces cross nothing but which lies inside another closed object.
+  contained   an object whose surfaces cross nothing but which lies inside another closed object. It counts when any
+              sampled point of it (vertices, then edge midpoints, triangle centres, the grid, then points inside the
+              solid itself) is deeper than `min_depth_m` inside the other, so a slab or rod whose vertices all sit on
+              the outer walls is contained too. `fraction_inside` is the share of the points of the level that found it.
   floating    connected groups of objects (contact = overlap, containment, or a gap <= `gap_max_m` measured from
               sampled points to the other surface) other than the main group. Gaps between skew edges that no
               sample sits near can be missed, so a group may be reported floating when it only grazes along an edge.
@@ -162,6 +165,43 @@ def _deepest(pts, other, tol, far, adv):
                 best = max(best, float(d[3]))
                 count += d[3] > tol
     return best, count
+
+
+def _interior_points(rec, n, rng):
+    """Up to n points inside the closed mesh `rec`: uniform in its bounding box plus midpoints of random pairs of its
+    surface samples, kept when the ray parity says inside. The pairs find thin or diagonal shapes the box misses."""
+    if not rec.closed:
+        return rec.verts[:0]
+    box_pts = rng.uniform(rec.lo, rec.hi, size=(n, 3))
+    surf, _ = _samples(rec, 1, 4 * n, rng)
+    pair = (surf[rng.integers(0, len(surf), n)] + surf[rng.integers(0, len(surf), n)]) / 2
+    cand = np.concatenate([box_pts, pair])
+    far = float(np.linalg.norm(rec.hi - rec.lo)) * 4 + 1.0
+    adv = max(2e-6, 2e-6 * far)
+    keep = [p for p in cand if _inside(rec.bvh, p, far, adv)]
+    return np.array(keep[:n]) if keep else rec.verts[:0]
+
+
+def _contained_in(inner, outer, tol, far, adv, cap, rng):
+    """Is `inner` (nested in the bounds of the closed mesh `outer`) inside it? A solid can lie inside with all of its
+    vertices on the wall (a slab or rod spanning wall to wall, a half box sharing five faces), so the test goes from
+    the vertices to edge midpoints, triangle centres, the barycentric grid and finally points inside the solid itself,
+    and stops at the first level that finds a point deeper than `tol`.
+    Returns (deepest surface sample depth, points deeper than tol, points tested at that level, sampled)."""
+    depth, sampled = 0.0, False
+    for level in (0, 1, 2):
+        pts, s = _samples(inner, level, cap, rng)
+        sampled = sampled or s
+        d, count = _deepest(pts, outer, tol, far, adv)
+        depth = max(depth, d)
+        if count:
+            return depth, count, len(pts), sampled
+    pts = _interior_points(inner, min(cap, 400), rng)
+    if len(pts):
+        _, count = _deepest(pts, outer, tol, far, adv)
+        if count:
+            return depth, count, len(pts), sampled
+    return depth, 0, len(pts), sampled
 
 
 def _penetration(pts, other, tol, far, adv):
@@ -419,14 +459,13 @@ def main(objects=None, gap_max_m=0.005, min_depth_m=0.001, require_connected=Tru
                                                  "what": f"containment of {inner.name} in {outer.name}",
                                                  "reason": f"{outer.name} is an open mesh and has no inside"})
                             continue
-                        pts, s = _samples(inner, 0, cap, rng)
+                        depth, count, total, s = _contained_in(inner, outer, tol, far, adv, cap, rng)
                         sampled_any = sampled_any or s
-                        depth, count = _deepest(pts, outer, tol, far, adv)
                         if count:
                             joined = True
                             if frozenset((a.name, b.name)) not in ignore:
                                 contained.append({"inner": inner.name, "outer": outer.name, "depth_m": round(depth, 5),
-                                                  "fraction_inside": round(count / len(pts), 3)})
+                                                  "fraction_inside": round(count / total, 3)})
             if not joined:
                 g = _min_gap(a, b, max(gap_max_m, eps) + eps, cap, rng)
                 joined = g is not None
