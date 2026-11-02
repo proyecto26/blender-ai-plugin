@@ -43,13 +43,9 @@ Iteration 12: example parity and the open roadmap. Plan: `docs/plans/iteration-1
   by decoding the file bytes. The only correct route through Blender's writer is 8 bit; the 16-bit route writes the PNG itself
 - `scene_snapshot.py`: a repeated name in `restore` no longer crashes Blender
 - `fit_search.py`: an integer property steps by at least 1, and `converged` means its neighbours were really tried
-<<<<<<< HEAD
 - `fit_search.py`: `converged` is true only after a full sweep of every parameter at its final step found no improvement; running out of `max_evals` gives `converged: false`
 - `test_handoff.py` records an exception raised outside `check()` as a failure (report written, exit 1)
-- `flicker_check.py` reports a one-frame partial dropout or a foreign tile, and a black frame in a very dark scene
-=======
 - `flicker_check.py` reports a tile, band or whole frame that goes flat black or white for one frame (`dropout_cells`; `dropout_level`, `dropout_flat_dev`, `dropout_gap`), checked only on near-uniform near-black or near-white cells against the frames either side. Other content showing for one frame, a moving object and a cut are not events. A black frame in a very dark scene is a stated limit
->>>>>>> worktree-agent-ae0b53e56e4cec6d1
 - The Blender suites now exit non-zero when a check fails
 
 Known open issues from the final review are listed in `docs/ROADMAP.md`.
