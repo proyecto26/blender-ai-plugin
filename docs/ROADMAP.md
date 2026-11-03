@@ -68,30 +68,43 @@ References:
 
 ## Iteration 12, review follow-ups
 
-Reproduced by the final review and left open. The first ones can give a wrong answer.
+Reproduced by the final review of iteration 12; fixed in iteration 13 (`docs/plans/iteration-13-review-follow-ups.md`). The text below is the defect as it was found.
 
-- [ ] `flicker_check.py`: false alarms on real renders. 14 of 31 clean Eevee and Cycles sequences at 640x360 return `flicker`. In 4 of them every event is in the 8 px strip left at the frame edge (360 = 22x16 + 8); the other 10 have moving lights, cameras or rotating objects. Until this is fixed, a `flicker` verdict on a real render needs a look at the frames
-- [ ] `flicker_check.py` dropout limits: a black frame in a very dark scene (neighbours with a mean near 0.01) is not found at the default `dropout_gap`; a dropout under 16 px is not looked for; a fast flat black or white object is reported as a dropout (113 cells for a box of about 148 px moving about 90 px per frame, and up to 470 cells per frame for a propeller); on a real render, false block events on the same frame can widen the reported region; the event `kind` adds block and cell areas without removing overlap, so a band of 33% on a flat background is called `global_exposure` (the verdict stays `flicker`); on 31 clean Eevee and Cycles renders at 640x360, 14 return `flicker` at ec6c5c3 and still do (events in the 8 px bottom strip of a fast ball and in moving-light, moving-camera and rotating-object scenes)
-- [ ] `score_run.py`: misses `Start-Process blender -ArgumentList "-b scene.blend -a"`, `& $blender` and `"$BLENDER"` launches; does not read escaped inline JSON paths; reads `p:/` in a URL as a Windows path; compares the first duration in a message, not the total
-- [ ] `scene_snapshot.py`: reads stale transforms when the scene was not updated; saves stale data for an armature in Edit Mode; "latest" can be wrong for two saves in the same second
-- [ ] `import_painter_textures.py`: wires a DirectX normal map without flipping it, and without a warning
-- [ ] `terrain_heightfield.py`: `replace` accepts an object with a rigid body or a Displace modifier, where vertex Z no longer equals world height
-- [ ] `mocap-cleanup.md`: the stated tolerance does not hold on Bezier keys (0.0158 measured against 0.005); linear keys stay within it
-- [ ] `silhouette_score.py`: scores a stale transform for an object in an excluded collection
-- [ ] `usd_roundtrip.py`: leaves orphan armatures, and loses the selection on a refused run
-- [ ] `scan-match.md`: the scan-to-model direction has no test
-- [ ] `facial-shape-keys-drivers.md`: "Breaks all of them" and "matches the game minimum" are wrong as written
-- [ ] `clash_audit.py`: partial contact against an open mesh can report a false clash
-- [ ] `ingest_asset.py`: switches a scene object out of Edit Mode without saying so; the edit is kept
-- [ ] `usd_roundtrip.py`: a material slot plus a Set Material node gives a false `ok:false`
-- [ ] `score_run.py`: a shell comment such as `-a # {"plan": true}` grants the plan exemption; any slash in a message satisfies the status-path check
-- [ ] `import_painter_textures.py`: with shared mesh data, `assign_to=["A"]` also gives B the slot, and listing both adds it twice
-- [ ] `surface_tools.py`: a two-point seam raises instead of the documented G1 with G2 not measured
-- [ ] `ps1_look.py`: scenes that deliberately share a compositor group both change
-- [ ] `scatter-systems.md`: dividing by area is a soft cap, not a maximum (up to 546 at a cap of 500)
-- [ ] `scene_snapshot.py`: a user collection named `_Restored_dependencies` gets hidden on restore
-- [ ] `hdrp-material-mapping.md`: Unity's page does state the linear import rule; the attribution says otherwise
-- [ ] S3: the sentence-by-sentence evidence list the plan asks for is not in the repo
+- [x] `flicker_check.py`: false alarms on real renders. 14 of 31 clean Eevee and Cycles sequences at 640x360 return `flicker`. In 4 of them every event is in the 8 px strip left at the frame edge (360 = 22x16 + 8); the other 10 have moving lights, cameras or rotating objects. Until this is fixed, a `flicker` verdict on a real render needs a look at the frames
+- [x] `flicker_check.py` dropout limits: a black frame in a very dark scene (neighbours with a mean near 0.01) is not found at the default `dropout_gap`; a dropout under 16 px is not looked for; a fast flat black or white object is reported as a dropout (113 cells for a box of about 148 px moving about 90 px per frame, and up to 470 cells per frame for a propeller); on a real render, false block events on the same frame can widen the reported region; the event `kind` adds block and cell areas without removing overlap, so a band of 33% on a flat background is called `global_exposure` (the verdict stays `flicker`); on 31 clean Eevee and Cycles renders at 640x360, 14 return `flicker` at ec6c5c3 and still do (events in the 8 px bottom strip of a fast ball and in moving-light, moving-camera and rotating-object scenes)
+- [x] `score_run.py`: misses `Start-Process blender -ArgumentList "-b scene.blend -a"`, `& $blender` and `"$BLENDER"` launches; does not read escaped inline JSON paths; reads `p:/` in a URL as a Windows path; compares the first duration in a message, not the total
+- [x] `scene_snapshot.py`: reads stale transforms when the scene was not updated; saves stale data for an armature in Edit Mode; "latest" can be wrong for two saves in the same second
+- [x] `import_painter_textures.py`: wires a DirectX normal map without flipping it, and without a warning
+- [x] `terrain_heightfield.py`: `replace` accepts an object with a rigid body or a Displace modifier, where vertex Z no longer equals world height
+- [x] `mocap-cleanup.md`: the stated tolerance does not hold on Bezier keys (0.0158 measured against 0.005); linear keys stay within it
+- [x] `silhouette_score.py`: scores a stale transform for an object in an excluded collection
+- [x] `usd_roundtrip.py`: leaves orphan armatures, and loses the selection on a refused run
+- [x] `scan-match.md`: the scan-to-model direction has no test
+- [x] `facial-shape-keys-drivers.md`: "Breaks all of them" and "matches the game minimum" are wrong as written
+- [x] `clash_audit.py`: partial contact against an open mesh can report a false clash
+- [x] `ingest_asset.py`: switches a scene object out of Edit Mode without saying so; the edit is kept
+- [x] `usd_roundtrip.py`: a material slot plus a Set Material node gives a false `ok:false`
+- [x] `score_run.py`: a shell comment such as `-a # {"plan": true}` grants the plan exemption; any slash in a message satisfies the status-path check
+- [x] `import_painter_textures.py`: with shared mesh data, `assign_to=["A"]` also gives B the slot, and listing both adds it twice
+- [x] `surface_tools.py`: a two-point seam raises instead of the documented G1 with G2 not measured
+- [x] `ps1_look.py`: scenes that deliberately share a compositor group both change
+- [x] `scatter-systems.md`: dividing by area is a soft cap, not a maximum (up to 546 at a cap of 500)
+- [x] `scene_snapshot.py`: a user collection named `_Restored_dependencies` gets hidden on restore
+- [x] `hdrp-material-mapping.md`: Unity's page does state the linear import rule; the attribution says otherwise
+- [x] S3: the sentence-by-sentence evidence list the plan asks for is not in the repo
+
+## Iteration 13, open
+
+Measured limits left after the iteration 13 fixes.
+
+- [ ] `flicker_check.py`: 8 of 13 renders of fast flat black or white objects (propellers, black boxes) are still
+  reported; a black tile in a near-black shot is found but its region is 32 to 72 px short; a flicker lasting 3 or more
+  frames is not found; a pan faster than 24 px per frame at 640x360 (scaled with size) needs `max_motion_px` raised; the
+  higher resolutions were measured on upscaled renders, not native ones
+- [ ] `score_run.py`: matches tokens and does not parse the shell; without an out_dir the status path is only checked by
+  its file name
+- [ ] `import_painter_textures.py`: the normal convention is read from the file name only
+- [ ] Blender suites in CI (they run by hand today)
 
 ## Not planned, and why
 

@@ -8,6 +8,41 @@ Format: [Semantic Versioning](https://semver.org/) — `Major.Minor.Patch`
 
 ## [Unreleased]
 
+Iteration 13: the review follow-ups of iteration 12. Plan: `docs/plans/iteration-13-review-follow-ups.md`.
+
+### Changed
+- `flicker_check.py`: no `flicker` and no `inconclusive` on 31 clean Eevee and Cycles renders (was 14 `flicker`), at
+  640x360 and upscaled to 1280x720 and 1920x1080; a +0.2 tile for one or two frames, a black tile and a black frame are
+  found in 31 of 31. Wider motion search (24 px, coarse to fine), ambiguous blocks scored by the range of their
+  predictions, edge strips scored, event `kind` from the union of affected pixels, a noise-aware residual floor.
+  Pixel-sized defaults scale with the shorter side (`scale`, reported with the effective sizes); explicit ARGS win
+- `score_run.py`: reads `Start-Process` (single or double quotes), `& $blender` and `"$BLENDER"` launches and escaped
+  inline JSON; a shell comment after any separator grants no plan exemption; the status path must be the real
+  `render_status.json`; the claimed duration is the stated total, or per-frame time times the frame count; URLs no longer
+  decide the platform; `echo` lines and quoted `--python-expr` text are not jobs
+- `scene_snapshot.py`: updates the scene before reading transforms, computes the transform of an object outside every
+  view layer (refuses one with constraints or a bone or vertex parent), refuses an armature in Edit Mode, gives two saves
+  in one second distinct names, and leaves a user collection named `_Restored_dependencies` alone
+- `silhouette_score.py` refuses an object or camera outside the view layer
+- `usd_roundtrip.py`: matches objects whose mesh is named differently, reads object-linked material overrides, removes
+  imported armatures and actions, restores the selection on a refused run; a Set Material node with a different material
+  is reported as the loss it is
+- `clash_audit.py`: partial contact against an open mesh is no clash; two sheets crossing in an X still are
+- `ingest_asset.py` refuses while an object is in Edit Mode
+- `import_painter_textures.py`: the normal convention is read from the file name when not given (DirectX flips green; a
+  name with no token is OpenGL, with a warning); shared mesh data with only some objects listed is refused
+- `terrain_heightfield.py` `replace` refuses a rigid body and deforming or subdividing modifiers
+- `surface_tools.py`: a two-point seam reports G1 with G2 not measured
+- `ps1_look.py` copies a compositor group shared with another scene before changing it
+- Docs: mocap tolerance per interpolation (Bezier 0.0158 m), scatter cap stated as soft, shape keys per mesh operation,
+  the scan-to-model direction tested, the Unity attribution, the 170 s background run, a covered window marked untested
+
+### Added
+- `docs/evidence/iteration-12.md`: each measured sentence of iteration 12 with its backing, or marked unbacked
+- Suites `tests/blender/test_iter13_flicker.py`, `test_iter13_scene.py`, `test_iter13_content.py`, `test_iter13_docs.py`
+
+---
+
 Iteration 12: example parity and the open roadmap. Plan: `docs/plans/iteration-12-parity-and-roadmap.md`.
 
 ### Added
