@@ -470,20 +470,35 @@ def flag_set(tokens, wanted):
     return found
 
 
+def frame_list_count(val):
+    """How many frames a `-f` value renders: `5` is 1, `1,3,5` is 3, `1..5` is 5; relative (+N/-N) or odd forms give None."""
+    total = 0
+    for part in val.split(","):
+        m = re.fullmatch(r"(\d+)(?:\.\.(\d+))?", part)
+        if not m or (m.group(2) and int(m.group(2)) < int(m.group(1))):
+            return None
+        total += int(m.group(2)) - int(m.group(1)) + 1 if m.group(2) else 1
+    return total
+
+
 def frame_count(tokens):
-    """How many frames the invocation renders when its flags say so (-s/-e range, or a single -f), else None."""
-    values = {}
+    """How many frames the invocation renders when its flags say so: the `-f` frames when given (Blender renders those and
+    ignores -s/-e for them), else the -s/-e range, else None."""
+    values, frames = {}, []
     for i, tok in enumerate(tokens):
         name, eq, val = tok.partition("=")
         name = {"--frame-start": "-s", "--frame-end": "-e", "--render-frame": "-f"}.get(name, name)
         if name in ("-s", "-e", "-f"):
             val = val if eq else (tokens[i + 1] if i + 1 < len(tokens) else "")
-            if re.fullmatch(r"[+-]?\d+", val):
+            if name == "-f":
+                frames.append(val)
+            elif re.fullmatch(r"[+-]?\d+", val):
                 values[name] = int(val)
+    if frames:
+        counts = [frame_list_count(v) for v in frames]
+        return None if None in counts else sum(counts)
     if "-s" in values and "-e" in values and values["-e"] >= values["-s"]:
         return values["-e"] - values["-s"] + 1
-    if "-f" in values:
-        return 1
     return None
 
 
@@ -671,22 +686,22 @@ def is_plan(job, call, run):
 
 
 def launch_info(call, run):
-    """(None, None), or ('detached' | 'foreground', frames): a Blender job that needs a message before it starts, and the
+    """(None, None, None), or ('detached' | 'foreground', frames, jobs): a Blender job that needs a message before it starts, and the
     frame count its own flags give (None when they give none). Each invocation is judged by its own arguments."""
     if call["name"] not in SHELLS:
-        return None, None
+        return None, None, None
     command = strip_comment(call["input"].get("command", ""))
     jobs = [j for j in job_segments(command) if not is_plan(j, call, run)]  # the plan step makes the message; it is not the job
     if not jobs:
-        return None, None
+        return None, None, None
     frames = next((j["frames"] for j in jobs if j["render"] and j["frames"]), None)
     pattern = DETACHED if call["name"] == "Bash" else DETACHED_PS
     if call["input"].get("run_in_background") or re.search(pattern, command):
-        return "detached", frames
+        return "detached", frames, jobs
     long = call["end"] is not None and call["t"] is not None and call["end"] - call["t"] > FOREGROUND_LONG_S
     if long or any(j["render"] for j in jobs):
-        return "foreground", frames
-    return None, None
+        return "foreground", frames, jobs
+    return None, None, None
 
 
 def launch_kind(call, run):
@@ -694,9 +709,14 @@ def launch_kind(call, run):
     return launch_info(call, run)[0]
 
 
-def out_dirs(call, run):
+def out_dirs(call, run, jobs=None):
     # Inline JSON inside a command string arrives escaped: {\"out_dir\": \"C:\\\\x\"}.
-    text = related_text(call, run).replace('\\"', '"')
+    # Given jobs, only those invocations' own text and args files count, not another command of a chained line.
+    if jobs is None:
+        text = related_text(call, run)
+    else:
+        text = "\n".join(j["raw"] + "\n" + "\n".join(args_texts(call, run, j["raw"])) for j in jobs)
+    text = text.replace('\\"', '"')
     found = re.findall(r"out_dir[\"']?\s*[:=]\s*[\"']([^\"']+)[\"']", text)
     return [norm_path(p) for p in found]
 
@@ -709,7 +729,7 @@ def status_path_in(text):
 def score_announcements(run, args=None):
     timed = [x for x in run["texts"] if x["t"] is not None]
     launches = [(c,) + launch_info(c, run) for c in run["calls"]]
-    launches = [(c, k, n) for c, k, n in launches if k]
+    launches = [(c, k, n, js) for c, k, n, js in launches if k]
     problems, checked = [], 0
     for c in run["calls"]:
         if c["name"] == LIVE_CODE and c["t"] is not None and c["end"] and c["end"] - c["t"] > 5:
@@ -719,14 +739,14 @@ def score_announcements(run, args=None):
     if not launches and not any(c["t"] is not None for c in run["calls"]):
         return verdict("announcements", "SKIP", "the trace has no timings and no Blender job was launched")
     claimed = None
-    for c, kind, job_frames in launches:
+    for c, kind, job_frames, job_list in launches:
         checked += 1
         before = [x for x in run["texts"] if not x["child"] and x["seq"] < c["seq"]
                   and (x["t"] is None or c["t"] is None or c["t"] - 900 <= x["t"] <= c["t"])]
         if not before:
             problems.append(f"{kind} Blender job with no message to the user before it")
             continue
-        dirs = out_dirs(c, run)
+        dirs = out_dirs(c, run, job_list)
         def has_path(text):
             flat = norm_path(text)
             # The folder as a whole path: "c:/run/outdated" is not "c:/run/out", "/x/run/out" is not "/run/out".
