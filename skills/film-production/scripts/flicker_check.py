@@ -55,8 +55,8 @@ ARGS:
 
 Dropouts (a separate, narrow rule, run only on candidate cells; a cell is half a block, `block // 2` px): a cell of frame t
 is a dropout when it is nearly uniform (mean absolute deviation <= `dropout_flat_dev`) and near black or near white (its mean
-within `dropout_level` of 0 or 1), while the same place in t-1 and t+1, shifted symmetrically by up to `max_motion_px` per
-frame, has real content: each is at least `dropout_gap` away from the flat value (mean absolute difference) and the two
+within `dropout_level` of 0 or 1), while the same place in t-1 and t+1, shifted symmetrically by up to min(`max_motion_px`, 8 x scale) px per
+frame (the search window is capped there, see `dropout_search_px`), has real content: each is at least `dropout_gap` away from the flat value (mean absolute difference) and the two
 agree with each other at least twice as closely as with it, and clearly better than the typical shift fits. The best shift
 is searched per candidate cell only (every shift on every second px, then +-1 px at full resolution), and the smallest raw difference is kept, so a periodic
 texture or a pan cannot hide the agreement. At least 4 flat cells must sit in a 3x3 neighbourhood. This catches a tile, a band
@@ -114,9 +114,9 @@ shots 32 to 72 x scale short). Longest single run of the 155: 10.8 s, 21.4 s, 56
 Measured on 31 clean real renders (640x360, EEVEE and Cycles: balls, fans, spheres, rotating objects, cameras, moving lights)
 the verdict was flicker 14, pass 13, inconclusive 4 on the iteration 12 code, flicker 0, pass 19, inconclusive 12 on the
 iteration 13 round 1 code, and is flicker 0, pass 31, inconclusive 0 now. Each of those 31 with a one-frame +0.2 tile at
-[200,120,296,216] was `flicker` in 31 of 31 (round 1: 15, iteration 12: 25), region within 8 px of the tile in 30 and 40 px in
-one (a noisy dolly: `noise_ee_cam`, its lower blocks' residual 0.011 to 0.017 is above the noise floor); the same tile for two
-frames 31 of 31, within 8 px; a black tile 31 of 31, a black frame 31 of 31. On 15 more renders of flat black or white fast
+[200,120,296,216] was `flicker` in 31 of 31 (round 1: 15, iteration 12: 25), region within 8 px of the tile in 29, 24 px short in
+one (`noise_ee_rot`) and 56 px short in another (a noisy dolly: `noise_ee_cam`, its lower blocks' residual 0.011 to 0.017 is above the noise floor; a block with a rejected match in one neighbour is never scored); the same tile for two
+frames 31 of 31, within 8 px in 29 and 24 px short in two; a black tile 31 of 31, a black frame 31 of 31. On 15 more renders of flat black or white fast
 objects, a strobe and a light off for one frame: both of those stay `flicker` (global_exposure), 8 of the 13 others
 (propellers, black boxes) are still reported, see limit (c).
 Remaining limits, measured: (a) a flicker that lasts three frames or more is a hold, not a pulse, and is not found (two
@@ -507,6 +507,7 @@ def main(paths=None, dir=None, block=None, max_motion_px=None, scale=None, flick
             mp, cp, pyo, pxo, lop, hip, rsp = _match(frames[t], frames[t - 1], ry, rx, ny, nx, bh, bw, R, ambiguity_margin, reject_ratio, thr / 2, us)
             mn, cn, nyo, nxo, lon, hin, rsn = _match(frames[t], frames[t + 1], ry, rx, ny, nx, bh, bw, R, ambiguity_margin, reject_ratio, thr / 2, us)
             code = np.maximum(cp, cn)
+            rej = (cp == 1) | (cn == 1)  # a rejected match is no evidence at all, whatever the other neighbour says (ambiguous or not)
             tmean = frames[t][ry:ry + ny * bh, rx:rx + nx * bw].reshape(ny, bh, nx, bw).mean(axis=(1, 3))
             if sub:  # score only the leftover pixels of an edge block, at the offsets the whole block matched at
                 gy, gx = np.nonzero(code == 0)
@@ -529,7 +530,7 @@ def main(paths=None, dir=None, block=None, max_motion_px=None, scale=None, flick
                 Pl, Ph = np.where(cp == 0, mp, lop), np.where(cp == 0, mp, hip)
                 Nl, Nh = np.where(cn == 0, mn, lon), np.where(cn == 0, mn, hin)
                 d_hi, d_lo = tmean - 0.5 * (Pl + Nl), tmean - 0.5 * (Ph + Nh)
-                bounded = (code == 0) | ((code == 2) & (((d_hi - d_lo) <= bound) | (d_lo > thr) | (d_hi < -thr)))
+                bounded = (code == 0) | ((code == 2) & ~rej & (((d_hi - d_lo) <= bound) | (d_lo > thr) | (d_hi < -thr)))
             if sub:
                 dev = tmean - 0.5 * (mp + mn)
             else:
@@ -570,7 +571,7 @@ def main(paths=None, dir=None, block=None, max_motion_px=None, scale=None, flick
             for y, x in zip(*np.nonzero(np.abs(sdev) > thr_eff)):
                 step_by_t[t].append((rx + int(x) * bw + c0, ry + int(y) * bh + r0, rx + int(x) * bw + c1, ry + int(y) * bh + r1,
                                      float(sdev[y, x]), int(lvl[y, x])))
-            hi, amb, rng_ = int((code == 1).sum()), int((code == 2).sum()), int(((code == 2) & bounded).sum())
+            hi, amb, rng_ = int(rej.sum()), int(((code == 2) & ~rej).sum()), int(((code == 2) & bounded).sum())
             meas = int(bounded.sum())
             totals["high_residual"] += hi
             totals["ambiguous"] += amb
