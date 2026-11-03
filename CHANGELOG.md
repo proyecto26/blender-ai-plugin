@@ -31,7 +31,7 @@ Iteration 13: the review follow-ups of iteration 12. Plan: `docs/plans/iteration
   view layer (refuses one with constraints, a bone or vertex parent, or a path-animated curve parent), refuses an armature in Edit Mode, gives two saves
   in one second distinct names, and leaves a user collection named `_Restored_dependencies` alone
 - `silhouette_score.py` refuses an object or camera outside the view layer
-- `usd_roundtrip.py`: matches objects whose mesh is named differently, pairs linked duplicates with their own imports, reads object-linked material overrides, removes
+- `usd_roundtrip.py`: matches objects whose mesh is named differently, pairs linked duplicates with their own imports (duplicates at the same transform are paired by the fewest differences, so an intact round trip is not a false material loss; `ambiguous_pairings` lists them), reads object-linked material overrides, removes
   imported armatures and actions, restores the selection on a refused run; a Set Material node with a different material
   is reported as the loss it is
 - `clash_audit.py`: partial contact against an open mesh is no clash; two sheets crossing in an X still are
