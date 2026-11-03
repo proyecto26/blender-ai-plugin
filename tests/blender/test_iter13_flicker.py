@@ -322,6 +322,54 @@ def run_all(out_dir, check):
               r["verdict"] == "flicker" and [e["frame"] for e in ev] == [2]
               and max(abs(x - y) for x, y in zip(ev[0]["region_px"], [48, 144, 144, 168])) <= 48, summary(r))
 
+    # A textured foreign tile for one frame: the tile is replaced by a patch cut from elsewhere in the frame, shifted to the same
+    # mean. That is a content change, not a brightness flicker: no event. The same patch with a mean 0.2 higher is found.
+    def foreign(arrs, k, box, src, delta):
+        out = [a.copy() for a in arrs]
+        x0, y0, x1, y1 = box
+        sx, sy = src
+        patch = out[k][sy:sy + (y1 - y0), sx:sx + (x1 - x0)].copy()
+        patch = np.clip(patch - patch.mean() + out[k][y0:y1, x0:x1].mean() + delta, 0, 1)
+        out[k][y0:y1, x0:x1] = patch
+        return out
+
+    def foreign_cases(label, arrs, kw, box, src, known_limit=False):
+        k = len(arrs) // 2
+        for tag, delta in (("equal mean", 0.0), ("mean +0.2", 0.2)):
+            folder = os.path.join(base, f"foreign_{label}_{'eq' if delta == 0 else 'up'}")
+            os.makedirs(folder, exist_ok=True)
+            ps = []
+            for i, arr in enumerate(foreign(arrs, k, box, src, delta)):
+                ps.append(os.path.join(folder, f"f_{i:02d}.png"))
+                save_rgb(ps[-1], arr)
+            r = run({"paths": ps, **kw})
+            ev = r["events"]
+            if delta == 0:
+                check(f"{label}: textured foreign tile of {tag} for one frame: no event, not flicker",
+                      not ev and r["verdict"] != "flicker", summary(r))
+            elif known_limit:
+                # KNOWN LIMIT (measured, see ROADMAP): a block whose texture is foreign to both neighbours is rejected by the
+                # motion match, so its brightness is never compared; on real renders a brighter foreign tile gives no event.
+                # Pinned so a change here is noticed, not endorsed.
+                check(f"{label}: KNOWN LIMIT: textured foreign tile of {tag} for one frame is not found (no event, verdict pass)",
+                      not ev and r["verdict"] == "pass", summary(r))
+            else:
+                err = max(abs(a - b) for a, b in zip(ev[0]["region_px"], box)) if ev else None
+                check(f"{label}: textured foreign tile of {tag} for one frame: found at frame {k}, region within one block",
+                      r["verdict"] == "flicker" and [e["frame"] for e in ev] == [k] and err <= kw.get("block", 16),
+                      (summary(r), err))
+
+    foreign_cases("fixture", [load_rgb(p) for p in fx], {"scale": 3, "block": 48}, (48, 24, 144, 120), (336, 24))
+    real_dirs = _cli_args().get("real_dirs") or []
+    for d in real_dirs:  # real 640x360 renders kept outside the repo; skipped when absent
+        names = sorted(n for n in os.listdir(d) if n.endswith(".png")) if os.path.isdir(d) else []
+        if len(names) < 5:
+            continue
+        arrs = [load_rgb(os.path.join(d, n)) for n in names]
+        r0 = run({"paths": [os.path.join(d, n) for n in names]})
+        check(f"{os.path.basename(d)}: the clean real sequence passes", r0["verdict"] == "pass" and not r0["events"], summary(r0))
+        foreign_cases(os.path.basename(d), arrs, {}, (200, 120, 296, 216), (400, 40), known_limit=True)
+
     check("no images leaked", len([i for i in bpy.data.images if i.name.startswith("tmp_iter13")]) == 0)
 
 
