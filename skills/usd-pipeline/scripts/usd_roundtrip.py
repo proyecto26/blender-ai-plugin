@@ -20,9 +20,11 @@ ARGS:
               is written as the base cage plus a subdivision scheme, and a plain import gives back the cage.
 
 Matching: an imported object is paired with the original of the same type and the same name after USD name cleaning
-(characters other than letters, digits and _ become _) and without Blender's .001 suffix. The export writes a
-transform prim and a mesh prim of the same name per mesh object, so the import yields an empty AND a mesh with one
-name: they are told apart by type. Material names are compared the same way,
+(characters other than letters, digits and _ become _) and without Blender's .001 suffix. A mesh object is matched by
+its MESH DATA name, not its object name: the export writes a transform prim named after the object and a mesh prim
+named after the mesh data, and the import returns one object named after the mesh prim (measured on Blender 5.2:
+object "Crate" with mesh "Cube" comes back as "Cube"). Empties and other types are matched by object name. Results
+are still listed under the original object's name. Material names are compared the same way,
 because the import renames a material that already exists. `ok` is true only when nothing differs.
 
 Materials are read from the evaluated object's slots, so an OBJECT-linked slot override is what USD receives and is
@@ -118,6 +120,14 @@ def _describe(obj, depsgraph, imported=False):
             "matrix": [list(row) for row in obj.matrix_world]}
 
 
+def _match_key(obj):
+    """Where an original shows up after the round trip: the exporter writes a mesh object as a transform prim named
+    after the object and a mesh prim named after the MESH DATA, and the import gives the merged object the mesh prim's
+    name (measured on Blender 5.2: object "Crate" with mesh "Cube" comes back as "Cube"). Other types keep the object name."""
+    label = obj.data.name if obj.type == "MESH" and obj.data else obj.name
+    return (obj.type, _clean_key(label))
+
+
 def _targets(names):
     if names:
         out = []
@@ -143,7 +153,7 @@ def main(out_path, objects=None, tol=1e-4, keep=False, subdivision="TESSELLATE")
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
     with _render_levels(targets):
         dg = bpy.context.evaluated_depsgraph_get()
-        before = {(o.type, _clean_key(o.name)): _describe(o, dg) for o in targets}
+        before = {(o.type, _clean_key(o.name), o.name): _describe(o, dg) for o in targets}
 
     snap = {coll: {i.name for i in getattr(bpy.data, coll)}
             for coll in ("objects", "meshes", "materials", "images", "collections", "cameras", "lights", "node_groups", "worlds",
@@ -189,7 +199,9 @@ def main(out_path, objects=None, tol=1e-4, keep=False, subdivision="TESSELLATE")
     dg = bpy.context.evaluated_depsgraph_get()
     after, duplicates = {}, []
     for o in new["objects"]:
-        k = (o.type, _clean_key(SUFFIX_RE.sub("", o.name)))
+        # a mesh object is named after its mesh prim, which the exporter names from the MESH DATA (see "Matching")
+        label = o.data.name if o.type == "MESH" and o.data else o.name
+        k = (o.type, _clean_key(SUFFIX_RE.sub("", label)))
         if k in after:
             duplicates.append(o.name)
         after[k] = _describe(o, dg, imported=True)
@@ -206,7 +218,7 @@ def main(out_path, objects=None, tol=1e-4, keep=False, subdivision="TESSELLATE")
     per_object = {}
     for key, b in before.items():
         k = key[1]
-        a = after.get(key)
+        a = after.get(_match_key(bpy.data.objects[key[2]]))
         if a is None:
             problems.append(f"{k}: not found after import as {key[0]}")
             per_object[k] = {"found": False}
