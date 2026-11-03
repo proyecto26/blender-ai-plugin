@@ -108,7 +108,8 @@ Measured limits left after the iteration 13 fixes.
 - [ ] `score_run.py`: matches tokens and does not parse the shell (`eval`, command substitution, aliases and paths built
   at run time are not read); without an out_dir the status path is only checked by its file name
 - [ ] `usd_roundtrip.py`: linked duplicates at the same transform are paired by fewest differences (reported in
-  `ambiguous_pairings`); if they differ only in something it does not measure, the pairing is a guess
+  `ambiguous_pairings`); if they differ only in something it does not measure, the pairing is a guess, and
+  above 7 coincident objects the pairing is greedy, so it can report more differences than the fewest possible
 - [ ] `import_painter_textures.py`: the normal convention is read from the file name only
 - [ ] Blender suites in CI (they run by hand today)
 

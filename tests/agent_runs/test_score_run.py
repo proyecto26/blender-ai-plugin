@@ -535,6 +535,8 @@ def round6_cases(tmp):
         ("per-frame figure, a single -f frame", run("About 2 s per frame." + st, "blender -b scene.blend -f 5", secs=2), "OK"),
         ("frame_count: -f wins over -s/-e", score_run.frame_count("-b scene.blend -s 1 -e 150 -f 5".split()), 1),
         ("frame_count: -f list", score_run.frame_count("-b scene.blend -f 1,3,5".split()), 3),
+        ("per-frame figure, a -f list through the command tokenizer", run("About 2 s per frame." + st, "blender -b scene.blend -f 1,3,5,7,9", secs=10), "OK"),
+        ("per-frame figure, a -f list, far off", run("About 2 s per frame." + st, "blender -b scene.blend -f 1,3,5,7,9", secs=200), "FLAG"),
         ("frame_count: -f range", score_run.frame_count("-b scene.blend -f 1..5".split()), 5),
         ("frame_count: -f range beats -s/-e", score_run.frame_count("-b scene.blend -s 1 -e 150 -f 1..5".split()), 5),
         ("frame_count: --render-frame=", score_run.frame_count("-b scene.blend -s 1 -e 150 --render-frame=7".split()), 1),

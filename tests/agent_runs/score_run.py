@@ -491,6 +491,10 @@ def frame_count(tokens):
         if name in ("-s", "-e", "-f"):
             val = val if eq else (tokens[i + 1] if i + 1 < len(tokens) else "")
             if name == "-f":
+                # the command tokenizer splits on commas, so "-f 1,3,5" arrives as "1", "3", "5": rejoin them
+                j = i + (1 if eq else 2)
+                while j < len(tokens) and re.fullmatch(r"\d+(?:\.\.\d+)?", tokens[j]):
+                    val, j = val + "," + tokens[j], j + 1
                 frames.append(val)
             elif re.fullmatch(r"[+-]?\d+", val):
                 values[name] = int(val)
