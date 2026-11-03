@@ -23,7 +23,9 @@ save:    writes <dir>/<name>.blend (the scene's objects and the data they use, v
          they still resolve to the same files from the snapshot folder. Refuses an existing name, and refuses while any object (a mesh, or an armature whose edit bones differ from the saved bones) is in
          Edit Mode (the file would hold its stale pre-edit data). A default name is made unique within the same second
          (`_2`, `_3`...) and `list`/"latest" keep save order through a counter in the manifest. The depsgraph is updated
-         before transforms are read. Nothing in the open
+         before transforms are read. An object whose collection is excluded in every view layer is not evaluated, so its
+         transform is rebuilt from its parent chain and location/rotation/scale; if it has constraints or a bone/vertex
+         parent that cannot be rebuilt, save and diff refuse and name it. Nothing in the open
          session changes: file path, dirty flag, objects and selection are the same afterwards.
 list:    snapshots in <dir>, oldest first (name, created, object count, size). Read-only.
 diff:    added / removed / changed objects between two manifests: changed lists the largest transform delta,
@@ -127,15 +129,33 @@ def _mesh_hash(obj):
     return h.hexdigest()[:16]
 
 
+def _world_matrix(o, evaluated, _seen=()):
+    """matrix_world of an object. One that no view layer contains (its collection is excluded in every layer) is never
+    evaluated, so its matrix_world keeps the value from before the last move; it is rebuilt from the parent chain, the
+    parent inverse and the object's own location/rotation/scale. Constraints, a bone or vertex parent and a cyclic chain
+    cannot be rebuilt that way, so those are refused instead of recording a stale transform."""
+    if o.name in evaluated:
+        return o.matrix_world.copy()
+    if o.constraints or (o.parent and o.parent_type != "OBJECT") or o.name in _seen:
+        raise ValueError(f"{o.name!r} is in no view layer (its collection is excluded in every layer), so its transform is "
+                         "not evaluated and has constraints or a bone/vertex parent that cannot be rebuilt by hand: "
+                         "include its collection in a view layer and run again")
+    local = o.matrix_basis.copy()
+    if o.parent:
+        return _world_matrix(o.parent, evaluated, _seen + (o.name,)) @ o.matrix_parent_inverse @ local
+    return local
+
+
 def _manifest(name):
     scene = bpy.context.scene
     for vl in scene.view_layers:  # matrix_world is stale after a property change until the depsgraph has run
         vl.update()
+    evaluated = {o.name for vl in scene.view_layers for o in vl.objects}
     objs = {}
     for o in scene.objects:
         entry = {"type": o.type, "parent": o.parent.name if o.parent else None,
                  "collections": sorted(c.name for c in o.users_collection),
-                 "matrix_world": [round(v, 6) for row in o.matrix_world for v in row]}
+                 "matrix_world": [round(v, 6) for row in _world_matrix(o, evaluated) for v in row]}
         if o.type == "MESH":
             entry["mesh_hash"] = _mesh_hash(o)
             entry["vertices"] = len(_mesh_arrays(o)[0]) // 3

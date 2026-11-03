@@ -263,15 +263,17 @@ def run_all(out_dir):
         check("C3 the refused run leaves the active object as it was", bpy.context.view_layer.objects.active is a,
               str(bpy.context.view_layer.objects.active))
 
-    @case
-    def c3_set_material():
+    def set_material_crate(same):
+        """A crate whose slot 0 holds SlotMat and slot 1 NodeMat; a Set Material node puts SlotMat (same) or the
+        distinct NodeMat on every face."""
         reset()
         o = cube("Crate")
         a = bpy.data.materials.new("SlotMat")
         b = bpy.data.materials.new("NodeMat")
         o.data.materials.append(a)
-        o.data.materials.append(b)  # slot 1 holds NodeMat, but the Set Material node puts SlotMat on every face
-        b = a
+        o.data.materials.append(b)
+        if same:
+            b = a
         tree = bpy.data.node_groups.new("SetMat", "GeometryNodeTree")
         tree.interface.new_socket("Geometry", in_out="INPUT", socket_type="NodeSocketGeometry")
         tree.interface.new_socket("Geometry", in_out="OUTPUT", socket_type="NodeSocketGeometry")
@@ -283,8 +285,59 @@ def run_all(out_dir):
         mod = o.modifiers.new("GN", "NODES")
         mod.node_group = tree
         bpy.context.view_layer.update()
-        r = usd({"out_path": os.path.join(out_dir, "c3c", "crate.usdc"), "objects": ["Crate"]})
-        check("C3 a material slot plus a Set Material node is not a false ok:false", r["ok"], [r["problems"], r["per_object"]])
+        return usd({"out_path": os.path.join(out_dir, "c3c" if same else "c3d", "crate.usdc"), "objects": ["Crate"]})
+
+    @case
+    def c3_set_material():
+        r = set_material_crate(same=True)
+        check("C3 a Set Material node that puts the slot's own material on the faces is ok:true", r["ok"],
+              [r["problems"], r["per_object"]])
+
+    @case
+    def c3_set_material_distinct():
+        r = set_material_crate(same=False)
+        # Blender's USD exporter writes only the slot material, so the node's replacement is lost: a real loss
+        check("C3 a Set Material node with a distinct replacement is reported ok:false",
+              (not r["ok"]) and any("NodeMat" in p and "SlotMat" in p for p in r["problems"]),
+              [r["ok"], r["problems"]])
+
+    @case
+    def c3_object_link_override():
+        reset()
+        o = cube("Ov")
+        a = bpy.data.materials.new("MatA")
+        b = bpy.data.materials.new("MatB")
+        o.data.materials.append(a)
+        o.material_slots[0].link = "OBJECT"
+        o.material_slots[0].material = b  # USD receives MatB, not the mesh's MatA
+        bpy.context.view_layer.update()
+        r = usd({"out_path": os.path.join(out_dir, "c3e", "ov.usdc"), "objects": ["Ov"]})
+        check("C3 an OBJECT-linked slot override is not a false ok:false", r["ok"], [r["problems"], r["per_object"]])
+        check("C3 the override material is the one compared", r["per_object"]["Ov"]["materials"] == [["MatB"], ["MatB"]],
+              r["per_object"])
+
+    @case
+    def c1_excluded_moved():
+        reset()
+        coll = bpy.data.collections.new("Out")
+        bpy.context.scene.collection.children.link(coll)
+        o = cube("Mv", coll=coll)
+        child = cube("Kid", loc=(0, 1, 0), coll=coll)
+        child.parent = o
+        bpy.context.view_layer.update()
+        bpy.context.view_layer.layer_collection.children["Out"].exclude = True
+        d = os.path.join(out_dir, "c1f")
+        snap(action="save", dir=d, name="A")
+        o.location = (5, 0, 0)  # excluded from every view layer: the depsgraph never evaluates it
+        r = snap(action="diff", dir=d, a="A", b="current")
+        ch = {c["name"]: c for c in r["changed"]}
+        check("C1 an object excluded from every view layer and then moved is seen as moved",
+              "Mv" in ch and abs(ch["Mv"].get("transform_delta", 0) - 5) < 1e-4, r)
+        check("C1 its child moves with it", "Kid" in ch and abs(ch["Kid"].get("transform_delta", 0) - 5) < 1e-4, r)
+        con = o.constraints.new("COPY_LOCATION")
+        con.target = bpy.data.objects["Kid"]
+        msg = raises(lambda: snap(action="diff", dir=d, a="A", b="current"))
+        check("C1 an unevaluated object with a constraint is refused, naming it", msg is not None and "Mv" in msg, msg)
 
     # ------------------------------------------------------------------ C4 clash_audit
     def audit(**kw):
@@ -354,7 +407,8 @@ def run_all(out_dir):
             check("C5 the run reports the Edit Mode object and keeps its edit", "Editing" in notes and kept, [notes, ed.mode])
 
     for fn in (c1_depsgraph, c1_armature_edit, c1_latest_unique, c1_user_collection, c2_excluded, c3_armature_orphans,
-               c3_selection_refused, c3_set_material, c4_open_mesh, c5_edit_mode):
+               c3_selection_refused, c3_set_material, c3_set_material_distinct, c3_object_link_override,
+               c1_excluded_moved, c4_open_mesh, c5_edit_mode):
         fn()
     return results
 

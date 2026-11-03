@@ -24,6 +24,12 @@ Matching: an imported object is paired with the original of the same type and th
 transform prim and a mesh prim of the same name per mesh object, so the import yields an empty AND a mesh with one
 name: they are told apart by type. Material names are compared the same way,
 because the import renames a material that already exists. `ok` is true only when nothing differs.
+
+Materials are read from the evaluated object's slots, so an OBJECT-linked slot override is what USD receives and is
+compared. Known loss, reported as `ok: false`: a Geometry Nodes Set Material that puts a material different from the
+slot's on the faces. Blender's USD exporter writes only the slot material, so the file and the import carry the slot
+material and the node's material is gone (measured on Blender 5.2: NodeMat -> SlotMat). Setting the same material the
+slot already holds is not a loss and is `ok: true`.
 """
 import contextlib
 import json
@@ -97,7 +103,14 @@ def _describe(obj, depsgraph, imported=False):
             idx = np.empty(len(me.polygons), dtype=np.int32)
             me.polygons.foreach_get("material_index", idx)
             mats = list(me.materials)
-            names = [mats[i].name for i in sorted(set(idx.tolist())) if 0 <= i < len(mats) and mats[i]]
+            slots = ev.material_slots  # the evaluated object's slots honour an OBJECT-linked override of the mesh material
+            used = []
+            for i in sorted(set(idx.tolist())):
+                m = slots[i].material if 0 <= i < len(slots) else None
+                m = m or (mats[i] if 0 <= i < len(mats) else None)
+                if m:
+                    used.append(m.name)
+            names = used
         finally:
             ev.to_mesh_clear()
     mats = sorted({_clean_key(SUFFIX_RE.sub("", n) if imported else n) for n in names})
