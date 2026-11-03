@@ -317,6 +317,26 @@ def run_all(out_dir):
               r["per_object"])
 
     @case
+    def c3_renamed_object_and_mesh():
+        reset()
+        crate = cube("Crate")
+        crate.data.name = "Cube"  # a renamed primitive: object "Crate", mesh data "Cube"
+        other = cube("Plain", loc=(3, 0, 0))
+        other.data.name = "Shared_Shape"
+        r = usd({"out_path": os.path.join(out_dir, "c3f", "r.usdc"), "objects": ["Crate", "Plain"]})
+        check("C3 objects whose mesh data is named differently round-trip as ok:true", r["ok"],
+              [r["problems"], r["imported"]])
+        check("C3 both are found under the original object names",
+              all(r["per_object"].get(n, {}).get("found") for n in ("Crate", "Plain")), r["per_object"])
+        r = usd({"out_path": os.path.join(out_dir, "c3g", "r.usdc"), "objects": ["Crate"], "subdivision": "TESSELLATE"})
+        sub = crate.modifiers.new("Sub", "SUBSURF")
+        sub.levels = sub.render_levels = 1
+        bpy.context.view_layer.update()
+        r = usd({"out_path": os.path.join(out_dir, "c3h", "r.usdc"), "objects": ["Crate"], "subdivision": "BEST_MATCH"})
+        check("C3 a real loss on a renamed object is still ok:false (BEST_MATCH drops the subdivision)",
+              (not r["ok"]) and r["per_object"]["Crate"]["found"], [r["ok"], r["problems"]])
+
+    @case
     def c1_excluded_moved():
         reset()
         coll = bpy.data.collections.new("Out")
@@ -377,6 +397,23 @@ def run_all(out_dir):
         r = audit(objects=["Box", "Shelf"])
         check("C4 the same shelf pushed into the box is a clash", len(r["clashes"]) == 1 and r["verdict"] == "FAIL",
               [r["clashes"], r["verdict"]])
+        reset()
+        quad("Floor", -1.0, 1.0, -1.0, 1.0, 0.0)  # two equal open sheets crossing in an exact X: every crossing
+        wall = bpy.data.meshes.new("Wall")      # lies on a border, yet the sheets share a segment
+        wall.from_pydata([(-1, 0, -1), (1, 0, -1), (1, 0, 1), (-1, 0, 1)], [], [(0, 1, 2, 3)])
+        wall.update()
+        bpy.context.scene.collection.objects.link(bpy.data.objects.new("Wall", wall))
+        r = audit(objects=["Floor", "Wall"])
+        check("C4 two equal open sheets crossing in an exact X are a clash", len(r["clashes"]) == 1 and r["verdict"] == "FAIL",
+              [r["clashes"], r["verdict"]])
+        reset()
+        quad("Floor", -1.0, 1.0, -1.0, 1.0, 0.0)  # T: the wall stands on the floor, its bottom edge on the floor
+        wall = bpy.data.meshes.new("Wall")
+        wall.from_pydata([(-1, 0, 0), (1, 0, 0), (1, 0, 1), (-1, 0, 1)], [], [(0, 1, 2, 3)])
+        wall.update()
+        bpy.context.scene.collection.objects.link(bpy.data.objects.new("Wall", wall))
+        r = audit(objects=["Floor", "Wall"], require_connected=False)
+        check("C4 a sheet standing on another (T) is not a clash", not r["clashes"], r["clashes"])
 
     # ------------------------------------------------------------------ C5 ingest_asset
     @case
@@ -407,7 +444,7 @@ def run_all(out_dir):
             check("C5 the run reports the Edit Mode object and keeps its edit", "Editing" in notes and kept, [notes, ed.mode])
 
     for fn in (c1_depsgraph, c1_armature_edit, c1_latest_unique, c1_user_collection, c2_excluded, c3_armature_orphans,
-               c3_selection_refused, c3_set_material, c3_set_material_distinct, c3_object_link_override,
+               c3_selection_refused, c3_set_material, c3_set_material_distinct, c3_object_link_override, c3_renamed_object_and_mesh,
                c1_excluded_moved, c4_open_mesh, c5_edit_mode):
         fn()
     return results
