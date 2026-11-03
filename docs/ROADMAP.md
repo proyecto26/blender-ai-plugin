@@ -104,7 +104,8 @@ Measured limits left after the iteration 13 fixes.
   `inconclusive`; native 1080p was checked on three Eevee sequences only (no Cycles); in a 1080p pan with a black tile
   an extra small event is reported one frame later; a +0.2 tile's region is more than one block (16 px at 640x360)
   short in 2 of 31 shots (24 and 56 px); the Blender test covers synthetic cases and one real pan, not the 155-case
-  harness, which is run by hand
+  harness, which is run by hand; a textured foreign tile for one frame (expected: no event) has no test; the 6 macOS
+  sequences (4 false alarms in iteration 12) were not re-run
 - [ ] `score_run.py`: matches tokens and does not parse the shell (`eval`, command substitution, aliases and paths built
   at run time are not read); without an out_dir the status path is only checked by its file name
 - [ ] `usd_roundtrip.py`: linked duplicates at the same transform are paired by fewest differences (reported in
