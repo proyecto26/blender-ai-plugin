@@ -25,7 +25,9 @@ its MESH DATA name, not its object name: the export writes a transform prim name
 named after the mesh data, and the import returns one object named after the mesh prim (measured on Blender 5.2:
 object "Crate" with mesh "Cube" comes back as "Cube"). Empties and other types are matched by object name. Results
 are still listed under the original object's name. Objects that share a label (linked duplicates share one mesh) are
-paired with their imports by the closest world matrix, so each is compared with its own import. Material names are compared the same way,
+paired with their imports by the closest world matrix. The import merges the transform prim into the mesh object, so
+the object name is not recoverable: duplicates at the SAME transform are paired by the assignment with the fewest
+differences (`ambiguous_pairings` lists those labels), so an intact round trip is never reported as a swap. Material names are compared the same way,
 because the import renames a material that already exists. `ok` is true only when nothing differs.
 
 Materials are read from the evaluated object's slots, so an OBJECT-linked slot override is what USD receives and is
@@ -35,6 +37,7 @@ material and the node's material is gone (measured on Blender 5.2: NodeMat -> Sl
 slot already holds is not a loss and is `ok: true`.
 """
 import contextlib
+import itertools
 import json
 import os
 import re
@@ -119,6 +122,25 @@ def _describe(obj, depsgraph, imported=False):
     mats = sorted({_clean_key(SUFFIX_RE.sub("", n) if imported else n) for n in names})
     return {"type": obj.type, "verts": verts, "faces": faces, "materials": mats,
             "matrix": [list(row) for row in obj.matrix_world]}
+
+
+def _assign(n_k, n_c, cost):
+    """Pairs (key index, candidate index) of the cheapest one-to-one assignment; exhaustive up to 7x7, else greedy."""
+    if n_k == 0 or n_c == 0:
+        return []
+    if n_k <= 7 and n_c <= 7:
+        if n_k <= n_c:
+            opts = (list(enumerate(p)) for p in itertools.permutations(range(n_c), n_k))
+        else:
+            opts = (list(zip(p, range(n_c))) for p in itertools.permutations(range(n_k), n_c))
+        return min(opts, key=lambda pairs: sum(cost(i, j) for i, j in pairs))
+    out, used_k, used_c = [], set(), set()
+    for _c, i, j in sorted((cost(i, j), i, j) for i in range(n_k) for j in range(n_c)):
+        if i not in used_k and j not in used_c:
+            used_k.add(i)
+            used_c.add(j)
+            out.append((i, j))
+    return out
 
 
 def _match_key(obj):
@@ -212,20 +234,25 @@ def main(out_path, objects=None, tol=1e-4, keep=False, subdivision="TESSELLATE")
 
     # Pair originals with imports within each label by the closest world matrix, so two linked duplicates at
     # different transforms are each compared with their own import and never with each other's.
-    paired, duplicates = {}, []
+    paired, duplicates, ambiguous = {}, [], []
     groups = {}
     for key in before:
         groups.setdefault(_match_key(bpy.data.objects[key[2]]), []).append(key)
     for mk, keys in groups.items():
         cands = list(after.get(mk, []))
-        pairs = sorted(((_matrix_diff(before[key], c), ki, ci) for ki, key in enumerate(keys) for ci, c in enumerate(cands)))
-        used_k, used_c = set(), set()
-        for _d, ki, ci in pairs:
-            if ki in used_k or ci in used_c:
-                continue
-            used_k.add(ki)
-            used_c.add(ci)
+        # The import merges the transform prim into the mesh object, so the object's name is not recoverable and
+        # coincident duplicates tie on the matrix. A pair costs its matrix distance (beyond tol, dominant) plus a
+        # step for each differing material set or vert/face count; the cheapest whole assignment wins, so an
+        # intact round trip never reports a swap as a loss while a real loss on one still shows.
+        def cost(ki, ci):
+            b, c = before[keys[ki]], cands[ci]
+            d = _matrix_diff(b, c)
+            return ((1000 + d) if d > tol else 0) + 10 * (b["materials"] != c["materials"]) \
+                + 10 * ((b["verts"], b["faces"]) != (c["verts"], c["faces"])) + d * 1e-6
+        for ki, ci in _assign(len(keys), len(cands), cost):
             paired[keys[ki]] = cands[ci]
+        if len({tuple(round(x, 4) for row in before[k]["matrix"] for x in row) for k in keys}) < len(keys):
+            ambiguous.append(mk[1])
         if len(cands) > len(keys):
             duplicates.append(f"{mk[1]} ({len(cands)} imported for {len(keys)} exported)")
 
@@ -272,7 +299,7 @@ def main(out_path, objects=None, tol=1e-4, keep=False, subdivision="TESSELLATE")
                     pass
     return {"ok": not problems, "problems": problems, "path": out_path, "bytes": os.path.getsize(out_path),
             "exported": sorted(k[1] for k in before), "imported": sorted(f"{t}:{n}" for (t, n), ds in after.items() for _ in ds), "per_object": per_object,
-            "counts_exported": count_before, "removed_from_scene": removed, "kept": bool(keep)}
+            "counts_exported": count_before, "ambiguous_pairings": ambiguous, "removed_from_scene": removed, "kept": bool(keep)}
 
 
 ARGS = globals().get("ARGS") or _cli_args()

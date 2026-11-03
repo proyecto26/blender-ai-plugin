@@ -402,6 +402,43 @@ def run_all(out_dir):
               all(r["per_object"].get(n, {}).get("found") and r["per_object"][n]["matrix_max_diff"] < 1e-4 for n in ("DupA", "DupB")),
               r["per_object"])
 
+    @case
+    def c3_coincident_duplicates():
+        def build(targets_order):
+            reset()
+            me = cube("M").data
+            bpy.data.objects.remove(bpy.data.objects["M"])
+            mats = {n: bpy.data.materials.new(n) for n in ("MatA", "MatB")}
+            me.materials.append(None)
+            for n, m in (("DupA", "MatA"), ("DupB", "MatB")):
+                o = bpy.data.objects.new(n, me)
+                bpy.context.scene.collection.objects.link(o)
+                o.material_slots[0].link = "OBJECT"
+                o.material_slots[0].material = mats[m]
+            bpy.context.view_layer.update()
+            return targets_order
+        for order in (["DupA", "DupB"], ["DupB", "DupA"]):
+            build(order)
+            r = usd({"out_path": os.path.join(out_dir, "c3h", "co_" + "".join(order) + ".usdc"), "objects": order})
+            check(f"C3 coincident duplicates with different object materials are ok:true ({order})", r["ok"], [r["problems"], r["per_object"]])
+            check("C3 coincident duplicates are reported as an ambiguous pairing", r.get("ambiguous_pairings"), r.get("ambiguous_pairings"))
+        # a real loss on one of them (a Geometry Nodes Set Material replacing DupB's material) is still reported
+        build(["DupB", "DupA"])
+        b = bpy.data.objects["DupB"]
+        ng = bpy.data.node_groups.new("Gn", "GeometryNodeTree")
+        ng.interface.new_socket("Geometry", in_out="INPUT", socket_type="NodeSocketGeometry")
+        ng.interface.new_socket("Geometry", in_out="OUTPUT", socket_type="NodeSocketGeometry")
+        gin, gout = ng.nodes.new("NodeGroupInput"), ng.nodes.new("NodeGroupOutput")
+        sm = ng.nodes.new("GeometryNodeSetMaterial")
+        sm.inputs["Material"].default_value = bpy.data.materials.new("LostMat")
+        ng.links.new(gin.outputs[0], sm.inputs["Geometry"])
+        ng.links.new(sm.outputs["Geometry"], gout.inputs[0])
+        b.modifiers.new("Gn", "NODES").node_group = ng
+        bpy.context.view_layer.update()
+        r = usd({"out_path": os.path.join(out_dir, "c3h", "co_loss.usdc"), "objects": ["DupB", "DupA"]})
+        check("C3 a real loss on one coincident duplicate is still ok:false", not r["ok"] and any("LostMat" in p for p in r["problems"]),
+              [r["ok"], r["problems"]])
+
     # ------------------------------------------------------------------ C4 clash_audit
     def audit(**kw):
         return run("blender-mcp-workflow", "clash_audit.py", {"objects": None, **kw})
@@ -488,7 +525,7 @@ def run_all(out_dir):
 
     for fn in (c1_depsgraph, c1_armature_edit, c1_latest_unique, c1_user_collection, c2_excluded, c3_armature_orphans,
                c3_selection_refused, c3_set_material, c3_set_material_distinct, c3_object_link_override, c3_renamed_object_and_mesh,
-               c1_excluded_moved, c1_path_parent, c3_linked_duplicates, c4_open_mesh, c5_edit_mode):
+               c1_excluded_moved, c1_path_parent, c3_linked_duplicates, c3_coincident_duplicates, c4_open_mesh, c5_edit_mode):
         fn()
     return results
 
