@@ -14,12 +14,12 @@ which writes `iter13_<batch>_report.json` with `passed`, `total`, `failed` and e
 - **A1 False alarms on real renders.** Today 14 of 31 clean sequences at 640x360 return `flicker`, and on macOS 4 of 6
   (every moving one). Causes to fix: motion beyond `max_motion_px` (8), the 8 px strip left at the frame edge, moving
   lights, cameras and rotating objects.
-  Accept: on the clean real sequences in the verifier folders (`scratchpad/verify11/`, `scratchpad/verify12/`, 31 + 15),
+  Accept: on the clean real sequences in the verifier folders (`scratchpad/verify11/`, `scratchpad/verify12/`, 31 + 15; local renders outside the repo, so the new suite renders its own),
   no `flicker` verdict that is not real content change (a strobe or a light going off for one frame stays flagged).
   Report the count before and after. The edge strip is covered (a defect inside it is found).
 - **A2 Detection kept.** The synthetic matrix of iteration 12 (bands, tiles, whole frames, black and white, flat, noise,
   stripes, checker 0/0.05) still finds the frame and the region within one block; a tile injected into a real render is
-  found. A textured foreign tile for one frame still gives no event.
+  found with its region within one block of the true box (false block events on that frame must not widen it). A textured foreign tile for one frame still gives no event.
 - **A3 Event `kind`** uses the union of affected pixels, not a sum: a 33% band on a flat background is `local`.
 - **A4 Limits stated honestly** in the docstring and SKILL.md: what is still missed (black frame in a very dark scene if
   not fixed, dropouts under 16 px, fast flat black or white objects) with the measurement.
@@ -30,14 +30,15 @@ which writes `iter13_<batch>_report.json` with `passed`, `total`, `failed` and e
 - **B1** Detects `Start-Process blender -ArgumentList "-b scene.blend -a"`, `& $blender ...` and `"$BLENDER" ...` launches.
 - **B2** Reads escaped inline JSON paths (`{\"out_dir\": \"C:\\\\x\"}`); does not read `p:/` inside a URL as a Windows path.
 - **B3** Compares the total duration claimed in a message (sum of parts, or the stated total), not the first number.
-- **B4** A shell comment (`-a # {"plan": true}`) does not grant the plan exemption; the status-path check needs the real
+- **B4** A shell comment (`-a # {"plan": true}`) does not grant the plan exemption (the old case that expected OK for it
+  becomes FLAG); the status-path check needs the real
   status path, not any slash.
-- Accept: a positive and a negative case per point in `tests/agent_runs/test_score_run.py`; existing cases still pass.
+- Accept: a positive and a negative case per point in `tests/agent_runs/test_score_run.py`; other existing cases still pass.
 
 ### C. Scene state
 
-- **C1 `scene_snapshot.py`:** updates the depsgraph before reading transforms; refuses or reads the evaluated state of an
-  armature in Edit Mode, saying which; "latest" is unique for two saves in the same second; a user collection named
+- **C1 `scene_snapshot.py`:** updates the depsgraph before reading transforms; refuses an armature in Edit Mode with the
+  reason (or proves in a test that edited bone coordinates survive snapshot and restore); "latest" is unique for two saves in the same second; a user collection named
   `_Restored_dependencies` is not hidden on restore.
 - **C2 `silhouette_score.py`:** an object in an excluded collection is refused or scored with its real transform.
 - **C3 `usd_roundtrip.py`:** no orphan armatures after a run; selection and active object restored on a refused run; a
@@ -47,8 +48,8 @@ which writes `iter13_<batch>_report.json` with `passed`, `total`, `failed` and e
 
 ### D. Content tools
 
-- **D1 `import_painter_textures.py`:** a DirectX normal map gets its green channel flipped (or the run warns and asks for
-  the convention); with shared mesh data, `assign_to=["A"]` does not give B the slot, and listing both adds it once.
+- **D1 `import_painter_textures.py`:** a DirectX normal map with the convention omitted (a DirectX filename suffix) is
+  detected and flipped, or the result warns; the explicit `normal_convention="DIRECTX"` case already works and is not the test; with shared mesh data, `assign_to=["A"]` does not give B the slot, and listing both adds it once.
 - **D2 `terrain_heightfield.py`:** `replace` refuses an object with a rigid body or a Displace (or other deforming) modifier.
 - **D3 `surface_tools.py`:** a two-point seam reports G1 with G2 not measured, as documented, instead of raising.
 - **D4 `ps1_look.py`:** changing one scene does not change another scene that shares the compositor group (copy on write,
