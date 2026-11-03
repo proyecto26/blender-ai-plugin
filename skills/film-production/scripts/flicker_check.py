@@ -8,7 +8,9 @@ their neighbours, without mistaking motion for flicker. Read-only.
 ARGS:
     paths               (list[str]) frame images in playing order; or
     dir                 (str) a folder of frames, read in natural filename order (use one of paths / dir)
-    block               (int)   block size in px (default 16)
+    block               (int)   block size in px (default 16). `block` and `max_motion_px` are in pixels and were tuned at
+                        640x360: scale both with the frame width (31 clean renders upscaled 2x: block 32 and max_motion_px 48
+                        give 31 `pass`; the defaults at that size give 21 false `flicker`, see Limits)
     max_motion_px       (int)   search window: a block may move up to this many px in x and y between
                         consecutive frames (default 24). Searched in two tiers: every shift up to 8 px at full
                         resolution, and, for blocks nothing in that window explains (only when they are at least 3% of
@@ -22,6 +24,14 @@ ARGS:
                         block's own mean absolute deviation) (default 0.5)
     ambiguity_margin    (float) another candidate (more than 1 px from the best) within this residual of the
                         best counts as a rival (default 0.02)
+    bound               (float) an ambiguous block (see Method) is scored by the range of its prediction and counts as measured
+                        when that range is at most this wide, or when every candidate already says it differs by more than
+                        `flicker_threshold` (default 0.09)
+    slack               (float) a block flickers only when its deviation exceeds `flicker_threshold` by this x the worse of its
+                        two match residuals (default 0.5; an exact match, as in a static or cleanly panning shot, loses nothing)
+    ambiguous_support   (int)   a flagged block whose match was ambiguous counts only inside a group of at least this many
+                        touching flagged blocks of the same sign (default 4, a 32 x 32 px area at the default block); a flagged
+                        block of the leftover edge strip needs 2, an exactly matched block needs 1
     global_fraction     (float) an event is "global_exposure" when its affected pixels (the UNION of flagged blocks and
                         dropout cells, each pixel once) are at least this share of the pixels that were measured or
                         flagged (default 0.6); a band over a third of a flat frame is "local"
@@ -58,6 +68,17 @@ unless the scene itself is black);
 is not confirmed and is left to `unmeasured_frames`; (5) a region that turns not black or white but another level (a
 gain pop on part of the frame) is found only when it is a block-wide jump, as before.
 
+Method (ambiguous blocks): on a smooth gradient, a flat shape or a periodic pattern several candidates fit about as well with
+different block means, so there is no single prediction. The block is then scored by the RANGE of the means over the candidates
+that fit (`ambiguous_ranged` counts them): its deviation is a range too, it is a flicker only when the whole range is beyond
+the threshold (the end nearest zero is used), and it counts as measured when the range is narrow (`bound`) or already beyond
+the threshold. A +0.2 tile on a smooth floor is therefore found (every candidate says brighter) while a +0.02 one is not (the
+range reaches zero). `not_measured.ambiguous` counts every block whose match was ambiguous, including the ranged ones, which are
+in `measured_blocks` as well; `not_measured.blocks` is what really was not measured. An echo (a block's half-size opposite-sign
+copy in the next frame) is dropped only for the opposite sign and a neighbour at least 1.5x as large, so a two-frame flicker
+(same sign in both frames) is not taken for one. The residual a good match still has (render noise differs per frame) is taken from
+the better matched 30% of the blocks, between 0.01 and 0.02.
+
 Method: each block of frame t is matched in t-1 and in t+1 inside the search window by minimising the residual
 after subtracting each block's own mean (so a brightness change does not stop the match). The second difference
 is then taken between the block means at the matched places: a pan, however fast inside the window, gives 0, while
@@ -79,25 +100,35 @@ surface changing shape) are not events: they are listed in `unconfirmed_events`,
 verdict is "inconclusive" (a global exposure pop and a dropout are judged by their own rules and stay events).
 
 Measured on 31 clean real renders (640x360, EEVEE and Cycles: balls, fans, spheres, rotating objects, cameras, moving lights)
-the verdict was flicker 14, pass 13, inconclusive 4 before this method and is flicker 0, pass 19, inconclusive 12 now; the 12
-are shots where camera, lights and objects move together, 11 to 55% of their blocks can be followed, so no verdict is given.
-On 15 more renders of flat black or white fast objects, a strobe and a light off for one frame: both of those stay `flicker`
-(global_exposure), 8 of the 13 others (propellers, black boxes) are still reported, see limit (c).
+the verdict was flicker 14, pass 13, inconclusive 4 on the iteration 12 code, flicker 0, pass 19, inconclusive 12 on the
+iteration 13 round 1 code, and is flicker 0, pass 31, inconclusive 0 now. Each of those 31 with a one-frame +0.2 tile at
+[200,120,296,216] was `flicker` in 31 of 31 (round 1: 15, iteration 12: 25), region within 8 px of the tile in 30 and 40 px in
+one (a noisy dolly: `noise_ee_cam`, its lower blocks' residual 0.011 to 0.017 is above the noise floor); the same tile for two
+frames 31 of 31, within 8 px; a black tile 31 of 31, a black frame 31 of 31. On 15 more renders of flat black or white fast
+objects, a strobe and a light off for one frame: both of those stay `flicker` (global_exposure), 8 of the 13 others
+(propellers, black boxes) are still reported, see limit (c).
 Remaining limits, measured: (a) a flicker that lasts three frames or more is a hold, not a pulse, and is not found (two
-frames are); (b) an ambiguous block (smooth gradients, periodic patterns) is not scored: a +0.15 tile at [200,120,296,216]
-injected into frame 4 of real renders was found in 5 of 9 sequences that were not saturated (region error 8 px on four, 56 px on
-the fifth, where a shadow covers most of the tile) and missed where its blocks were ambiguous (a smooth floor: plain_ee_fan, 323
-of about 900 blocks), where a rotating object covers it (noise_ee_rot) or on a dark smooth background (blackbg_lit_ball); the
-verdict there is `pass` when more than half of the frame could be followed, so read `not_measured.ambiguous`; (c) a flat
-black or white object that is in the frame for one frame, or crosses a flat region faster than the window, has the shape of a
-defect and is reported (8 of the 13 flat-object renders above); (d) motion beyond `max_motion_px`, and shots where most of the
-picture changes shape, are not judged (`inconclusive`); (e) dropouts are searched within min(`max_motion_px`, 8) px.
+frames are); (b) a defect smaller than four touching blocks (32 x 32 px at the default block) on an ambiguous area, or than two
+blocks in the leftover edge strip, is not reported: a lone ambiguous block over the threshold was the form every false event on
+the clean renders took (a 16 px square of +0.2 on a smooth floor is `pass`, a 32 px one is found); (c) a flat black or white
+object that is in the frame for one frame, or crosses a flat region faster than the window, has the shape of a defect and is
+reported (8 of the 13 flat-object renders above; a ball or its shadow arriving over a smooth floor is the same shape: a clean
+`cy_ball_32dn` shot reports no event only because its ellipse is 2 blocks wide); (d) motion beyond `max_motion_px`
+is not judged reliably: shots where most of the picture changes shape are `inconclusive` only while under half of the blocks are
+followed, and a smooth background now counts as followed, so an object that jumps farther than the window over it shows as a
+flat region and is reported. The 31 renders upscaled 2x (motion doubled, window 24, block 16) give flicker 21, pass 10 (round 1:
+flicker 12, inconclusive 12, pass 7); with block 32 and window 48 they give pass 31. Scale `block` and `max_motion_px` with the
+resolution; (e) dropouts are searched within min(`max_motion_px`, 8) px; (f) a black tile is found only where the original is
+brighter than about 0.02 (the dropout rule): in four near-black shots (the tile region averages 0.01 to 0.04) its region
+came out 32 to 72 px short of the tile; (g) shots where camera, lights and objects all move under Cycles noise are the ones most
+likely to stay `inconclusive`: `noise_cy16_mixed` is `pass` here with 74% of its blocks measured (exactly or by range).
 
 Not measured (the block is skipped and counted, never scored as a pass):
     high_residual  the best match is still poor: fast motion beyond the window, an object appearing, disappearing or
                    being occluded, or content that changes shape.
     ambiguous      a rival candidate fits about as well but has a different block mean, so the answer would depend on
-                   a guess: smooth gradients, and periodic patterns whose repeats are not equally bright.
+                   a guess: smooth gradients, and periodic patterns whose repeats are not equally bright. Scored by range
+                   (see Method) and counted as measured when the range is narrow; not measured when it is wide.
 Periodic patterns (stripes, grids): a shift by one period fits as well as the true motion, so the motion found is not
 guaranteed to be the true one. The brightness measured is still right when every rival has the same block mean
 (plain stripes, checkers); when rivals differ in mean the block is "ambiguous" and not measured. A flicker that
@@ -120,6 +151,7 @@ import json
 import os
 import re
 import sys
+import warnings
 
 import bpy
 import numpy as np
@@ -165,6 +197,7 @@ def _load_luma(path):
 
 _POOL = {}
 WIDE_MIN_SHARE = 0.03
+NOISE_CAP = 0.02
 
 
 def _pooled(F, py, px, S):
@@ -254,9 +287,19 @@ def _match_window(cur, ref, y0, x0, nby, nbx, bh, bw, R, margin, ratio, mean_tol
                 fy, fx, fm = np.where(better, ty, fy), np.where(better, tx, fx), np.where(better, pm, fm)
         oy, ox, best_m, best_r = fy, fx, fm, fr_
     code = np.zeros((nby, nbx), dtype=np.int8)
-    code[~np.isfinite(best_r) | (best_r > np.maximum(0.01, ratio * dev))] = 1
+    fin = best_r[np.isfinite(best_r)]
+    # render noise differs from frame to frame and no shift removes it: the residual a well-matched block still has is
+    # taken from the better matched third of the blocks, between the fixed 0.01 and NOISE_CAP
+    floor = float(np.clip(1.5 * np.percentile(fin, 30), 0.01, NOISE_CAP)) if fin.size else 0.01
+    code[~np.isfinite(best_r) | (best_r > np.maximum(floor, ratio * dev))] = 1
     code[(code == 0) & rival] = 2
-    return np.where(code == 0, best_m, np.nan), code, oy, ox
+    # the range of block means over every candidate that fits about as well as the best: what an ambiguous block's
+    # prediction could be (the best candidate's refined mean is included)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)  # an all-NaN column: no candidate inside the frame
+        lo = np.fmin(np.nanmin(np.where(near, means, np.nan), axis=0), best_m)
+        hi = np.fmax(np.nanmax(np.where(near, means, np.nan), axis=0), best_m)
+    return np.where(code == 0, best_m, np.nan), code, oy, ox, lo, hi, best_r
 
 
 def _match(cur, ref, y0, x0, nby, nbx, bh, bw, R, margin, ratio, mean_tol):
@@ -346,13 +389,41 @@ def _dropouts(frames, t, cell, R, level, flat_dev, gap):
             for i in np.nonzero(ok)[0]]
 
 
+def _supported(flagged):
+    """The flagged blocks (x0, y0, x1, y1, dev, need) that sit in a group of touching blocks of the same sign at least as large
+    as the biggest `need` in it. A block matched exactly needs 1; a block of the leftover edge strip needs 2; a block whose
+    match was ambiguous needs 4 (a 32 x 32 px area at the default block): an ambiguous or edge block is weak evidence, and
+    one alone over the threshold is an object edge or a chance match far more often than a defect."""
+    if not flagged or all(len(f) < 6 or f[5] <= 1 for f in flagged):
+        return flagged
+    n = len(flagged)
+    parent = list(range(n))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+    for i in range(n):
+        for j in range(i + 1, n):
+            a, b = flagged[i], flagged[j]
+            if a[4] * b[4] > 0 and a[0] <= b[2] and b[0] <= a[2] and a[1] <= b[3] and b[1] <= a[3]:
+                parent[find(i)] = find(j)
+    size, need = {}, {}
+    for i in range(n):
+        r = find(i)
+        size[r] = size.get(r, 0) + 1
+        need[r] = max(need.get(r, 1), flagged[i][5] if len(flagged[i]) > 5 else 1)
+    return [flagged[i] for i in range(n) if size[find(i)] >= need[find(i)]]
+
+
 def _natural_files(d):
     names = [f for f in os.listdir(d) if os.path.splitext(f)[1].lower() in IMG_EXT]
     return [os.path.join(d, f) for f in sorted(names, key=_natural)]
 
 
 def main(paths=None, dir=None, block=16, max_motion_px=24, flicker_threshold=0.03, reject_ratio=0.5,
-         ambiguity_margin=0.02, global_fraction=0.6, min_measured=0.5, dropout_level=0.015, dropout_flat_dev=0.01,
+         ambiguity_margin=0.02, bound=0.09, slack=0.5, ambiguous_support=4, global_fraction=0.6, min_measured=0.5, dropout_level=0.015, dropout_flat_dev=0.01,
          dropout_gap=0.02, neighbour_agreement=0.5):
     if bool(paths) == bool(dir):
         raise ValueError("pass exactly one of 'paths' or 'dir'")
@@ -390,7 +461,8 @@ def main(paths=None, dir=None, block=16, max_motion_px=24, flicker_threshold=0.0
     _POOL.clear()
 
     per_frame = {t: {"frame": t, "file": os.path.basename(files[t]), "measured": 0,
-                     "not_measured": {"high_residual": 0, "ambiguous": 0}, "max_abs_dev": None}
+                     "not_measured": {"high_residual": 0, "ambiguous": 0}, "ambiguous_ranged": 0, "blocks": 0,
+                     "max_abs_dev": None}
                  for t in range(1, len(frames) - 1)}
     flagged_by_t = {t: [] for t in per_frame}  # (x0, y0, x1, y1, dev) of blocks over the threshold
     step_by_t = {t: [] for t in per_frame}  # the same for blocks that equal one neighbour and differ from the other
@@ -398,13 +470,14 @@ def main(paths=None, dir=None, block=16, max_motion_px=24, flicker_threshold=0.0
     dev_at = {t: {} for t in per_frame}  # (x0, y0) of a block -> its signed deviation in frame t (measured blocks only)
     foot_at = {t: {} for t in per_frame}  # (x0, y0, neighbour frame) -> (x, y, w, h) of the matched footprint there
     totals = {"high_residual": 0, "ambiguous": 0}
+    ranged_total = 0
     meas_mask = {t: np.zeros((H, W), dtype=bool) for t in per_frame}  # pixels of measured blocks
     n_meas = n_all = 0
     for (ry, rx, ny, nx, bh, bw, sub) in regions:
         r0, r1, c0, c1 = sub or (0, bh, 0, bw)
         for t in range(1, len(frames) - 1):
-            mp, cp, pyo, pxo = _match(frames[t], frames[t - 1], ry, rx, ny, nx, bh, bw, R, ambiguity_margin, reject_ratio, thr / 2)
-            mn, cn, nyo, nxo = _match(frames[t], frames[t + 1], ry, rx, ny, nx, bh, bw, R, ambiguity_margin, reject_ratio, thr / 2)
+            mp, cp, pyo, pxo, lop, hip, rsp = _match(frames[t], frames[t - 1], ry, rx, ny, nx, bh, bw, R, ambiguity_margin, reject_ratio, thr / 2)
+            mn, cn, nyo, nxo, lon, hin, rsn = _match(frames[t], frames[t + 1], ry, rx, ny, nx, bh, bw, R, ambiguity_margin, reject_ratio, thr / 2)
             code = np.maximum(cp, cn)
             tmean = frames[t][ry:ry + ny * bh, rx:rx + nx * bw].reshape(ny, bh, nx, bw).mean(axis=(1, 3))
             if sub:  # score only the leftover pixels of an edge block, at the offsets the whole block matched at
@@ -417,14 +490,36 @@ def main(paths=None, dir=None, block=16, max_motion_px=24, flicker_threshold=0.0
                     spm[gy, gx] = _gather(frames[t - 1], gy, gx, ry, rx, bh, bw, pyo[gy, gx], pxo[gy, gx], sub).mean(axis=(1, 2))
                     snm[gy, gx] = _gather(frames[t + 1], gy, gx, ry, rx, bh, bw, nyo[gy, gx], nxo[gy, gx], sub).mean(axis=(1, 2))
                 tmean, mp, mn = sm, spm, snm
-            dev = tmean - 0.5 * (mp + mn)  # signed; NaN where not measured
-            dev[code != 0] = np.nan
+            # An ambiguous block (several candidates fit about as well, with different means) has a prediction known only
+            # as a range [lo, hi] per neighbour. Its deviation is then a range too, and the block is scored by the end nearest
+            # zero: it is a flicker only when every candidate says so. It counts as measured when that range is narrow
+            # enough (`bounded`) to certify that no deviation above `bound` hides in it.
+            if sub:
+                Pl, Ph, Nl, Nh = mp, mp, mn, mn
+                bounded = code == 0
+            else:
+                Pl, Ph = np.where(cp == 0, mp, lop), np.where(cp == 0, mp, hip)
+                Nl, Nh = np.where(cn == 0, mn, lon), np.where(cn == 0, mn, hin)
+                d_hi, d_lo = tmean - 0.5 * (Pl + Nl), tmean - 0.5 * (Ph + Nh)
+                bounded = (code == 0) | ((code == 2) & (((d_hi - d_lo) <= bound) | (d_lo > thr) | (d_hi < -thr)))
+            if sub:
+                dev = tmean - 0.5 * (mp + mn)
+            else:
+                dev = np.where(d_lo > 0, d_lo, np.where(d_hi < 0, d_hi, 0.0))  # signed, nearest zero; NaN where not measured
+            dev[~bounded] = np.nan
+            gap = np.maximum(0.0, np.maximum(Pl, Nl) - np.minimum(Ph, Nh))  # how far apart the neighbours' predictions must be
             # Ambiguous blocks are not scored: a block no candidate match explains is not evidence of flicker.
             # A flicker moves the whole block: the middle half of the per-pixel differences against the matched
             # neighbours (interquartile mean) must show it too. An object edge crossing the block changes the mean but
             # not most of the pixels.
             cdev = dev.copy()
-            cy_, cx_ = np.nonzero(np.abs(cdev) > thr)
+            # a match that leaves a residual is evidence with that much slack: the deviation must clear the threshold by
+            # half the worse of the two residuals (exact matches, as in a static or a cleanly panning shot, lose nothing)
+            thr_eff = thr + slack * np.maximum(rsp, rsn)
+            lvl = np.full(cdev.shape, 2.0 if sub else 1.0)  # how many touching blocks a flag needs (see _supported)
+            if not sub:
+                lvl[(cp == 2) | (cn == 2)] = float(ambiguous_support)
+            cy_, cx_ = np.nonzero(np.abs(cdev) > thr_eff)
             if len(cy_):
                 zz = np.zeros(len(cy_), dtype=int)
                 Cb = _gather(frames[t], cy_, cx_, ry, rx, bh, bw, zz, zz, sub)
@@ -441,22 +536,25 @@ def main(paths=None, dir=None, block=16, max_motion_px=24, flicker_threshold=0.0
             # neighbours' means are more than `neighbour_agreement` x the deviation apart), is an object arriving or leaving
             # or a light changing for good: it is not an event by itself. It is kept as a candidate, because a flicker
             # that lasts two frames looks like two steps in a row at the same place (see below).
-            step = np.abs(mp - mn) > neighbour_agreement * np.abs(dev)
+            step = gap > neighbour_agreement * np.abs(dev)
             sdev = np.where(step, cdev, np.nan)
             cdev = np.where(step, np.nan, cdev)
-            for y, x in zip(*np.nonzero(np.abs(sdev) > thr)):
+            for y, x in zip(*np.nonzero(np.abs(sdev) > thr_eff)):
                 step_by_t[t].append((rx + int(x) * bw + c0, ry + int(y) * bh + r0, rx + int(x) * bw + c1, ry + int(y) * bh + r1,
-                                     float(sdev[y, x])))
-            hi, amb = int((code == 1).sum()), int((code == 2).sum())
-            meas = int((code == 0).sum())
+                                     float(sdev[y, x]), int(lvl[y, x])))
+            hi, amb, rng_ = int((code == 1).sum()), int((code == 2).sum()), int(((code == 2) & bounded).sum())
+            meas = int(bounded.sum())
             totals["high_residual"] += hi
             totals["ambiguous"] += amb
+            ranged_total += rng_
             n_meas += meas
             n_all += code.size
             pf = per_frame[t]
             pf["measured"] += meas
             pf["not_measured"]["high_residual"] += hi
             pf["not_measured"]["ambiguous"] += amb
+            pf["ambiguous_ranged"] += rng_
+            pf["blocks"] += code.size
             if meas:
                 m = round(float(np.nanmax(np.abs(dev))), 5)
                 pf["max_abs_dev"] = m if pf["max_abs_dev"] is None else max(pf["max_abs_dev"], m)
@@ -466,14 +564,14 @@ def main(paths=None, dir=None, block=16, max_motion_px=24, flicker_threshold=0.0
                 for u, oy_, ox_ in ((t - 1, pyo, pxo), (t + 1, nyo, nxo)):
                     foot_at[t][(rx + int(x) * bw, ry + int(y) * bh, u)] = (
                         rx + int(x) * bw + int(ox_[y, x]), ry + int(y) * bh + int(oy_[y, x]), bw, bh)
-            ys, xs = np.nonzero(np.abs(cdev) > thr)  # NaN compares False
+            ys, xs = np.nonzero(np.abs(cdev) > thr_eff)  # NaN compares False
             flagged_by_t[t] += [(rx + int(x) * bw + c0, ry + int(y) * bh + r0, rx + int(x) * bw + c1, ry + int(y) * bh + r1,
-                                 float(cdev[y, x])) for y, x in zip(ys, xs)]
+                                 float(cdev[y, x]), int(lvl[y, x])) for y, x in zip(ys, xs)]
             if sub:
-                for y, x in zip(*np.nonzero(code == 0)):
+                for y, x in zip(*np.nonzero(bounded)):
                     meas_mask[t][ry + int(y) * bh + r0:ry + int(y) * bh + r1, rx + int(x) * bw + c0:rx + int(x) * bw + c1] = True
             else:
-                meas_mask[t][ry:ry + ny * bh, rx:rx + nx * bw] |= np.repeat(np.repeat(code == 0, bh, axis=0), bw, axis=1)
+                meas_mask[t][ry:ry + ny * bh, rx:rx + nx * bw] |= np.repeat(np.repeat(bounded, bh, axis=0), bw, axis=1)
     # a flicker that lasts two frames: the same block is a step of the same sign and size in two consecutive frames
     for t, steps in step_by_t.items():
         for f in steps:
@@ -489,14 +587,14 @@ def main(paths=None, dir=None, block=16, max_motion_px=24, flicker_threshold=0.0
     unconfirmed = []
     for t, flagged in flagged_by_t.items():
         # a one-frame bump also shows at half size, opposite sign, in its neighbours, at the place the motion match
-        # carries it to: drop a block whose deviation is smaller than that of a block overlapping the footprint it
-        # matched to in an adjacent frame (per block and per match, so an independent event elsewhere survives)
+        # carries it to: drop a block whose deviation is smaller than that of a block of the opposite sign overlapping the
+        # footprint it matched to in an adjacent frame (the same sign is a flicker lasting two frames, not an echo) (per block and per match, so an independent event elsewhere survives)
         def echo(f, t=t):
             for u in (t - 1, t + 1):
                 fx, fy, fw, fh = foot_at[t].get((f[0], f[1], u), (f[0], f[1], f[2] - f[0], f[3] - f[1]))
                 for (bx, by, bw_, bh_), d in dev_at.get(u, {}).items():
                     ov = max(0, min(fx + fw, bx + bw_) - max(fx, bx)) * max(0, min(fy + fh, by + bh_) - max(fy, by))
-                    if ov >= 0.25 * min(fw * fh, bw_ * bh_) and abs(d) > abs(f[4]):
+                    if ov >= 0.25 * min(fw * fh, bw_ * bh_) and abs(d) > 1.5 * abs(f[4]) and d * f[4] < 0:
                         return True
                 # the same for a dropout in the adjacent frame: a block matched into or beside a region that went flat there
                 # (a cell wide on each side: the edge of the region is only partly flat) differs because of it
@@ -507,7 +605,7 @@ def main(paths=None, dir=None, block=16, max_motion_px=24, flicker_threshold=0.0
                         return True
             return False
 
-        flagged = [f for f in flagged if not echo(f)]
+        flagged = _supported([f for f in flagged if not echo(f)])
         drops = drops_by_t[t]
         flagged = flagged + drops
         if not flagged:
@@ -520,7 +618,7 @@ def main(paths=None, dir=None, block=16, max_motion_px=24, flicker_threshold=0.0
             hit[f[1]:f[3], f[0]:f[2]] = True
         kind = "global_exposure" if hit.sum() >= global_fraction * (hit | meas_mask[t]).sum() else "local"
         pf = per_frame[t]
-        total_t = pf["measured"] + pf["not_measured"]["high_residual"] + pf["not_measured"]["ambiguous"]
+        total_t = pf["blocks"]
         if kind == "local" and not drops and total_t and pf["measured"] < min_measured * total_t:
             # blocks from a frame where most of the picture could not be followed (a fast camera, lights moving, everything
             # changing shape): the few that matched are as likely to be a chance match as a defect. Not an event; the frame
@@ -543,7 +641,7 @@ def main(paths=None, dir=None, block=16, max_motion_px=24, flicker_threshold=0.0
     gm = [float(fr.mean()) for fr in frames]
     unmeasured = []
     for t, pf in per_frame.items():
-        total_t = pf["measured"] + pf["not_measured"]["high_residual"] + pf["not_measured"]["ambiguous"]
+        total_t = pf["blocks"]
         pf["measured_share"] = round(pf["measured"] / total_t, 4) if total_t else 0.0
         if total_t and pf["measured"] < min_measured * total_t:
             unmeasured.append(t)
@@ -570,7 +668,7 @@ def main(paths=None, dir=None, block=16, max_motion_px=24, flicker_threshold=0.0
             "frames": len(frames), "evaluated_frames": len(per_frame),
             "block_px": B, "max_motion_px": R, "flicker_threshold": thr,
             "measured_blocks": n_meas, "total_blocks": n_all, "measured_share": round(share, 4),
-            "not_measured": {"blocks": n_all - n_meas, **totals},
+            "not_measured": {"blocks": n_all - n_meas, **totals}, "ambiguous_ranged": ranged_total,
             "per_frame": [per_frame[t] for t in sorted(per_frame)],
             "domain": f"motion up to {R}px per frame in x and y between consecutive frames; blocks outside it, "
                       "ambiguous matches and occlusions are not_measured, never counted as a pass"}
