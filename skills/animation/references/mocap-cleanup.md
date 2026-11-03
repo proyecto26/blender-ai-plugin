@@ -21,7 +21,7 @@ These are starting points for a 30 fps clip, to be tuned by looking at the curve
 |---|---|---|
 | Spike test | value more than 0.5 m (location) or 0.5 rad (rotation) from the median of 5 neighbours | tune to the clip's speed: a fast punch legitimately moves far in a few frames |
 | Smoothing | gaussian, sigma 1 to 2 frames | stay at 1 for impacts, hit reactions and anything that must snap |
-| Key reduction tolerance | 0.005 m on location, 0.01 rad (about 0.6 degrees) on rotation | the largest error the simplified curve may have at any original frame |
+| Key reduction tolerance | 0.005 m on location, 0.01 rad (about 0.6 degrees) on rotation | the tolerance the reduction step uses between the kept keys and the smoothed values. It holds for the evaluated curve only with linear key interpolation (measured 0.0049 m and 0.0047 rad); with Bezier keys, as in the recipe, the evaluated curve strays further (measured 0.0158 m and 0.0641 rad, see below) |
 | Keep keys on | contact frames, loop start and end | reduction can remove a key that defines a plant |
 
 ## Recipe (tested)
@@ -149,7 +149,7 @@ assert report["rot_rms_vs_truth_after"] < report["rot_rms_vs_truth_before"] / 10
 result = report
 ```
 
-Result when run on Blender 5.2.3: location 120 keys down to 45 with 1 spike removed; rotation 120 keys down to 4; error against the
+Result when run on Blender 5.2.3 (error against the smoothed values the reduction was given, at every original frame, evaluated from the keys: with the recipe's Bezier keys the location is off by at most 0.0158 m and the rotation by 0.0641 rad, over the 0.005 and 0.01 tolerances; the same keys set to linear are off by 0.0049 m and 0.0047 rad, inside them. Only the interpolation differs between the two runs.): location 120 keys down to 45 with 1 spike removed; rotation 120 keys down to 4; error against the
 known curve 0.141 down to 0.016; largest rotation step between frames 6.26 rad down to 0.025; rotation error against the true ramp 4.06 rad down to 0.043. The smoothed rotation ends
 sit about 0.04 rad off the truth because the filter pulls the first and last frames of a ramp toward their neighbours: for
 a loop, keep the end frames out of the smoothing.
@@ -168,7 +168,7 @@ context.
 |---|---|---|
 | Limb snaps or spins for one frame | Euler flip, or a spike | unwrap, then despike; check the value 1 frame either side |
 | Punches and landings feel soft | smoothing sigma too high | sigma 1, or smooth only the channels that jitter |
-| Cleaned curve overshoots between keys | Bezier handles on a coarse reduction | lower the tolerance, or use linear interpolation on those keys |
+| Cleaned curve overshoots between keys | Bezier handles on a coarse reduction | use linear interpolation on those keys (measured inside the tolerance), or lower the tolerance (not measured) |
 | Loop pops at the seam | first and last pose differ | blend the last frames toward the first, or cut the clip at matching poses |
 | Feet slide on the ground | root motion and leg motion disagree | pin feet with IK on contact frames; do not fix by smoothing |
 | Clip plays at the wrong speed | scene fps differs from capture fps | set fps first, then retime |

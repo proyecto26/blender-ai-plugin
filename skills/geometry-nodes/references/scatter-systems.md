@@ -82,7 +82,7 @@ onto a surface below or to test a line of sight; it is not needed for clearance 
 ## Performance cap
 
 Cap the count by capping density, not by keeping the first N points by index: index order follows the mesh, not a fair
-random sample, so an index cut can empty whole areas (not measured here). Use `density = min(density, cap / surface_area)`.
+random sample, so an index cut can empty whole areas (not measured here). Use `density = min(density, cap / surface_area)`. This is a soft cap, not a hard one: Distribute Points on Faces places a random count around density times area. Measured on Blender 5.2.3 on a 10 m by 10 m flat grid, 100 seeds at cap 500 (density 5.0): 471 to 530 points, mean 499.75, 50 of the 100 seeds over the cap; at cap 100: 72 to 133, 45 over. If the limit is hard, leave headroom: the worst seed was 6% over at 500 and 33% over at 100 (a different surface or mesh may differ). A hard cap was not implemented here.
 
 Background: 500 instances. Hero zone: 2000 at most. Check the number from the evaluated depsgraph, as in the recipe.
 
