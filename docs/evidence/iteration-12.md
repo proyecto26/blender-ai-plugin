@@ -1,7 +1,7 @@
 # Evidence for the measured sentences added in iteration 12
 
 Scope: lines added to `.md` files under `skills/` and `docs/` between `6493832` and `98d7076` that state a number, "measured",
-"tested", "verified" or "checked" (found with `git diff 6493832 98d7076 -- skills docs`; the roadmap file is excluded).
+"tested", "verified" or "checked", or report an observation on Windows or macOS (found with `git diff 6493832 98d7076 -- skills docs`; the roadmap file is excluded).
 Line numbers are those of the file at `98d7076`; batch E of iteration 13 has since edited some of the files, so the lines may
 have moved. "Recipe run" means the block is inventoried in `tests/blender/recipes.json` and executed twice by
 `tests/blender/run_recipes.py`, with the recipe's own `assert`s; those asserts bound the reported numbers (they pass or fail)
@@ -27,6 +27,11 @@ but the exact printed value is not compared to the sentence by any test. I did n
 | 16 | USD facts: transform + mesh prim pair, `BEST_MATCH` writes a cage, `.001` names, `MAKE_UNIQUE` | `usd-pipeline/SKILL.md`:55 | `test_roadmap.py` R5 covers `.001` round trip and the `BEST_MATCH` lossy case; the pairing and `TESSELLATE` default are exercised by the round trip but no assertion names them | partly backed |
 | 17 | "Tested on Blender 5.2 LTS via the official Blender MCP" | `usd-pipeline/SKILL.md`:79 | the tests run headless; no MCP run is recorded | **unbacked** (the "via MCP" part) |
 | 18 | Plan lines R11/R12 "with a tested recipe", S3 wording rule, branch/base commit | `docs/plans/iteration-12-parity-and-roadmap.md`:3, 77, 78, 90 | plan text, not a measurement; recipes in rows 1 and 9 | not a measurement |
+| 19 | MCP tools run on Windows; a minimized window captured black there | `blender-mcp-workflow/references/live-session.md`:4, 42 | PR #9 comment "macOS verification of PR #9", results table, Windows column: "black image" (carried from the PR #9 description's Windows runs; no recorded Windows run in the repo) | backed by PR text only |
+| 20 | "A partly covered window was seen to capture correctly" (Windows) | `live-session.md`:42 | no test, and neither PR comment mentions a partly covered window | **unbacked** |
+| 21 | macOS: a minimized window still captured the current scene | `live-session.md`:43; `docs/local_skill_development.md`:78 ("a defect on Windows only") | PR #9 macOS comment, "Minimized window": minimized through System Events, moved `Cube` to x=3, next screenshot showed x=3 (macOS 26, M2 Max, Blender 5.2.3) | backed by a manual run, no test |
+| 22 | macOS: the `*_for_cli` tool gives up at 120 s and a directly started Blender is killed | `live-session.md`:91; `blender-mcp-workflow/references/mcp-tools.md`:37-38 | PR #9 macOS comment, "`*_for_cli` timeout": heartbeat every 5 s, last at t=115, `finished` never written, PID gone, "Blender CLI timed out after 120s" | backed by a manual run, no test |
+| 23 | Windows (Store launcher): Blender "kept running to at least 150 s" | `live-session.md`:92-93; `mcp-tools.md`:38-39 | PR #9 macOS table lists the 150 s case for Windows as "not testable (Store)", and the PR #9 description only says the 120 s give-up "does not prove the process stopped"; no recorded run reaches 150 s | **unbacked** (the macOS comment contradicts "tried") |
 
-Unbacked: rows 11, 12 (non-shipped rows), 17 (MCP). Row 13 rests on manual runs only. Rows marked "numbers unasserted" would be backed more strongly
-by a test that compares the printed value to the doc.
+Unbacked: rows 11, 12 (non-shipped rows), 17 (MCP), 20, 23. Rows 13, 19, 21, 22 rest on manual runs or PR text only.
+Not covered here: sentences in `.py` docstrings (for example the `background_render.py` timing figures, whose macOS run is in the PR #10 comment).
