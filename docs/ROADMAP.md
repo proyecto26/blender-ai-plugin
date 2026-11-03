@@ -99,10 +99,12 @@ Measured limits left after the iteration 13 fixes.
 
 - [ ] `flicker_check.py`: 8 of 13 renders of fast flat black or white objects (propellers, black boxes) are still
   reported; a black tile in a near-black shot is found but its region is 32 to 72 px short; a flicker lasting 3 or more
-  frames is not found; a pan faster than 24 px per frame at 640x360 (scaled with size) needs `max_motion_px` raised; the
-  higher resolutions were measured on upscaled renders, not native ones
-- [ ] `score_run.py`: matches tokens and does not parse the shell; without an out_dir the status path is only checked by
-  its file name
+  frames is not found; a pan faster than 24 px per frame at 640x360 (scaled with size) needs `max_motion_px` raised, and
+  far beyond the search window (about 200 px per frame at 1080p) a clean shot is reported as `flicker`, not
+  `inconclusive`; native 1080p was checked on three Eevee sequences only (no Cycles); in a 1080p pan with a black tile
+  an extra small event is reported one frame later
+- [ ] `score_run.py`: matches tokens and does not parse the shell (`eval`, command substitution, aliases and paths built
+  at run time are not read); without an out_dir the status path is only checked by its file name
 - [ ] `import_painter_textures.py`: the normal convention is read from the file name only
 - [ ] Blender suites in CI (they run by hand today)
 
