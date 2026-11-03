@@ -111,6 +111,9 @@ def _sock(sockets, name):
     raise KeyError(f"no socket {name!r}: {[s.name for s in sockets]}")
 
 
+NORMAL_TOKENS = ("normal", "nrm", "nor")
+
+
 def main(folder, material=None, texture_set=None, normal_convention=None, patterns=None, ao="skip",
          height_strength=0.5, assign_to=None, pack=False):
     if not os.path.isdir(folder):
@@ -164,8 +167,18 @@ def main(folder, material=None, texture_set=None, normal_convention=None, patter
 
     warnings = []
     if "normal" in found:
-        toks = {t for t in re.split(r"[^a-z0-9]+", os.path.splitext(found["normal"])[0].lower()) if t}
-        named = "DIRECTX" if {"directx", "dx"} & toks else "OPENGL" if {"opengl", "gl"} & toks else None
+        toks = [t for t in re.split(r"[^a-z0-9]+", os.path.splitext(found["normal"])[0].lower()) if t]
+        conv_at = [(i, "DIRECTX" if t in ("directx", "dx") else "OPENGL")
+                   for i, t in enumerate(toks) if t in ("directx", "dx", "opengl", "gl")]
+        named = None
+        if conv_at:
+            # the convention suffix sits next to the normal token ("Armor_Normal_OpenGL"); a stray "DX_" asset prefix
+            # elsewhere in the name must not outvote it
+            n_at = max((i for i, t in enumerate(toks) if t in NORMAL_TOKENS), default=len(toks))
+            named = min(conv_at, key=lambda c: (abs(c[0] - n_at), c[0] < n_at))[1]
+            if len({c for _, c in conv_at}) > 1:
+                warnings.append(f"normal map {found['normal']!r} names both DirectX and OpenGL; used {named}, the one next "
+                                "to the 'normal' token. Pass normal_convention to override.")
         if convention is None:
             convention = named or "OPENGL"
             if named is None:
