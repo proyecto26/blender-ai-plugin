@@ -24,7 +24,8 @@ Matching: an imported object is paired with the original of the same type and th
 its MESH DATA name, not its object name: the export writes a transform prim named after the object and a mesh prim
 named after the mesh data, and the import returns one object named after the mesh prim (measured on Blender 5.2:
 object "Crate" with mesh "Cube" comes back as "Cube"). Empties and other types are matched by object name. Results
-are still listed under the original object's name. Material names are compared the same way,
+are still listed under the original object's name. Objects that share a label (linked duplicates share one mesh) are
+paired with their imports by the closest world matrix, so each is compared with its own import. Material names are compared the same way,
 because the import renames a material that already exists. `ok` is true only when nothing differs.
 
 Materials are read from the evaluated object's slots, so an OBJECT-linked slot override is what USD receives and is
@@ -197,14 +198,36 @@ def main(out_path, objects=None, tol=1e-4, keep=False, subdivision="TESSELLATE")
 
     new = {coll: [i for i in getattr(bpy.data, coll) if i.name not in snap[coll]] for coll in snap}
     dg = bpy.context.evaluated_depsgraph_get()
-    after, duplicates = {}, []
+    # Objects that share one mesh (linked duplicates) share a label, so each label holds a LIST of imported objects
+    # and the originals with that label are paired with them by transform below.
+    after = {}
     for o in new["objects"]:
         # a mesh object is named after its mesh prim, which the exporter names from the MESH DATA (see "Matching")
         label = o.data.name if o.type == "MESH" and o.data else o.name
         k = (o.type, _clean_key(SUFFIX_RE.sub("", label)))
-        if k in after:
-            duplicates.append(o.name)
-        after[k] = _describe(o, dg, imported=True)
+        after.setdefault(k, []).append(_describe(o, dg, imported=True))
+
+    def _matrix_diff(a, b):
+        return max(abs(x - y) for ra, rb in zip(a["matrix"], b["matrix"]) for x, y in zip(ra, rb))
+
+    # Pair originals with imports within each label by the closest world matrix, so two linked duplicates at
+    # different transforms are each compared with their own import and never with each other's.
+    paired, duplicates = {}, []
+    groups = {}
+    for key in before:
+        groups.setdefault(_match_key(bpy.data.objects[key[2]]), []).append(key)
+    for mk, keys in groups.items():
+        cands = list(after.get(mk, []))
+        pairs = sorted(((_matrix_diff(before[key], c), ki, ci) for ki, key in enumerate(keys) for ci, c in enumerate(cands)))
+        used_k, used_c = set(), set()
+        for _d, ki, ci in pairs:
+            if ki in used_k or ci in used_c:
+                continue
+            used_k.add(ki)
+            used_c.add(ci)
+            paired[keys[ki]] = cands[ci]
+        if len(cands) > len(keys):
+            duplicates.append(f"{mk[1]} ({len(cands)} imported for {len(keys)} exported)")
 
     problems = []
     count_before = {}
@@ -212,13 +235,13 @@ def main(out_path, objects=None, tol=1e-4, keep=False, subdivision="TESSELLATE")
         count_before[d["type"]] = count_before.get(d["type"], 0) + 1
     # Compare only objects that exist on both sides by type: the import may add Xform empties for parents.
     for typ in ("MESH",):
-        n_after = sum(1 for d in after.values() if d["type"] == typ)
+        n_after = sum(1 for ds in after.values() for d in ds if d["type"] == typ)
         if n_after != count_before.get(typ, 0):
             problems.append(f"{typ} count: exported {count_before.get(typ, 0)}, imported {n_after}")
     per_object = {}
     for key, b in before.items():
         k = key[1]
-        a = after.get(_match_key(bpy.data.objects[key[2]]))
+        a = paired.get(key)
         if a is None:
             problems.append(f"{k}: not found after import as {key[0]}")
             per_object[k] = {"found": False}
@@ -234,7 +257,7 @@ def main(out_path, objects=None, tol=1e-4, keep=False, subdivision="TESSELLATE")
         if a["materials"] != b["materials"]:
             problems.append(f"{k}: materials {b['materials']} -> {a['materials']}")
     for name in duplicates:
-        problems.append(f"{name}: imported twice under the same cleaned name")
+        problems.append(f"{name}: more objects imported than exported")
 
     removed = 0
     if not keep:
@@ -248,7 +271,7 @@ def main(out_path, objects=None, tol=1e-4, keep=False, subdivision="TESSELLATE")
                 except (ReferenceError, RuntimeError):
                     pass
     return {"ok": not problems, "problems": problems, "path": out_path, "bytes": os.path.getsize(out_path),
-            "exported": sorted(k[1] for k in before), "imported": sorted(f"{t}:{n}" for t, n in after), "per_object": per_object,
+            "exported": sorted(k[1] for k in before), "imported": sorted(f"{t}:{n}" for (t, n), ds in after.items() for _ in ds), "per_object": per_object,
             "counts_exported": count_before, "removed_from_scene": removed, "kept": bool(keep)}
 
 

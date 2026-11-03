@@ -359,6 +359,49 @@ def run_all(out_dir):
         msg = raises(lambda: snap(action="diff", dir=d, a="A", b="current"))
         check("C1 an unevaluated object with a constraint is refused, naming it", msg is not None and "Mv" in msg, msg)
 
+    @case
+    def c1_path_parent():
+        reset()
+        coll = bpy.data.collections.new("Out")
+        bpy.context.scene.collection.children.link(coll)
+        cu = bpy.data.curves.new("Route", "CURVE")
+        cu.dimensions = "3D"
+        sp = cu.splines.new("POLY")
+        sp.points.add(1)
+        sp.points[0].co, sp.points[1].co = (0, 0, 0, 1), (10, 0, 0, 1)
+        cu.use_path = True
+        cu.path_duration = 100
+        cu.eval_time = 50
+        route = bpy.data.objects.new("Route", cu)
+        coll.objects.link(route)
+        kid = bpy.data.objects.new("Rider", None)
+        coll.objects.link(kid)
+        kid.parent = route
+        bpy.context.view_layer.update()
+        in_blender = kid.matrix_world.translation.x
+        bpy.context.view_layer.layer_collection.children["Out"].exclude = True
+        msg = raises(lambda: snap(action="save", dir=os.path.join(out_dir, "c1g"), name="A"))
+        check("C1 a child of a path-animated curve outside every view layer is refused, not rebuilt without the path",
+              abs(in_blender - 5) < 1e-4 and msg is not None and "Rider" in msg, [in_blender, msg])
+        cu.use_path = False
+        ok = raises(lambda: snap(action="save", dir=os.path.join(out_dir, "c1g"), name="B"))
+        check("C1 a curve without path animation does not block the rebuild", ok is None, ok)
+
+    @case
+    def c3_linked_duplicates():
+        reset()
+        a = cube("DupA")
+        b = bpy.data.objects.new("DupB", a.data)  # linked duplicate: one mesh, two objects
+        bpy.context.scene.collection.objects.link(b)
+        b.location = (3, 0, 0)
+        b.scale = (2, 1, 1)
+        bpy.context.view_layer.update()
+        r = usd({"out_path": os.path.join(out_dir, "c3g", "dup.usdc"), "objects": ["DupA", "DupB"]})
+        check("C3 linked duplicates at different transforms round-trip as ok:true", r["ok"], [r["problems"], r["per_object"]])
+        check("C3 each is found and matches its own transform",
+              all(r["per_object"].get(n, {}).get("found") and r["per_object"][n]["matrix_max_diff"] < 1e-4 for n in ("DupA", "DupB")),
+              r["per_object"])
+
     # ------------------------------------------------------------------ C4 clash_audit
     def audit(**kw):
         return run("blender-mcp-workflow", "clash_audit.py", {"objects": None, **kw})
@@ -445,7 +488,7 @@ def run_all(out_dir):
 
     for fn in (c1_depsgraph, c1_armature_edit, c1_latest_unique, c1_user_collection, c2_excluded, c3_armature_orphans,
                c3_selection_refused, c3_set_material, c3_set_material_distinct, c3_object_link_override, c3_renamed_object_and_mesh,
-               c1_excluded_moved, c4_open_mesh, c5_edit_mode):
+               c1_excluded_moved, c1_path_parent, c3_linked_duplicates, c4_open_mesh, c5_edit_mode):
         fn()
     return results
 

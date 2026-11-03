@@ -136,9 +136,10 @@ def _world_matrix(o, evaluated, _seen=()):
     cannot be rebuilt that way, so those are refused instead of recording a stale transform."""
     if o.name in evaluated:
         return o.matrix_world.copy()
-    if o.constraints or (o.parent and o.parent_type != "OBJECT") or o.name in _seen:
+    path_parent = o.parent and o.parent.type == "CURVE" and o.parent.data.use_path  # a path-animated curve adds its path matrix
+    if o.constraints or path_parent or (o.parent and o.parent_type != "OBJECT") or o.name in _seen:
         raise ValueError(f"{o.name!r} is in no view layer (its collection is excluded in every layer), so its transform is "
-                         "not evaluated and has constraints or a bone/vertex parent that cannot be rebuilt by hand: "
+                         "not evaluated and has constraints, a bone/vertex parent or a path-animated curve parent that cannot be rebuilt by hand: "
                          "include its collection in a view layer and run again")
     local = o.matrix_basis.copy()
     if o.parent:
