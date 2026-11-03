@@ -102,7 +102,9 @@ Measured limits left after the iteration 13 fixes.
   frames is not found; a pan faster than 24 px per frame at 640x360 (scaled with size) needs `max_motion_px` raised, and
   far beyond the search window (about 200 px per frame at 1080p) a clean shot is reported as `flicker`, not
   `inconclusive`; native 1080p was checked on three Eevee sequences only (no Cycles); in a 1080p pan with a black tile
-  an extra small event is reported one frame later
+  an extra small event is reported one frame later; a +0.2 tile's region is more than one block (16 px at 640x360)
+  short in 2 of 31 shots (24 and 56 px); the Blender test covers synthetic cases and one real pan, not the 155-case
+  harness, which is run by hand
 - [ ] `score_run.py`: matches tokens and does not parse the shell (`eval`, command substitution, aliases and paths built
   at run time are not read); without an out_dir the status path is only checked by its file name
 - [ ] `import_painter_textures.py`: the normal convention is read from the file name only
