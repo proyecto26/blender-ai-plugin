@@ -4,8 +4,8 @@ State of the Blender AI Plugin 2.0.0 (Blender 5.2+ only) and what is still open.
 for a release that did not happen: the old v1.2 to v1.5 labels were removed, and each open item names its plan id.
 
 The plan with the acceptance test of every item is `docs/plans/iteration-12-parity-and-roadmap.md`. An item is ticked only
-when it is merged and its test passes; the iteration 12 work is on branch `feat/parity-and-roadmap` and none of it is
-merged yet, so every iteration 12 box below is open.
+when it is merged and its test passes. The iteration 12 items were merged in PR #10 and their suites passed on Windows
+and macOS (Blender 5.2.3); what the reviews left open is under "Iteration 12, review follow-ups".
 
 ## Shipped
 
@@ -16,55 +16,55 @@ merged yet, so every iteration 12 box below is open.
   `geometry-nodes/scripts/scatter_points.py`, the Blender 5.x API notes
 - `tests/agent_runs/score_run.py`, which compares an agent run's claims with its trace
 
-## Iteration 12, open
+## Iteration 12, merged in PR #10
 
 ### S. Follow-ups from PR #9 (first batch)
 
-- [ ] **S1** Scorer sees PowerShell launches, foreground renders and real paths, and checks the duration claim
-- [ ] **S2** `.gitattributes` keeps `*.sh` at LF
-- [ ] **S3** Wording that stated a measured result beyond what was run
-- [ ] **S4** The rigid body test fails on a bad collision shape
-- [ ] **S5** Render time estimate: first-frame overhead measured and corrected
-- [ ] **S6** GitHub Actions run `validate_skills.py` and `check-manifests.sh` on pull requests (unproven until pushed)
-- [ ] **S7** Window check made platform-aware (a minimized window is a Windows problem)
-- [ ] **S8** `validate` and `export` gates backed by the producer script's result file
-- [ ] **S9** This roadmap, and the README credit line
+- [x] **S1** Scorer sees PowerShell launches, foreground renders and real paths, and checks the duration claim
+- [x] **S2** `.gitattributes` keeps `*.sh` at LF
+- [x] **S3** Wording that stated a measured result beyond what was run
+- [x] **S4** The rigid body test fails on a bad collision shape
+- [x] **S5** Render time estimate: first-frame overhead measured and corrected
+- [x] **S6** GitHub Actions run `validate_skills.py` and `check-manifests.sh` on pull requests (unproven until pushed)
+- [x] **S7** Window check made platform-aware (a minimized window is a Windows problem)
+- [x] **S8** `validate` and `export` gates backed by the producer script's result file
+- [x] **S9** This roadmap, and the README credit line
 
 ### H. High value
 
-- [ ] **H1** `clash_audit.py`: penetration, containment and floating parts
-- [ ] **H2** `silhouette_score.py`: compare a camera view with a reference mask
-- [ ] **H3** `fit_search.py`: search named properties against the silhouette score
-- [ ] **H4** `ingest_asset.py`: import a local GLB/GLTF/FBX/OBJ/USD file and normalize it
+- [x] **H1** `clash_audit.py`: penetration, containment and floating parts
+- [x] **H2** `silhouette_score.py`: compare a camera view with a reference mask
+- [x] **H3** `fit_search.py`: search named properties against the silhouette score
+- [x] **H4** `ingest_asset.py`: import a local GLB/GLTF/FBX/OBJ/USD file and normalize it
 
 ### M. Medium value
 
-- [ ] **M1** `film-production/scripts/flicker_check.py`
-- [ ] **M2** `procedural-modeling/scripts/surface_tools.py` (loft, patch, continuity)
-- [ ] **M3** `blender-mcp-workflow/scripts/scene_snapshot.py`
+- [x] **M1** `film-production/scripts/flicker_check.py`
+- [x] **M2** `procedural-modeling/scripts/surface_tools.py` (loft, patch, continuity)
+- [x] **M3** `blender-mcp-workflow/scripts/scene_snapshot.py`
 
 ### R. Older roadmap items, still open
 
 Scripts:
-- [ ] **R1** Real ordered dithering for the PS1 look (`lowpoly-style`)
-- [ ] **R2** Terrain heightfield and road corridor (`procedural-modeling`)
-- [ ] **R3** Cycles denoiser presets per use case (`rendering`)
-- [ ] **R4** Substance Painter texture handoff (`texture-workflow`)
-- [ ] **R5** `usd-pipeline` skill with a round-trip script
+- [x] **R1** Real ordered dithering for the PS1 look (`lowpoly-style`)
+- [x] **R2** Terrain heightfield and road corridor (`procedural-modeling`)
+- [x] **R3** Cycles denoiser presets per use case (`rendering`)
+- [x] **R4** Substance Painter texture handoff (`texture-workflow`)
+- [x] **R5** `usd-pipeline` skill with a round-trip script
 
 References:
-- [ ] **R6** Multi-angle reference triangulation (`blender-mcp-workflow`)
-- [ ] **R7** Scan-match material workflow (`realistic-style`)
-- [ ] **R8** Scatter systems: instancing, density masks, collision-aware scatter (`geometry-nodes`; a shorter
+- [x] **R6** Multi-angle reference triangulation (`blender-mcp-workflow`)
+- [x] **R7** Scan-match material workflow (`realistic-style`)
+- [x] **R8** Scatter systems: instancing, density masks, collision-aware scatter (`geometry-nodes`; a shorter
   `scatter-systems.md` exists today)
-- [ ] **R9** Clothing simulation reference (`character-artist`)
-- [ ] **R10** Hair card topology reference (`retopology`)
-- [ ] **R11** Facial shape keys and drivers (`rigging`)
-- [ ] **R12** Mocap cleanup (`animation`)
-- [ ] **R13** Unreal Nanite prep (`unreal-export`)
-- [ ] **R14** Unity HDRP material mapping (`unity-export`)
-- [ ] **R15** Bloober Team analysis (`indie-horror-aesthetics`)
-- [ ] **R16** Parallel work rule: agents never share one live session; stated as unmeasured
+- [x] **R9** Clothing simulation reference (`character-artist`)
+- [x] **R10** Hair card topology reference (`retopology`)
+- [x] **R11** Facial shape keys and drivers (`rigging`)
+- [x] **R12** Mocap cleanup (`animation`)
+- [x] **R13** Unreal Nanite prep (`unreal-export`)
+- [x] **R14** Unity HDRP material mapping (`unity-export`)
+- [x] **R15** Bloober Team analysis (`indie-horror-aesthetics`)
+- [x] **R16** Parallel work rule: agents never share one live session; stated as unmeasured
 
 ## Iteration 12, review follow-ups
 
