@@ -14,14 +14,20 @@ ARGS:
     folder             (str)  folder holding the exported image files (png jpg jpeg tga tif tiff exr)
     material           (str)  new material name (default "MAT_<texture_set>" or "MAT_Painter"); refused if it exists
     texture_set        (str|None) only files whose name contains this text (case-insensitive)
-    normal_convention  (str)  "OPENGL" (default) or "DIRECTX": how the normal maps on disk were written. DIRECTX
-                       inserts a green-channel invert before the Normal Map node. Check your export settings;
-                       this script cannot tell from the file.
+    normal_convention  (str|None) "OPENGL" or "DIRECTX": how the normal map on disk was written. DIRECTX inserts a
+                       green-channel invert before the Normal Map node. The pixels cannot tell, so when you leave this
+                       out the script reads it from the normal map's file name (a "DirectX"/"DX" token means DIRECTX,
+                       "OpenGL"/"GL" means OPENGL; Painter's DirectX and OpenGL normal export presets put that token
+                       in the name). A name with neither token is taken as OPENGL and `warnings` says so; an explicit
+                       value that disagrees with the file name also warns, and the explicit value wins.
     patterns           (dict|None) extra keywords per map kind, e.g. {"roughness": ["rgh"]}; kinds are
                        base_color, roughness, metallic, normal, height, ao, emissive, opacity, orm
     ao                 (str)  "skip" (default) or "multiply" (multiplies AO into Base Color: not PBR-correct, off by default)
     height_strength    (float) Bump node strength when a height map is found (default 0.5)
-    assign_to          (list[str]|None) mesh objects that get the material appended as a new slot
+    assign_to          (list[str]|None) mesh objects that get the material appended as a new slot. Mesh data shared
+                       with an object that is NOT listed is refused (the new slot would appear on it too): list every
+                       object sharing the data, or make it single-user. A shared mesh listed through all its objects
+                       gets the slot once.
     pack               (bool) pack the images into the .blend (default False)
 
 UDIM tile files (name.1001.png) are reported in `skipped_udim` and not wired.
@@ -105,12 +111,12 @@ def _sock(sockets, name):
     raise KeyError(f"no socket {name!r}: {[s.name for s in sockets]}")
 
 
-def main(folder, material=None, texture_set=None, normal_convention="OPENGL", patterns=None, ao="skip",
+def main(folder, material=None, texture_set=None, normal_convention=None, patterns=None, ao="skip",
          height_strength=0.5, assign_to=None, pack=False):
     if not os.path.isdir(folder):
         raise ValueError(f"folder not found: {folder}")
-    convention = str(normal_convention).upper()
-    if convention not in ("OPENGL", "DIRECTX"):
+    convention = None if normal_convention is None else str(normal_convention).upper()
+    if convention not in (None, "OPENGL", "DIRECTX"):
         raise ValueError("normal_convention must be OPENGL or DIRECTX")
     if ao not in ("skip", "multiply"):
         raise ValueError("ao must be 'skip' or 'multiply'")
@@ -127,7 +133,15 @@ def main(folder, material=None, texture_set=None, normal_convention="OPENGL", pa
         obj = bpy.data.objects.get(obj_name)
         if obj is None or obj.type != "MESH":
             raise ValueError(f"assign_to: {obj_name!r} is not a mesh object")
-        targets.append(obj)
+        if obj not in targets:
+            targets.append(obj)
+    listed = {o.name for o in targets}
+    for obj in targets:
+        others = [o.name for o in bpy.data.objects if o.type == "MESH" and o.data is obj.data and o.name not in listed]
+        if others:
+            raise ValueError(f"assign_to: {obj.name!r} shares its mesh data with {others}, which are not listed; a new slot "
+                             "would appear on them too. List them as well, or make the mesh single-user, and run again. "
+                             "Nothing was changed.")
 
     found, unmatched, skipped_udim, ambiguous = {}, [], [], []
     for fn in sorted(os.listdir(folder)):
@@ -148,6 +162,19 @@ def main(folder, material=None, texture_set=None, normal_convention="OPENGL", pa
     if not found:
         raise ValueError(f"no texture maps matched in {folder} (unmatched: {unmatched[:10]})")
 
+    warnings = []
+    if "normal" in found:
+        toks = {t for t in re.split(r"[^a-z0-9]+", os.path.splitext(found["normal"])[0].lower()) if t}
+        named = "DIRECTX" if {"directx", "dx"} & toks else "OPENGL" if {"opengl", "gl"} & toks else None
+        if convention is None:
+            convention = named or "OPENGL"
+            if named is None:
+                warnings.append(f"normal map {found['normal']!r} does not name its convention; assumed OPENGL (no green "
+                                "flip). If it was exported for DirectX, pass normal_convention='DIRECTX'.")
+        elif named is not None and named != convention:
+            warnings.append(f"normal_convention={convention} disagrees with the file name {found['normal']!r} ({named}); "
+                            f"using {convention} as asked.")
+    convention = convention or "OPENGL"
     mat = bpy.data.materials.new(name)
     nt = mat.node_tree
     bsdf = next(n for n in nt.nodes if n.bl_idname == "ShaderNodeBsdfPrincipled")
@@ -244,11 +271,15 @@ def main(folder, material=None, texture_set=None, normal_convention="OPENGL", pa
         wired["opacity"] = "Alpha"
     if "ao" in found and "ao" not in wired:
         wired["ao"] = "not wired (ao='skip')"
+    done = set()
     for obj in targets:
+        if obj.data.name in done:
+            continue
+        done.add(obj.data.name)
         obj.data.materials.append(mat)
     return {"material": mat.name, "files": found, "wired": wired, "images": images, "unmatched": unmatched,
             "ambiguous": ambiguous, "skipped_udim": skipped_udim, "normal_convention": convention,
-            "assigned": [o.name for o in targets]}
+            "assigned": [o.name for o in targets], "warnings": warnings}
 
 
 ARGS = globals().get("ARGS") or _cli_args()

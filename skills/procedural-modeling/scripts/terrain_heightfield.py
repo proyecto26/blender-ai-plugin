@@ -26,7 +26,9 @@ ARGS:
                 of the curve object is flattened (reported as `splines`); a branching curve is refused.
     collection  (str|None) collection to link into (default: the scene collection)
     replace     (bool)  replace the mesh of an existing object of that name (default False = refuse); refused when that
-                object has a parent, scale, rotation or delta transform, because vertex Z is world height
+                object has a parent, scale, rotation or delta transform, a rigid body, or a deforming modifier (Displace,
+                Armature, Lattice, Curve, Hook, Shrinkwrap, Simple Deform, Wave, Geometry Nodes, ...), because
+                vertex Z is world height and those move the vertices after the fact
 """
 import json
 import random
@@ -50,6 +52,11 @@ def _cli_args():
     except json.JSONDecodeError as exc:
         raise ValueError(f"ARGS after '--' must be one JSON object, got {raw[0]!r}; "
                          "cmd/PowerShell mangle JSON quotes, so pass --args-file <path.json> instead") from exc
+
+
+DEFORMING = {"DISPLACE", "ARMATURE", "LATTICE", "CURVE", "HOOK", "SHRINKWRAP", "SIMPLE_DEFORM", "WAVE", "CAST", "WARP",
+             "MESH_DEFORM", "SURFACE_DEFORM", "LAPLACIANDEFORM", "CORRECTIVE_SMOOTH", "SMOOTH", "LAPLACIANSMOOTH", "OCEAN",
+             "VOLUME_DISPLACE", "NODES", "SOFT_BODY", "CLOTH", "EXPLODE", "SCREW", "MESH_CACHE", "MESH_SEQUENCE_CACHE"}
 
 
 def _curve_polylines(name):
@@ -155,6 +162,14 @@ def main(name="GEO_Terrain", size=50.0, resolution=65, seed=0, height=5.0, frequ
             raise ValueError(f"object {name!r} has a constraint ({existing.constraints[0].type}): it would move the terrain "
                              "after replace writes world-space heights, so nothing was changed. Remove the constraints "
                              "(or delete the object) and run again.")
+        if existing.rigid_body is not None:
+            raise ValueError(f"object {name!r} has a rigid body: the simulation moves it, so vertex Z no longer equals world "
+                             "height. Remove the rigid body (or delete the object) and run again; nothing was changed.")
+        deform = next((m for m in existing.modifiers if m.type in DEFORMING), None)
+        if deform is not None:
+            raise ValueError(f"object {name!r} has a {deform.type} modifier ({deform.name!r}): it changes where the vertices end "
+                             "up, so vertex Z no longer equals world height. Remove the modifier (or delete the object) and "
+                             "run again; nothing was changed.")
         bpy.context.view_layer.update()
         mw = existing.matrix_world
         linear_off = max(abs(mw[i][j] - (1.0 if i == j else 0.0)) for i in range(3) for j in range(3)) > 1e-6

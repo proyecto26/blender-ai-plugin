@@ -200,7 +200,9 @@ def _frame(rows):
     p0, p1, p2, p3 = rows[0], rows[1], rows[2], rows[3]
     d1 = (-3 * p0 + 4 * p1 - p2) / 2.0
     d2 = 2 * p0 - 5 * p1 + 4 * p2 - p3
-    tang = np.gradient(p0, axis=0, edge_order=2)
+    if len(p0) < 2:
+        raise ValueError("the seam needs at least 2 points")
+    tang = np.gradient(p0, axis=0, edge_order=2 if len(p0) >= 3 else 1)
     return p0, tang, d1, d2
 
 
