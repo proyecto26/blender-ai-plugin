@@ -68,7 +68,7 @@ Iteration 12: example parity and the open roadmap. Plan: `docs/plans/iteration-1
 - Parallel work: agents never share one live session, only separate saved copies merged by one owner. Unmeasured
 - `background_render.py` plan times a second frame when the first was short: the estimate was 2.5 to 4 times too long on short
   Eevee jobs, and is now within 1.00 to 1.17 of real time over 15 Windows runs
-- `score_run.py` sees PowerShell launches and foreground renders, checks the duration claim, and judges the window by platform
+- `score_run.py` sees PowerShell launches and foreground renders, checks the duration claim (only a per-frame figure is multiplied by the frame count), and judges the window by platform (a `file:///C:/` path still counts as Windows evidence)
 - `rigid_body_setup.py` rejects an invalid collision shape before changing anything
 - `flicker_check.py`: a sequence with a frame below `min_measured` no longer passes. A hard cut that used to return `pass` now
   returns `inconclusive` and names the frames in `unmeasured_frames`

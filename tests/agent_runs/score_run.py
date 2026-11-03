@@ -152,7 +152,7 @@ def local_clock(t):
 def detect_platform(run):
     """windows | macos | linux, from the tools and paths in the trace; 'unknown' when nothing decides."""
     blob = " ".join(str(c["input"]) for c in run["calls"])
-    blob = re.sub(r"(?<!file)\b[A-Za-z][A-Za-z0-9+.\-]*://[^\s\"')]*", " ", blob)  # a URL's path or query is not a local path
+    blob = re.sub(r"\b(?!file:)[A-Za-z][A-Za-z0-9+.\-]*://[^\s\"')]*", " ", blob)  # a URL's path or query is not a local path
     if any(c["name"] == "PowerShell" for c in run["calls"]) or re.search(DRIVE_PATH, blob):
         return "windows"
     if re.search(r"/Users/|/Applications/|\.app/", blob):
@@ -289,6 +289,9 @@ TOTAL_AFTER = r"\s*(?:\(|-)?\s*(?:in\s+)?(?:total|overall|in all|altogether|en t
 UNITS = r"(?:frame|step|sample|tile|image|fotograma|paso|muestra)s?"
 PER_AFTER = r"\s*(?:\b(?:per|a|each|por|cada)\b|/)\s*" + UNITS + r"\b"
 PER_BEFORE = r"\b(?:each|every|per|cada)\s+" + UNITS + r"\b[^.;\d]*$"
+FRAME = r"(?:frame|fotograma)s?"
+PER_FRAME = PER_AFTER.replace(UNITS, FRAME)
+PER_FRAME_BEFORE = PER_BEFORE.replace(UNITS, FRAME)
 PHASE_AFTER = r"\s*(?:of\s+)?(?:compil\w*|start-?up|load\w*|set-?up|warm-?up|shader\w*|kernel\w*)"
 WHOLE_BEFORE = r"\b(?:whole|entire|full|overall|in all|altogether|roughly|completo|toda|todo|en conjunto)\b[^\d.;]*$"
 PART_JOIN = r"[\s,+]*(?:\b(?:and|y|e|plus)\b)?[\s,+]*"
@@ -322,8 +325,14 @@ def claimed_seconds(text):
     if marked:
         return marked[-1][2]
     frames = re.search(r"(\d+)\s*(?:frames?|fotogramas?)\b", text, re.I)
-    if per_unit and frames:
-        return per_unit[0][2] * int(frames.group(1))
+    if per_unit:
+        # Only a per-frame figure scales with the frame count; a per-sample or per-step one says nothing about the whole.
+        per_frame = [g for g in per_unit if re.match(PER_FRAME, text[g[1]:g[1] + 25], re.I)
+                     or re.search(PER_FRAME_BEFORE, text[max(0, g[0] - 45):g[0]], re.I)]
+        if per_frame and frames:
+            return per_frame[0][2] * int(frames.group(1))
+        if not whole:
+            return None
     return (whole or groups)[0][2]
 
 
