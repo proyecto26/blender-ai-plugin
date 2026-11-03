@@ -21,12 +21,12 @@ but the exact printed value is not compared to the sentence by any test. I did n
 | 10 | R4 tested with synthetic PNG maps | `texture-workflow/references/substance-painter-handoff.md`:7 | `tests/blender/test_roadmap.py` R4 | backed |
 | 11 | Painter docs returned HTTP 403, so nothing was checked against them | `substance-painter-handoff.md`:15 | a fetch log from the iteration; not reproducible and not a test | **unbacked** (an account of a failed fetch) |
 | 12 | Route table (16/8-bit, G at A 0.8 / 0.1 / 0.0) measured by decoding PNG bytes | `unity-export/references/hdrp-material-mapping.md`:48 | the recipe decodes PNG bytes for the shipped routes; the other rows (float `save()`, `alpha_mode` variants, `save_render` depths, premultiplied) were run ad hoc and no test asserts them | shipped routes backed; other rows **unbacked** |
-| 13 | Blender writes `sRGB`, `gAMA`, `cHRM` chunks "seen on Windows and macOS" | `hdrp-material-mapping.md`:73 | no test reads the chunks; no macOS run is recorded anywhere in the repo | **unbacked** (macOS part certainly) |
+| 13 | Blender writes `sRGB`, `gAMA`, `cHRM` chunks "seen on Windows and macOS" | `hdrp-material-mapping.md`:73 | no test reads the chunks; manual runs: macOS (M2 Max, Blender 5.2.3) in the validation comment on PR #10, and Windows (Blender 5.2.3) before that PR was merged, both listing the chunks of the recipe's 8-bit file and of byte images saved as Non-Color, sRGB and Linear Rec.709 | backed by manual runs, no test |
 | 14 | Unity import was not tested; 16-bit import not checked | `hdrp-material-mapping.md`:75 | statements of absence | backed (honest negative) |
 | 15 | HDRP result: alpha 0.8 where roughness 0.2, 0.1 where 0.9 | `hdrp-material-mapping.md`:240 | Recipe run (asserts on packed alpha) | backed, numbers unasserted |
 | 16 | USD facts: transform + mesh prim pair, `BEST_MATCH` writes a cage, `.001` names, `MAKE_UNIQUE` | `usd-pipeline/SKILL.md`:55 | `test_roadmap.py` R5 covers `.001` round trip and the `BEST_MATCH` lossy case; the pairing and `TESSELLATE` default are exercised by the round trip but no assertion names them | partly backed |
 | 17 | "Tested on Blender 5.2 LTS via the official Blender MCP" | `usd-pipeline/SKILL.md`:79 | the tests run headless; no MCP run is recorded | **unbacked** (the "via MCP" part) |
 | 18 | Plan lines R11/R12 "with a tested recipe", S3 wording rule, branch/base commit | `docs/plans/iteration-12-parity-and-roadmap.md`:3, 77, 78, 90 | plan text, not a measurement; recipes in rows 1 and 9 | not a measurement |
 
-Unbacked: rows 11, 13 (macOS), 12 (non-shipped rows), 17 (MCP). Rows marked "numbers unasserted" would be backed more strongly
+Unbacked: rows 11, 12 (non-shipped rows), 17 (MCP). Row 13 rests on manual runs only. Rows marked "numbers unasserted" would be backed more strongly
 by a test that compares the printed value to the doc.
