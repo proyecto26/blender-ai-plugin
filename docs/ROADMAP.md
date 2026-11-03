@@ -98,7 +98,8 @@ Reproduced by the final review of iteration 12; fixed in iteration 13 (`docs/pla
 Measured limits left after the iteration 13 fixes.
 
 - [ ] `flicker_check.py`: 8 of 13 renders of fast flat black or white objects (propellers, black boxes) are still
-  reported; a black tile in a near-black shot is found but its region is 32 to 72 px short; a flicker lasting 3 or more
+  reported (before the macOS shadow fix, which clears a flat shape found in a neighbour within the window; the 13 were
+  not re-counted, and the macOS Eevee scene was not reproduced with real Windows renders, only synthetically); a black tile in a near-black shot is found but its region is 32 to 72 px short; a flicker lasting 3 or more
   frames is not found; a pan faster than 24 px per frame at 640x360 (scaled with size) needs `max_motion_px` raised, and
   far beyond the search window (about 200 px per frame at 1080p) a clean shot is reported as `flicker`, not
   `inconclusive`; native 1080p was checked on three Eevee sequences only (no Cycles); in a 1080p pan with a black tile

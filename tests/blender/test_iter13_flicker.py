@@ -370,6 +370,37 @@ def run_all(out_dir, check):
         check(f"{os.path.basename(d)}: the clean real sequence passes", r0["verdict"] == "pass" and not r0["events"], summary(r0))
         foreign_cases(os.path.basename(d), arrs, {}, (200, 120, 296, 216), (400, 40), known_limit=True)
 
+    # Round 9 (these fail on 72da9c7): a flat near-black shape that slides faster than the dropout window can follow it has the
+    # shape of a dropout (nearly uniform, near black, the same place bright in both neighbours); a macOS Eevee run reported a
+    # false `flicker` on a cube's shadow sliding 15 px a frame at 640x360 and 45 px at 1920x1080. A flat shape that is in a
+    # neighbour too, only shifted within `max_motion_px`, is not a dropout. A real black tile beside it still is.
+    def slide_seq(label, scale, n, shape, speed, tile=None):
+        base_tex = noise(360, 640, 3)
+        tex_s = np.kron(base_tex, np.ones((scale, scale), np.float32)) if scale > 1 else base_tex
+        y0, y1, sw = shape
+        frames_ = []
+        for t in range(n):
+            f = tex_s.copy()
+            x = (100 + speed * t) * scale
+            f[y0 * scale:y1 * scale, x:x + sw * scale] = 0.004
+            frames_.append(f)
+        if tile:
+            k, (tx0, ty0, tx1, ty1) = tile
+            frames_[k][ty0 * scale:ty1 * scale, tx0 * scale:tx1 * scale] = 0.0
+        return seq(os.path.join(base, label), frames_)
+
+    for scale, n, sw, speed in ((1, 10, 24, 15), (1, 10, 16, 15), (3, 7, 24, 15)):
+        r = run({"paths": slide_seq(f"slide_{scale}_{sw}", scale, n, (150, 210, sw), speed)})
+        check(f"a flat near-black {sw} px shape sliding {speed * scale} px a frame at scale {scale}: pass, no event "
+              "(a dropout false positive on 72da9c7)", r["verdict"] == "pass" and not r["events"], summary(r))
+    tile = (4, (400, 250, 464, 314))
+    for scale, n in ((1, 10), (3, 7)):
+        r = run({"paths": slide_seq(f"slide_tile_{scale}", scale, n, (150, 210, 24), 15, tile=tile)})
+        ev = r["events"]
+        check(f"a real black tile at [400,250,464,314] (x scale {scale}) beside that sliding shape is still found at frame 4 only",
+              r["verdict"] == "flicker" and [e["frame"] for e in ev] == [4]
+              and max(abs(a - b) for a, b in zip(ev[0]["region_px"], [c * scale for c in tile[1]])) <= 16 * scale, summary(r))
+
     check("no images leaked", len([i for i in bpy.data.images if i.name.startswith("tmp_iter13")]) == 0)
 
 
