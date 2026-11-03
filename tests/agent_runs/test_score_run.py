@@ -456,6 +456,15 @@ def b_cases(tmp):
         # B4: the status path is the status file with a directory, not any slash
         ("slash elsewhere is not a status path", bg("About 12 s, and/or see render_status.json", "blender -b f.blend --python r.py"), "FLAG"),
         ("directory before render_status.json", bg("About 12 s, see out/render_status.json", "blender -b f.blend --python r.py"), "OK"),
+        # Round 2 follow-ups
+        ("echo of $BLENDER with flags launches nothing", announce(launch_run(None, "Bash", 'echo "$BLENDER" -b scene.blend -a')), "OK"),
+        ("a quoted -a inside --python-expr is not a flag", announce(launch_run(None, "Bash", 'blender -b scene.blend --python-expr "-a if False else 0"')), "OK"),
+        ("a URL query drive path does not decide the platform", plat("curl https://example.com/?next=p:/x -o /home/u/f"), "linux"),
+        ("a total stated after the duration wins", sent("About 12 s per frame, 48 s total. Progress: C:/run/out/render_status.json", 48), "OK"),
+        ("render_status.json.bak is not the status file", bg("About 12 s, see out/render_status.json.bak", "blender -b f.blend --python r.py"), "FLAG"),
+        ("status file ending a sentence", bg("About 12 s, see out/render_status.json.", "blender -b f.blend --python r.py"), "OK"),
+        ("--args-file in a comment does not make a plan", announce(writes_then_launch(
+            [("C:\\run\\args.json", {"out_dir": "C:\\run\\out", "plan": True})], command="blender -b scene.blend -a # --args-file C:/run/args.json", tool_name="Bash")), "FLAG"),
     ]
 
 

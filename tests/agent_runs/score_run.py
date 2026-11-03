@@ -55,7 +55,7 @@ SHORT_CLUSTER = r"-([bafP]+)\d*"
 # A drive-letter path: not the tail of a word or URL (`https://`, `example.com/p:/x`); `file:///C:/x` still counts.
 DRIVE_PATH = r"(?:(?<![\w/.:\-])|(?<=file:///))[A-Za-z]:[\\/]"
 # The status file with a directory in front of it (`out/render_status.json`), not a slash elsewhere in the message.
-STATUS_PATH = r"[^\s\"'<>|*?]*[\\/]render_status\.json"
+STATUS_PATH = r"[^\s\"'<>|*?]*[\\/]render_status\.json(?![\w\-]|\.\w)"
 TOKEN = r"\"([^\"]*)\"|'([^']*)'|([^\s,\"']+)"
 PIPE_END = {"&&", "||", ";", "|"}
 PLAN_ON = r"[\"']?plan[\"']?\s*[:=]\s*[\"']?(?:true|\$true)\b"
@@ -152,6 +152,7 @@ def local_clock(t):
 def detect_platform(run):
     """windows | macos | linux, from the tools and paths in the trace; 'unknown' when nothing decides."""
     blob = " ".join(str(c["input"]) for c in run["calls"])
+    blob = re.sub(r"(?<!file)\b[A-Za-z][A-Za-z0-9+.\-]*://[^\s\"')]*", " ", blob)  # a URL's path or query is not a local path
     if any(c["name"] == "PowerShell" for c in run["calls"]) or re.search(DRIVE_PATH, blob):
         return "windows"
     if re.search(r"/Users/|/Applications/|\.app/", blob):
@@ -284,6 +285,7 @@ def seconds_in(text):
 
 
 TOTAL_WORD = r"\b(?:total\w*|en total|overall|in all|altogether|en conjunto)\b[^\d]{0,12}$"
+TOTAL_AFTER = r"\s*(?:\(|-)?\s*(?:in\s+)?(?:total|overall|in all|altogether|en total|en conjunto)\b"
 PART_JOIN = r"[\s,+]*(?:\b(?:and|y|e|plus)\b)?[\s,+]*"
 
 
@@ -302,27 +304,49 @@ def claimed_seconds(text):
             groups.append([m.start(), m.end(), value, scale])
     if not groups:
         return None
-    stated = [g for g in groups if re.search(TOTAL_WORD, text[max(0, g[0] - 16):g[0]], re.I)]
+    stated = [g for g in groups if re.search(TOTAL_WORD, text[max(0, g[0] - 16):g[0]], re.I)
+              or re.match(TOTAL_AFTER, text[g[1]:g[1] + 20], re.I)]
     return (stated[-1] if stated else groups[0])[2]
+
+
+# Commands that print or inspect their words and never run them.
+NON_LAUNCH = {"echo", "printf", "write-host", "write-output", "write-error", "cat", "type", "ls", "grep", "head", "tail",
+              "get-content", "test", "set", "export", "which", "where", "file", "stat", "wc"}
+# Blender flags whose next argument is one value, even when it starts with `-` and holds spaces.
+VALUE_FLAGS = {"--python-expr", "--python-text", "--python", "-P", "--python-console", "--addons", "--app-template"}
 
 
 def blender_segments(command):
     """Each Blender invocation in the command, as the flags Blender itself reads (up to `--` or the next shell operator).
     Quoted pieces and comma lists (PowerShell -ArgumentList "-b","f.blend") become separate tokens."""
     segments, current = [], None
-    for quoted, single, bare in re.findall(TOKEN, command):
+    first, prev, end = None, None, 0  # first word of this shell piece; previous token; end of the previous match
+    for m in re.finditer(TOKEN, command):
+        quoted, single, bare = m.groups()
         tok = quoted or single or bare
+        if "\n" in command[end:m.start()]:
+            first = None
+        end = m.end()
         last = tok.replace("\\", "/").rsplit("/", 1)[-1]
-        if re.fullmatch(BLENDER_EXE, last, re.I) or re.fullmatch(BLENDER_VAR, last, re.I):
+        word = last.lower().removesuffix(".exe")
+        if first is None:
+            first = word
+        is_exe = re.fullmatch(BLENDER_EXE, last, re.I) or re.fullmatch(BLENDER_VAR, last, re.I)
+        if is_exe and first in NON_LAUNCH and word != first:
+            pass  # `echo "$BLENDER" -b f.blend -a` prints; it launches nothing
+        elif is_exe:
             current = []
             segments.append(current)
         elif current is not None:
             if tok == "--" or (bare and tok in PIPE_END):
                 current = None
-            elif quoted and tok.lstrip().startswith("-") and re.search(r"\s", tok):
+            elif quoted and tok.lstrip().startswith("-") and re.search(r"\s", tok) and prev not in VALUE_FLAGS:
                 current.extend(tok.split())  # -ArgumentList "-b scene.blend -a": one string holding several flags
             else:
                 current.append(tok)
+        if bare and tok in PIPE_END:
+            first = None
+        prev = tok
     return segments
 
 
@@ -489,8 +513,8 @@ def strip_comment(command):
 
 def related_text(call, run):
     """The launch command plus the text of the args file it names, if an earlier call wrote it."""
-    command = call["input"].get("command", "")
-    parts = [strip_comment(command)]
+    command = strip_comment(call["input"].get("command", ""))
+    parts = [command]
     for groups in re.findall(r"--args-file[\"']?[\s,=]+(?:\"([^\"]+)\"|'([^']+)'|([^\s\"',]+))", command):
         ref = next(g for g in groups if g)
         ref = re.sub(r"^(?:\./|\.\./)+", "", norm_path(ref))
