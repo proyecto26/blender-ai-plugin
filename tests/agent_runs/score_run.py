@@ -481,7 +481,7 @@ def frame_list_count(val):
     return total
 
 
-def frame_count(tokens):
+def frame_count(tokens, raw=None):
     """How many frames the invocation renders when its flags say so: the `-f` frames when given (Blender renders those and
     ignores -s/-e for them), else the -s/-e range, else None."""
     values, frames = {}, []
@@ -493,7 +493,8 @@ def frame_count(tokens):
             if name == "-f":
                 # the command tokenizer splits on commas, so "-f 1,3,5" arrives as "1", "3", "5": rejoin them
                 j = i + (1 if eq else 2)
-                while j < len(tokens) and re.fullmatch(r"\d+(?:\.\.\d+)?", tokens[j]):
+                while (j < len(tokens) and re.fullmatch(r"\d+(?:\.\.\d+)?", tokens[j])
+                       and (raw is None or re.search(re.escape(val) + r"\s*,\s*" + re.escape(tokens[j]) + r"(?![\d.])", raw))):
                     val, j = val + "," + tokens[j], j + 1
                 frames.append(val)
             elif re.fullmatch(r"[+-]?\d+", val):
@@ -514,7 +515,7 @@ def job_segments(command):
         tokens = seg["flags"]
         if flag_set(tokens, BG_FLAGS) and flag_set(tokens, WORK_FLAGS):
             jobs.append({"render": bool(flag_set(tokens, RENDER_FLAGS)) or "background_render.py" in seg["raw"],
-                         "frames": frame_count(tokens), "raw": seg["raw"], "post": seg["post"]})
+                         "frames": frame_count(tokens, seg["raw"]), "raw": seg["raw"], "post": seg["post"]})
     return jobs
 
 
