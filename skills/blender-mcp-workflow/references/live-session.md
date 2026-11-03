@@ -39,8 +39,8 @@ already written or overwritten on disk are not covered by either.
 
 - **Screenshots can lie on Windows.** With the window minimized the screenshot tools return a black image, or corrupt
   colours if a render window is open, and no error. Tell the user right away and ask them to restore the window, since
-  they are probably missing the work too. Do not judge the scene from such an image. A partly covered window was seen
-  to capture correctly. A macOS review reported that a minimized window still captured the current scene (not re-run
+  they are probably missing the work too. Do not judge the scene from such an image. A window covered by other
+  windows was not tested, so treat it like any other window. A macOS review reported that a minimized window still captured the current scene (not re-run
   on Windows or since), so judge the image, not the window state: an all-black or uniform image is the signal.
 - **Preferences are outside every checkpoint.** Undo and `.blend` copies do not restore them, so a change carries into
   the user's own renders. Do not change them in the open window, including the Cycles compute device: set devices in the
@@ -90,7 +90,7 @@ status file are, and how long you expect it to take: nothing else tells them a j
   or `blender` on the MCP server's `PATH`. The tool gives up after 120 s, with no option to extend that, so keep it to
   short checks. What happens next depends on the install: with a direct binary a macOS review reported that the server kills
   Blender, so the code did not finish (not re-run since), while through the Microsoft Store launcher on Windows Blender
-  kept running to at least 150 s.
+  kept running until its code finished at 170 s, well past the give-up (Windows 11, Blender 5.2.3, one run).
   Check for its outputs before running it again, and split the work or use a background process with a status file.
 - **Microsoft Store installs cannot use it:** the launcher runs the code but drops its output, and `blender.exe` in
   `WindowsApps` cannot be started. Start long work with the `blender-launcher.exe` alias instead, found in
