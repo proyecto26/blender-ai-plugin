@@ -175,6 +175,57 @@ def run_all(out_dir, check):
     check("the same tile in a pan of 6 x 3 px a frame: one event at frame 4, kind local, region error <= 16 px",
           [e["frame"] for e in ev] == [4] and ev[0]["kind"] == "local" and err is not None and err <= 16, (summary(r), err))
 
+    # Round 3 (these fail on bc9cf8e, where every block of a smooth floor was "ambiguous" and nothing there was scored):
+    # a smooth floor (a steep gradient: a shift of a few px changes a block's mean), and a slow push-in over flat shapes.
+    yy, xx = np.mgrid[0:H, 0:W].astype(np.float32)
+    floor = 0.8 * np.clip(0.05 + 0.9 * xx / W + 0.1 * yy / H, 0, 1)
+    tile = (96, 48, 160, 96)
+
+    def near(ev, box):
+        return bool(ev) and max(abs(a - b) for a, b in zip(ev[0]["region_px"], box)) <= 16
+
+    fr = [floor.copy() for _ in range(N)]
+    fr[4] = fr[4].copy()
+    fr[4][tile[1]:tile[3], tile[0]:tile[2]] += 0.2
+    r = run({"paths": seq(os.path.join(base, "floor_tile"), fr)})
+    check("a +0.2 tile on a smooth floor in one frame: one event at frame 4, region within one block",
+          [e["frame"] for e in r["events"]] == [4] and near(r["events"], tile), summary(r))
+    fr = [floor.copy() for _ in range(N)]
+    for k in (4, 5):
+        fr[k] = fr[k].copy()
+        fr[k][tile[1]:tile[3], tile[0]:tile[2]] += 0.2
+    r = run({"paths": seq(os.path.join(base, "floor_tile2"), fr)})
+    check("the same tile for two frames: events at 4 and 5 only, each region within one block",
+          [e["frame"] for e in r["events"]] == [4, 5] and near(r["events"], tile) and near(r["events"][1:], tile), summary(r))
+    for size, expect in ((16, False), (32, True)):
+        fr = [floor.copy() for _ in range(N)]
+        fr[4] = fr[4].copy()
+        fr[4][48:48 + size, 96:96 + size] += 0.2
+        r = run({"paths": seq(os.path.join(base, f"floor_lone{size}"), fr)})
+        check(f"a {size} px square on a smooth floor: {'an event at frame 4' if expect else 'no event'} (an ambiguous block alone is "
+              "not evidence, four touching ones are)",
+              ([e["frame"] for e in r["events"]] == [4]) if expect else (not r["events"] and r["verdict"] == "pass"), summary(r))
+
+    def dolly():
+        out = []
+        for t in range(N):
+            s = 1 + 0.01 * t  # a push-in about the centre
+            X, Y = (xx - W / 2) / s + W / 2, (yy - H / 2) / s + H / 2
+            f = 0.15 + 0.3 * Y / H + 0.2 * X / W
+            for (x0, y0, x1, y1, v) in ((20, 20, 100, 120, 0.2), (200, 10, 300, 90, 0.7), (120, 90, 180, 140, 0.45)):
+                f = np.where((X >= x0) & (X < x1) & (Y >= y0) & (Y < y1), v, f)
+            out.append(f.astype(np.float32))
+        return out
+    r = run({"paths": seq(os.path.join(base, "dolly"), dolly())})
+    check("a slow push-in over a smooth floor and flat shapes gets a verdict: pass, no event, more than half measured",
+          r["verdict"] == "pass" and not r["events"] and r["measured_share"] > 0.5, summary(r))
+    fr = dolly()
+    fr[4] = fr[4].copy()
+    fr[4][16:64, 112:176] += 0.2
+    r = run({"paths": seq(os.path.join(base, "dolly_tile"), fr)})
+    check("a +0.2 tile in that push-in is found at frame 4 only, region within one block",
+          [e["frame"] for e in r["events"]] == [4] and near(r["events"], (112, 16, 176, 64)), summary(r))
+
     check("no images leaked", len([i for i in bpy.data.images if i.name.startswith("tmp_iter13")]) == 0)
 
 
