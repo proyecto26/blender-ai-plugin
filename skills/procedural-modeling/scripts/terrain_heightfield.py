@@ -27,7 +27,7 @@ ARGS:
     collection  (str|None) collection to link into (default: the scene collection)
     replace     (bool)  replace the mesh of an existing object of that name (default False = refuse); refused when that
                 object has a parent, scale, rotation or delta transform, a rigid body, or a deforming modifier (Displace,
-                Armature, Lattice, Curve, Hook, Shrinkwrap, Simple Deform, Wave, Geometry Nodes, ...), because
+                Armature, Lattice, Curve, Hook, Shrinkwrap, Simple Deform, Wave, Geometry Nodes, Subdivision Surface, Multires, ...), because
                 vertex Z is world height and those move the vertices after the fact
 """
 import json
@@ -56,7 +56,9 @@ def _cli_args():
 
 DEFORMING = {"DISPLACE", "ARMATURE", "LATTICE", "CURVE", "HOOK", "SHRINKWRAP", "SIMPLE_DEFORM", "WAVE", "CAST", "WARP",
              "MESH_DEFORM", "SURFACE_DEFORM", "LAPLACIANDEFORM", "CORRECTIVE_SMOOTH", "SMOOTH", "LAPLACIANSMOOTH", "OCEAN",
-             "VOLUME_DISPLACE", "NODES", "SOFT_BODY", "CLOTH", "EXPLODE", "SCREW", "MESH_CACHE", "MESH_SEQUENCE_CACHE"}
+             "VOLUME_DISPLACE", "NODES", "SOFT_BODY", "CLOTH", "EXPLODE", "SCREW", "MESH_CACHE", "MESH_SEQUENCE_CACHE",
+             # subdivision converges on a smoothed limit surface: peaks and pits sit off the stored vertex heights
+             "SUBSURF", "MULTIRES"}
 
 
 def _curve_polylines(name):

@@ -58,6 +58,27 @@ class Recorder:
             self.results.append({"name": f"{name}: crashed", "ok": False, "detail": traceback.format_exc()[-700:]})
 
 
+def eval_chain(sock, rgb):
+    """Value of a socket: follow the links back from `sock` to a texture node whose pixels are `rgb`."""
+    link = sock.links[0]
+    node, out = link.from_node, link.from_socket
+    if node.bl_idname == "ShaderNodeTexImage":
+        return rgb
+    if node.bl_idname == "ShaderNodeSeparateColor":
+        return eval_chain(node.inputs["Color"], rgb)[("Red", "Green", "Blue").index(out.name)]
+    if node.bl_idname == "ShaderNodeCombineColor":
+        return tuple(eval_chain(node.inputs[c], rgb) for c in ("Red", "Green", "Blue"))
+    if node.bl_idname == "ShaderNodeMath" and node.operation == "SUBTRACT":
+        a, b = (i.default_value if not i.links else eval_chain(i, rgb) for i in node.inputs[:2])
+        return a - b
+    raise AssertionError(node.bl_idname)
+
+
+def normal_color_in(nt, rgb):
+    nm = next(n for n in nt.nodes if n.bl_idname == "ShaderNodeNormalMap")
+    return tuple(round(c, 4) for c in eval_chain(nm.inputs["Color"], rgb))
+
+
 def save_map(path, value, size=8):
     img = bpy.data.images.new("tmp_map", size, size, alpha=False)
     try:
@@ -93,9 +114,14 @@ def test_d1(rec, scene, out_dir):
     for f, name in ((dx, "Crate_BaseColor.png"), (dx, "Crate_Normal_DirectX.png"), (gl, "Rock_BaseColor.png"),
                     (gl, "Rock_Normal.png")):
         save_map(os.path.join(f, name), 0.5)
+    rgb = (0.2, 0.3, 0.7)  # asymmetric green: inverting 0.5 would be invisible
+    for f, name in ((dx, "Crate_Normal_DirectX.png"), (gl, "Rock_Normal.png")):
+        save_map(os.path.join(f, name), rgb)
     r = run("texture-workflow", "import_painter_textures.py", {"folder": dx, "material": "MAT_I13_DX"})
     nt = bpy.data.materials["MAT_I13_DX"].node_tree
     rec.check("D1 DirectX file name without the param: green flipped", "FLIP_G_Invert" in nt.nodes and r["normal_convention"] == "DIRECTX", r)
+    rec.check("D1 DirectX map: the Normal Map receives (R, 1-G, B), by following the links",
+              normal_color_in(nt, rgb) == (0.2, 0.7, 0.7), normal_color_in(nt, rgb))
     dx2 = os.path.join(out_dir, "d1_dx2")
     os.makedirs(dx2, exist_ok=True)
     for name in ("Box_BaseColor.png", "Box_normal_dx.png"):
@@ -106,6 +132,17 @@ def test_d1(rec, scene, out_dir):
     r = run("texture-workflow", "import_painter_textures.py", {"folder": gl, "material": "MAT_I13_GL"})
     rec.check("D1 normal map naming no convention: OPENGL assumed and the run warns",
               r["normal_convention"] == "OPENGL" and any("OPENGL" in w for w in r["warnings"]), r["warnings"])
+    rec.check("D1 OpenGL map: the Normal Map receives the pixels untouched",
+              normal_color_in(bpy.data.materials["MAT_I13_GL"].node_tree, rgb) == rgb)
+    arm = os.path.join(out_dir, "d1_arm")
+    os.makedirs(arm, exist_ok=True)
+    save_map(os.path.join(arm, "DX_Armor_BaseColor.png"), 0.5)
+    save_map(os.path.join(arm, "DX_Armor_Normal_OpenGL.png"), rgb)
+    r = run("texture-workflow", "import_painter_textures.py", {"folder": arm, "material": "MAT_I13_ARM"})
+    ant = bpy.data.materials["MAT_I13_ARM"].node_tree
+    rec.check("D1 'DX_' prefix does not outvote the OpenGL suffix next to 'Normal': not flipped, conflict warned",
+              r["normal_convention"] == "OPENGL" and "FLIP_G_Invert" not in ant.nodes and normal_color_in(ant, rgb) == rgb
+              and any("both" in w for w in r["warnings"]), r)
     r = run("texture-workflow", "import_painter_textures.py", {"folder": dx, "material": "MAT_I13_DX2", "normal_convention": "OPENGL"})
     rec.check("D1 explicit value that contradicts the file name warns", any("disagrees" in w for w in r["warnings"]), r["warnings"])
 
@@ -134,6 +171,12 @@ def test_d2(rec, scene, out_dir):
     disp.modifiers.new("D", "DISPLACE")
     msg = raises(lambda: run("procedural-modeling", "terrain_heightfield.py", {**base, "name": "I13_T_disp"}))
     rec.check("D2 Displace modifier refused", msg is not None and "DISPLACE" in msg and len(disp.data.vertices) == 0, msg)
+
+    for mtype in ("SUBSURF", "MULTIRES"):
+        sm = mesh_obj(scene, f"I13_T_{mtype}")
+        sm.modifiers.new("M", mtype)
+        msg = raises(lambda: run("procedural-modeling", "terrain_heightfield.py", {**base, "name": f"I13_T_{mtype}"}))
+        rec.check(f"D2 {mtype} modifier refused, mesh untouched", msg is not None and mtype in msg and len(sm.data.vertices) == 0, msg)
 
     rb = mesh_obj(scene, "I13_T_rb")
     rb.data.from_pydata([(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)], [], [(0, 1, 2, 3)])
