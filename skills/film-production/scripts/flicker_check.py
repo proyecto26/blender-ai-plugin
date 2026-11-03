@@ -96,6 +96,12 @@ anything it is flat in and cannot see content entering the strip (it gave false 
 360 = 22 x 16 + 8), so the motion is taken from the full block that ends where the strip begins and the strip pixels are scored
 at that motion; the region of an event is the strip itself (a +0.15 defect in the 8 px bottom strip of a panning 320x184 frame
 is found, with the region [64,176,160,184] for a defect at [64,176,160,184]). An ambiguous match is not scored in a strip.
+That motion cannot see content that enters the strip from outside the block above (a shadow edge sliding in gave a false `flicker`
+at the bottom of a clean 1920x1080 Eevee pan, 1080 = 22 x 48 + 24), so the strip is also matched from the full block that ends flush
+with the frame edge (it contains the strip and overlaps the grid), and a strip flag is dropped when that second match measured the
+same pixels within the threshold or found them ambiguous; when it could not match at all (a real defect in the strip spoils the
+match) the flag stands. The second match scores nothing else and adds a row of blocks to the work, 12.2 s against 12.0 s for 10 frames
+at 1920x1080 (Eevee, defaults).
 Event `blocks` are [x_px, y_px, deviation] (top-left corner of the block, in frame pixels).
 
 What counts as an event (besides the dropout rule): a measured block whose mean differs from the matched neighbours by more
@@ -130,7 +136,8 @@ is not judged reliably: shots where most of the picture changes shape are `incon
 followed, and a smooth background now counts as followed, so an object that jumps farther than the window over it shows as
 a flat region and is reported. The window and the block scale with the frame, so motion that is the same in
 picture terms (a render upscaled 2x or 3x, motion doubled or tripled) stays inside it; a shot whose pixel motion is large
-for its size (a 1080p pan of 100 px a frame) still needs `max_motion_px` raised;
+for its size (a 1080p pan of 100 px a frame) still needs `max_motion_px` raised, and beyond the window (a 1080p pan of about 100 to 200 px a frame, 4 of 10 frames measured
+with a 105 px step) the result can be `flicker` rather than `inconclusive`: the share of textured blocks with a rejected match is no usable gate, since clean dark Cycles shots reach 0.67 of them;
 (e) dropouts are searched within min(`max_motion_px`, 8 x scale) px; (f) a black tile is found only where the original is
 brighter than about 0.02 (the dropout rule): in four near-black shots (the tile region averages 0.01 to 0.04) its region
 came out 32 to 72 px short of the tile; (g) shots where camera, lights and objects all move under Cycles noise are the ones most
@@ -480,12 +487,22 @@ def main(paths=None, dir=None, block=None, max_motion_px=None, scale=None, flick
     hs, ws = max(H - nby * B, smin) if H % B else 0, max(W - nbx * B, smin) if W % B else 0
     regions = [(0, 0, nby, nbx, B, B, None)]  # y0, x0, rows of blocks, cols of blocks, block h, w, scored sub-rectangle
     yb, xr = max(0, H - hs - B), max(0, W - ws - B)  # origin of the context block above / left of a strip
+    # Each strip is scored twice, by two motion estimates for the same pixels: (1) from the block that ends where the strip
+    # begins and (2) from the block that ends flush with the frame edge (it overlaps the grid and contains the strip). (1)
+    # alone cannot see content that enters the strip (a shadow edge sliding in gave a false event on clean 1080p), so a strip
+    # flag of (1) is dropped when (2) measured the same pixels and found them within the threshold, or found its own match
+    # ambiguous (the strip content can be explained at several brightnesses). When (2) could not match its block at all
+    # (rejected: a real defect in the strip spoils the match) the flag stands. (2) scores nothing else.
+    yf, xf = H - B, W - B
     if hs:
         regions.append((yb, 0, 1, nbx, B, B, (H - hs - yb, H - yb, 0, B)))
+        regions.append((yf, 0, 1, nbx, B, B, (max(0, B - hs), B, 0, B), True))
     if ws:
         regions.append((0, xr, nby, 1, B, B, (0, B, W - ws - xr, W - xr)))
+        regions.append((0, xf, nby, 1, B, B, (0, B, max(0, B - ws), B), True))
     if hs and ws:
         regions.append((yb, xr, 1, 1, B, B, (H - hs - yb, H - yb, W - ws - xr, W - xr)))
+        regions.append((yf, xf, 1, 1, B, B, (max(0, B - hs), B, max(0, B - ws), B), True))
     _POOL.clear()
 
     per_frame = {t: {"frame": t, "file": os.path.basename(files[t]), "measured": 0,
@@ -501,7 +518,9 @@ def main(paths=None, dir=None, block=None, max_motion_px=None, scale=None, flick
     ranged_total = 0
     meas_mask = {t: np.zeros((H, W), dtype=bool) for t in per_frame}  # pixels of measured blocks
     n_meas = n_all = 0
-    for (ry, rx, ny, nx, bh, bw, sub) in regions:
+    strip_a = {t: [] for t in per_frame}  # strip flags of the first estimate, and the strip blocks the second found quiet
+    strip_b = {t: set() for t in per_frame}
+    for (ry, rx, ny, nx, bh, bw, sub, *aux) in regions:
         r0, r1, c0, c1 = sub or (0, bh, 0, bw)
         for t in range(1, len(frames) - 1):
             mp, cp, pyo, pxo, lop, hip, rsp = _match(frames[t], frames[t - 1], ry, rx, ny, nx, bh, bw, R, ambiguity_margin, reject_ratio, thr / 2, us)
@@ -568,6 +587,10 @@ def main(paths=None, dir=None, block=None, max_motion_px=None, scale=None, flick
             step = gap > neighbour_agreement * np.abs(dev)
             sdev = np.where(step, cdev, np.nan)
             cdev = np.where(step, np.nan, cdev)
+            if aux:  # the second estimate of a strip: which strip blocks it measured and found quiet; nothing is counted
+                for y, x in zip(*np.nonzero((bounded & (np.abs(dev) <= thr_eff)) | ((code == 2) & ~rej))):  # NaN compares False
+                    strip_b[t].add((rx + int(x) * bw + c0, ry + int(y) * bh + r0, rx + int(x) * bw + c1, ry + int(y) * bh + r1))
+                continue
             for y, x in zip(*np.nonzero(np.abs(sdev) > thr_eff)):
                 step_by_t[t].append((rx + int(x) * bw + c0, ry + int(y) * bh + r0, rx + int(x) * bw + c1, ry + int(y) * bh + r1,
                                      float(sdev[y, x]), int(lvl[y, x])))
@@ -594,13 +617,19 @@ def main(paths=None, dir=None, block=None, max_motion_px=None, scale=None, flick
                     foot_at[t][(rx + int(x) * bw, ry + int(y) * bh, u)] = (
                         rx + int(x) * bw + int(ox_[y, x]), ry + int(y) * bh + int(oy_[y, x]), bw, bh)
             ys, xs = np.nonzero(np.abs(cdev) > thr_eff)  # NaN compares False
-            flagged_by_t[t] += [(rx + int(x) * bw + c0, ry + int(y) * bh + r0, rx + int(x) * bw + c1, ry + int(y) * bh + r1,
-                                 float(cdev[y, x]), int(lvl[y, x])) for y, x in zip(ys, xs)]
+            mine = [(rx + int(x) * bw + c0, ry + int(y) * bh + r0, rx + int(x) * bw + c1, ry + int(y) * bh + r1,
+                     float(cdev[y, x]), int(lvl[y, x])) for y, x in zip(ys, xs)]
+            if sub:
+                strip_a[t] += mine
+            else:
+                flagged_by_t[t] += mine
             if sub:
                 for y, x in zip(*np.nonzero(bounded)):
                     meas_mask[t][ry + int(y) * bh + r0:ry + int(y) * bh + r1, rx + int(x) * bw + c0:rx + int(x) * bw + c1] = True
             else:
                 meas_mask[t][ry:ry + ny * bh, rx:rx + nx * bw] |= np.repeat(np.repeat(bounded, bh, axis=0), bw, axis=1)
+    for t, mine in strip_a.items():  # a strip flag the second estimate measured as quiet is dropped
+        flagged_by_t[t] += [f for f in mine if f[:4] not in strip_b[t]]
     # a flicker that lasts two frames: the same block is a step of the same sign and size in two consecutive frames
     for t, steps in step_by_t.items():
         for f in steps:

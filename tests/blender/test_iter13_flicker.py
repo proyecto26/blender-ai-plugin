@@ -46,6 +46,33 @@ def save_gray(path, arr):
         bpy.data.images.remove(img)
 
 
+def load_rgb(path):
+    img = bpy.data.images.load(path)
+    try:
+        img.colorspace_settings.name = "Non-Color"
+        w, h = img.size
+        buf = np.empty(w * h * img.channels, dtype=np.float32)
+        img.pixels.foreach_get(buf)
+        return buf.reshape(h, w, img.channels)[::-1, :, :3].copy()  # row 0 = top
+    finally:
+        bpy.data.images.remove(img)
+
+
+def save_rgb(path, arr):
+    h, w = arr.shape[:2]
+    img = bpy.data.images.new("tmp_iter13_fixture", w, h, alpha=True)
+    try:
+        img.colorspace_settings.name = "Non-Color"
+        rgba = np.ones((h, w, 4), dtype=np.float32)
+        rgba[..., :3] = np.clip(arr[::-1], 0, 1)
+        img.pixels.foreach_set(rgba.ravel())
+        img.filepath_raw = path
+        img.file_format = "PNG"
+        img.save()
+    finally:
+        bpy.data.images.remove(img)
+
+
 def seq(folder, frames):
     os.makedirs(folder, exist_ok=True)
     paths = []
@@ -268,6 +295,32 @@ def run_all(out_dir, check):
     r = run({"paths": seq(os.path.join(base, "ramp_cut"), [ramp, ramp, noise(H, W, 11)])})
     check("ramp, ramp, foreign image: not a pass (rejected neighbour is not measured)",
           r["verdict"] == "inconclusive" and r["measured_share"] < 0.5, summary(r))
+
+
+    # Round 6: a leftover strip whose height is not a multiple of the block (1080 = 22 x 48 + 24). Five real Eevee frames of a
+    # 1080p pan (the bottom right 576 x 168 px, scale 3, block 48: 168 = 3 x 48 + 24) in which a dark shadow edge slides into
+    # the 24 px strip: a clean shot, it gave a `flicker` at the strip before (the strip was scored with the motion of the block
+    # above it, which does not contain what enters it)
+    fxdir = os.path.join(HERE, "fixtures", "flicker_strip")
+    fx = [os.path.join(fxdir, f"f_{i}.png") for i in range(5)]
+    r = run({"paths": fx, "scale": 3, "block": 48})
+    check("real 1080p pan with a shadow edge sliding into the 24 px bottom strip: pass, no event",
+          r["verdict"] == "pass" and not r["events"], summary(r))
+    for label, tile in (("a +0.2 tile", 0.2), ("a black tile", None)):
+        arrs = [load_rgb(p) for p in fx]
+        a = arrs[2]
+        a[144:168, 48:144] = np.clip(a[144:168, 48:144] + tile, 0, 1) if tile is not None else 0.0
+        folder = os.path.join(base, "strip_real_" + ("plus" if tile else "black"))
+        os.makedirs(folder, exist_ok=True)
+        ps = []
+        for i, arr in enumerate(arrs):
+            ps.append(os.path.join(folder, f"f_{i}.png"))
+            save_rgb(ps[-1], arr)
+        r = run({"paths": ps, "scale": 3, "block": 48})
+        ev = r["events"]
+        check(f"{label} in that 24 px strip is still found at frame 2, region within one block of it",
+              r["verdict"] == "flicker" and [e["frame"] for e in ev] == [2]
+              and max(abs(x - y) for x, y in zip(ev[0]["region_px"], [48, 144, 144, 168])) <= 48, summary(r))
 
     check("no images leaked", len([i for i in bpy.data.images if i.name.startswith("tmp_iter13")]) == 0)
 

@@ -18,6 +18,7 @@ Iteration 13: the review follow-ups of iteration 12. Plan: `docs/plans/iteration
   Pixel-sized defaults scale with the shorter side (`scale`, reported with the effective sizes); explicit ARGS win. A block with a rejected match in either neighbour is
   never scored as measured, even when the other match is ambiguous (a cut to a foreign last frame over a smooth ramp
   passed); the dropout search is documented as capped at 8 x scale px
+  - A clean native 1920x1080 pan whose shadow edge slid into the 24 px bottom strip (1080 is not a multiple of 48) was `flicker`; a strip flag is now dropped when the block flush with the frame edge, which contains the strip, measures it quiet or ambiguous. Pan `pass`, the injected +0.2 and black tiles still found; 31 clean 640x360 renders still 31 `pass` with 31 of 31 found per injection. Motion beyond the window (about 200 px a frame at 1080p) can still be `flicker` instead of `inconclusive` (left open)
 - `score_run.py`: reads `Start-Process` (single or double quotes), `& $blender` and `"$BLENDER"` launches and escaped
   inline JSON; a shell comment after any separator grants no plan exemption; the status path must be the real
   `render_status.json`; the claimed duration is the stated total, or per-frame time times the frame count; URLs no longer
