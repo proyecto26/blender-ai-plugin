@@ -226,6 +226,42 @@ def run_all(out_dir, check):
     check("a +0.2 tile in that push-in is found at frame 4 only, region within one block",
           [e["frame"] for e in r["events"]] == [4] and near(r["events"], (112, 16, 176, 64)), summary(r))
 
+    # Round 4: the pixel-sized defaults scale with the frame. Renders upscaled 2x (here 1280x720, a 640x360 texture doubled, a pan
+    # of 14 x 12 px a frame at 1x = 28 x 24 px, beyond the old fixed window of 24) must get a verdict with the DEFAULTS.
+    # These fail on the code before round 4 (block 16, window 24 at any size: "inconclusive" / no event).
+    n2 = 6
+    big = np.kron(noise(360 + n2 * 12 + 8, 640 + n2 * 14 + 8, 11), np.ones((2, 2), np.float32))
+
+    def big_pan():
+        return [big[t * 24:t * 24 + 720, t * 28:t * 28 + 1280].copy() for t in range(n2)]
+    r = run({"paths": seq(os.path.join(base, "big_pan"), big_pan())})
+    check("1280x720 pan of 28 x 24 px a frame, default ARGS: pass, no event; effective block 32 and window 48 are reported",
+          r["verdict"] == "pass" and not r["events"] and r["block_px"] == 32 and r["max_motion_px"] == 48
+          and r["scale"] == 2 and r["scaled_defaults"] == ["block", "max_motion_px"], summary(r))
+    fr = big_pan()
+    fr[3] = fr[3].copy()
+    fr[3][240:432, 400:592] += 0.2
+    r = run({"paths": seq(os.path.join(base, "big_pan_tile"), fr)})
+    check("a +0.2 tile in that 1280x720 pan is found at frame 3 only, region within one (32 px) block, default ARGS",
+          [e["frame"] for e in r["events"]] == [3]
+          and max(abs(a - b) for a, b in zip(r["events"][0]["region_px"], [400, 240, 592, 432])) <= 32, summary(r))
+    # (a black tile is searched within 8 x scale px, so it needs a pan of up to 16 px a frame, here 12 x 8)
+    fr = [big[t * 8:t * 8 + 720, t * 12:t * 12 + 1280].copy() for t in range(n2)]
+    fr[3][240:432, 400:592] = 0.0
+    r = run({"paths": seq(os.path.join(base, "big_pan_black"), fr)})
+    check("a black tile in that 1280x720 pan is found at frame 3, region within one block, default ARGS",
+          [e["frame"] for e in r["events"]] == [3]
+          and max(abs(a - b) for a, b in zip(r["events"][0]["region_px"], [400, 240, 592, 432])) <= 32, summary(r))
+    fr = [big_pan()[0].copy() * (1.0 if t % 2 else 0.4) for t in range(n2)]
+    r = run({"paths": seq(os.path.join(base, "big_strobe"), fr)})
+    check("a strobe at 1280x720, default ARGS: flicker", r["verdict"] == "flicker" and len(r["events"]) >= 3, summary(r))
+    r = run({"paths": seq(os.path.join(base, "big_pan_explicit"), big_pan()), "block": 32, "max_motion_px": 40})
+    check("explicit ARGS win over the scaled defaults and are reported as given",
+          r["block_px"] == 32 and r["max_motion_px"] == 40 and r["scaled_defaults"] == [], summary(r))
+    r = run({"paths": [os.path.join(base, "pan", f"f_{i:02d}.png") for i in range(N)]})  # written by the first check
+    check("at 320x184 the scale is 1: block 16, window 24, results as before",
+          r["scale"] == 1 and r["block_px"] == 16 and r["max_motion_px"] == 24, summary(r))
+
     check("no images leaked", len([i for i in bpy.data.images if i.name.startswith("tmp_iter13")]) == 0)
 
 

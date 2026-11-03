@@ -8,15 +8,21 @@ their neighbours, without mistaking motion for flicker. Read-only.
 ARGS:
     paths               (list[str]) frame images in playing order; or
     dir                 (str) a folder of frames, read in natural filename order (use one of paths / dir)
-    block               (int)   block size in px (default 16). `block` and `max_motion_px` are in pixels and were tuned at
-                        640x360: scale both with the frame width (31 clean renders upscaled 2x: block 32 and max_motion_px 48
-                        give 31 `pass`; the defaults at that size give 21 false `flicker`, see Limits)
+    scale               (int)   frame scale, default from the frame size: the shorter side / 360 rounded to a whole number (1 up to
+                        539 px, 2 at 1280x720, 3 at 1920x1080, 6 at 3840x2160). Every pixel-sized default below was tuned at
+                        640x360 and is multiplied by it when you do not set it: block, max_motion_px, the 8 px first search
+                        window, the dropout search and its steps, the smallest edge strip (4 px). Results at 640x360 are unchanged.
+                        The values used are in the result (`scale`, `block_px`, `max_motion_px`, `dropout_search_px`, `cell_px`,
+                        `scaled_defaults`). An explicit `block` or `max_motion_px` is used as given; the other still scales.
+    block               (int)   block size in px (default 16 x scale: 16 at 640x360, 32 at 1280x720, 48 at 1920x1080)
     max_motion_px       (int)   search window: a block may move up to this many px in x and y between
-                        consecutive frames (default 24). Searched in two tiers: every shift up to 8 px at full
-                        resolution, and, for blocks nothing in that window explains (only when they are at least 3% of
-                        the blocks), the whole window coarse to fine (2x2 averaged copies, then +-1 px). A 1080p
-                        5-frame clean run takes the same time as with the old window of 8 (measured 9.4 s vs 9.6 s
-                        under load), a run where everything moves 14 px a frame about 1.85x.
+                        consecutive frames (default 24 x scale). Searched in two tiers: every shift up to 8 x scale px (at
+                        full resolution when scale is 1, else on scale x scale averaged copies, then +-1 px), and, for blocks
+                        nothing in that window explains (only when they are at least 3% of the blocks), the whole window
+                        coarse to fine (2 x scale averaged copies, then refined at full resolution). The averaging needs a
+                        block divisible by 2 x scale; with an explicit block that is not, the search runs at full resolution as
+                        at scale 1, which is slow on big frames. Timing, 5 frames at 1920x1080 (a noisy Cycles shot): 5.9 s with
+                        the defaults against 20.9 s with block 16 and window 24.
     flicker_threshold   (float) a block flickers when its mean differs from the average of its motion-matched
                         previous and next blocks by more than this (default 0.03, on 0..1 encoded values)
     reject_ratio        (float) match rejection: the best match is rejected when its residual (mean absolute
@@ -60,7 +66,7 @@ one block of the true region: whole cells only) and `dropout_cells`. A textured 
 are not flat; other content showing for one frame, a fade, a cut and black bars that never change are not dropouts either.
 Limits, measured: (1) a very dark scene whose neighbours are themselves nearly flat black (mean about 0.01) returns `pass` for a
 black frame at the default `dropout_gap` (0.02); lower it to 0.005 to find it there, at the price of more false events in dark
-renders; (2) a dropout smaller than two cells in each direction (16 px at the default block) is not looked for; (3) a flat
+renders; (2) a dropout smaller than two cells in each direction (16 px at 640x360, 32 at 1280x720) is not looked for; (3) a flat
 black or white object that moves fast (24 px at 30 px per frame, and about 148 px at about 90 px per frame, were measured) is the same
 shape as a dropout and is reported as one when it spans 2x2 cells (a shadow is not: the darkest flat cells in 31 clean renders, shadows included, are above 0.015
 unless the scene itself is black);
@@ -99,6 +105,12 @@ Events from a frame in which fewer than `min_measured` of the blocks could be fo
 surface changing shape) are not events: they are listed in `unconfirmed_events`, the frame is in `unmeasured_frames`, and the
 verdict is "inconclusive" (a global exposure pop and a dropout are judged by their own rules and stay events).
 
+Round 4, frame size: the same 31 clean renders and their injections at 640x360, upscaled 2x (1280x720) and 3x (1920x1080), all with
+default ARGS: clean 31 `pass`, 0 `flicker`, 0 `inconclusive` at each size (the earlier defaults: 21 `flicker` at 2x, 24 at 3x). A +0.2 one-frame
+tile, the same tile for two frames, a black tile (scaled with the frame) and a black frame: 31 of 31 found at each size, and the
+region error is exactly the 640x360 one times the scale (tile: 30 within 8 x scale px, one 40 x scale short; black tile: four near-black
+shots 32 to 72 x scale short). Longest single run of the 155: 10.8 s, 21.4 s, 56.5 s at 1x, 2x, 3x.
+
 Measured on 31 clean real renders (640x360, EEVEE and Cycles: balls, fans, spheres, rotating objects, cameras, moving lights)
 the verdict was flicker 14, pass 13, inconclusive 4 on the iteration 12 code, flicker 0, pass 19, inconclusive 12 on the
 iteration 13 round 1 code, and is flicker 0, pass 31, inconclusive 0 now. Each of those 31 with a one-frame +0.2 tile at
@@ -110,15 +122,16 @@ objects, a strobe and a light off for one frame: both of those stay `flicker` (g
 Remaining limits, measured: (a) a flicker that lasts three frames or more is a hold, not a pulse, and is not found (two
 frames are); (b) a defect smaller than four touching blocks (32 x 32 px at the default block) on an ambiguous area, or than two
 blocks in the leftover edge strip, is not reported: a lone ambiguous block over the threshold was the form every false event on
-the clean renders took (a 16 px square of +0.2 on a smooth floor is `pass`, a 32 px one is found); (c) a flat black or white
+the clean renders took (a 16 px square of +0.2 on a smooth floor is `pass`, a 32 px one is found, at 640x360; both sizes scale with the frame); (c) a flat black or white
 object that is in the frame for one frame, or crosses a flat region faster than the window, has the shape of a defect and is
 reported (8 of the 13 flat-object renders above; a ball or its shadow arriving over a smooth floor is the same shape: a clean
 `cy_ball_32dn` shot reports no event only because its ellipse is 2 blocks wide); (d) motion beyond `max_motion_px`
 is not judged reliably: shots where most of the picture changes shape are `inconclusive` only while under half of the blocks are
-followed, and a smooth background now counts as followed, so an object that jumps farther than the window over it shows as a
-flat region and is reported. The 31 renders upscaled 2x (motion doubled, window 24, block 16) give flicker 21, pass 10 (round 1:
-flicker 12, inconclusive 12, pass 7); with block 32 and window 48 they give pass 31. Scale `block` and `max_motion_px` with the
-resolution; (e) dropouts are searched within min(`max_motion_px`, 8) px; (f) a black tile is found only where the original is
+followed, and a smooth background now counts as followed, so an object that jumps farther than the window over it shows as
+a flat region and is reported. The window and the block scale with the frame, so motion that is the same in
+picture terms (a render upscaled 2x or 3x, motion doubled or tripled) stays inside it; a shot whose pixel motion is large
+for its size (a 1080p pan of 100 px a frame) still needs `max_motion_px` raised;
+(e) dropouts are searched within min(`max_motion_px`, 8 x scale) px; (f) a black tile is found only where the original is
 brighter than about 0.02 (the dropout rule): in four near-black shots (the tile region averages 0.01 to 0.04) its region
 came out 32 to 72 px short of the tile; (g) shots where camera, lights and objects all move under Cycles noise are the ones most
 likely to stay `inconclusive`: `noise_cy16_mixed` is `pass` here with 74% of its blocks measured (exactly or by range).
@@ -221,11 +234,12 @@ def _gather(F, ys, xs, y0, x0, bh, bw, oy, ox, sub=None):
     return F[r[:, :, None], c[:, None, :]]
 
 
-def _match_window(cur, ref, y0, x0, nby, nbx, bh, bw, R, margin, ratio, mean_tol, S=1):
+def _match_window(cur, ref, y0, x0, nby, nbx, bh, bw, R, margin, ratio, mean_tol, S=1, unit=1):
     """Per block (bh x bw, nby x nbx of them from (y0, x0)) of `cur`: its match in `ref` within +-R px, coarse to fine.
     The search runs on 2x2-averaged copies (every candidate within R // 2 of those px; the mean of a block there is exactly
     the mean of the full-resolution block at an even offset), then the best candidate is refined at full resolution
     (+-1 px, never beyond R). With an odd block size or R < 2 the search is exhaustive at full resolution instead.
+    `unit` is the frame scale (see main): a rival must be more than `unit` px from the best, 1 px at the 640x360 scale.
     Returns (mean[nby,nbx] of the matched block, NaN when not measured; code[nby,nbx]: 0 ok, 1 high_residual,
     2 ambiguous; oy, ox [nby,nbx]: the matched offset of each block in `ref`, in px)."""
     C = cur[y0:y0 + nby * bh, x0:x0 + nbx * bw].reshape(nby, bh, nbx, bw)
@@ -264,7 +278,7 @@ def _match_window(cur, ref, y0, x0, nby, nbx, bh, bw, R, margin, ratio, mean_tol
     near = resid <= best_r[None] + margin  # candidates that fit about as well as the best (never an outside one: inf)
     rival = np.zeros((nby, nbx), dtype=bool)
     for k in range(len(offs)):
-        far = (np.abs(dys[k] - oy) > 1) | (np.abs(dxs[k] - ox) > 1)
+        far = (np.abs(dys[k] - oy) > unit) | (np.abs(dxs[k] - ox) > unit)
         rival |= far & near[k] & (np.abs(means[k] - best_m) > mean_tol)
     if coarse:  # refine at full resolution: +-S/2 px around the best coarse candidate (never beyond R)
         rad = S // 2
@@ -302,15 +316,17 @@ def _match_window(cur, ref, y0, x0, nby, nbx, bh, bw, R, margin, ratio, mean_tol
     return np.where(code == 0, best_m, np.nan), code, oy, ox, lo, hi, best_r
 
 
-def _match(cur, ref, y0, x0, nby, nbx, bh, bw, R, margin, ratio, mean_tol):
-    """`_match_window` in two tiers: the exhaustive full-resolution window of 8 px (or R if smaller) first, and the wide window
+def _match(cur, ref, y0, x0, nby, nbx, bh, bw, R, margin, ratio, mean_tol, unit=1):
+    """`_match_window` in two tiers: the window of 8 x `unit` px (or R if smaller) first (exhaustive at full resolution when
+    unit is 1, else searched on unit x unit averaged copies, every shift a multiple of unit then +-1 px), and the wide window
     (up to R, coarse to fine) only for the blocks that found no match in it, and only when they are at least
     `WIDE_MIN_SHARE` of the blocks (a few unmatched blocks are an object edge or a frame border, not a fast camera, and the
     wide search costs about as much as the first one). A wide window offers more look-alike candidates, so searching it
     first would turn plain smooth content ambiguous; the blocks a small window cannot follow are the ones that need it."""
-    res = _match_window(cur, ref, y0, x0, nby, nbx, bh, bw, min(R, 8), margin, ratio, mean_tol)
-    if R > 8 and (res[1] == 1).mean() >= WIDE_MIN_SHARE:
-        wide = _match_window(cur, ref, y0, x0, nby, nbx, bh, bw, R, margin, ratio, mean_tol, S=2)
+    w1 = 8 * unit
+    res = _match_window(cur, ref, y0, x0, nby, nbx, bh, bw, min(R, w1), margin, ratio, mean_tol, S=unit, unit=unit)
+    if R > w1 and (res[1] == 1).mean() >= WIDE_MIN_SHARE:
+        wide = _match_window(cur, ref, y0, x0, nby, nbx, bh, bw, R, margin, ratio, mean_tol, S=2 * unit, unit=unit)
         C = cur[y0:y0 + nby * bh, x0:x0 + nbx * bw].reshape(nby, bh, nbx, bw)
         texture = np.abs(C - C.mean(axis=(1, 3))[:, None, :, None]).mean(axis=(1, 3))
         # a nearly flat block fits any flat place in a wide window: it is only taken when it has more texture than the
@@ -325,11 +341,11 @@ def _grab(F, ys, xs, ky, kx, R, sub):
     return F[(ys[:, ::sub] + R + ky[:, None])[:, :, None], (xs[:, ::sub] + R + kx[:, None])[:, None, :]]
 
 
-def _dropouts(frames, t, cell, R, level, flat_dev, gap):
+def _dropouts(frames, t, cell, R, level, flat_dev, gap, step=1):
     """Cells of frame t that went flat black or white while the frames either side agree there: (x0, y0, x1, y1, dev).
     Only candidate cells are searched: t is nearly uniform (mean abs deviation <= flat_dev) and its mean is within `level`
     of 0 or 1. For those, t-1 and t+1 are compared at the same place, shifted symmetrically by up to R px per frame
-    (every shift on every second px, then +-1 px of the best at full resolution) and the smallest raw difference is kept:
+    (every `step`-th shift on every (2 x step)-th px, then +-step px of the best at full resolution; step is 1 at 640x360) and the smallest raw difference is kept:
     a periodic texture cannot make that worse, it can only match at a period. A candidate is a dropout when both
     neighbours are at least `gap` away from the flat value (mean absolute difference) and agree with each other at
     least twice as closely as with it, and at least twice as closely as the typical shift does (so a smooth or noisy dark
@@ -350,7 +366,7 @@ def _dropouts(frames, t, cell, R, level, flat_dev, gap):
     ys, xs = cy[:, None] * cell + ar[None, :], cx[:, None] * cell + ar[None, :]
     Pp = np.pad(frames[t - 1], R, mode="constant", constant_values=np.nan)
     Np = np.pad(frames[t + 1], R, mode="constant", constant_values=np.nan)
-    sub = 2 if cell >= 8 else 1
+    sub = (2 if cell >= 8 * step else 1) * step
     K = len(cy)
     best = np.full(K, np.inf)
     by = np.zeros(K, dtype=int)
@@ -367,13 +383,15 @@ def _dropouts(frames, t, cell, R, level, flat_dev, gap):
         bx = np.where(better, kx, bx)
 
     coarse = []
-    for ky, kx in sorted(((a, b) for a in range(-R, R + 1) for b in range(-R, R + 1)), key=lambda k: abs(k[0]) + abs(k[1])):
+    nstep = R // step
+    for ky, kx in sorted(((a * step, b * step) for a in range(-nstep, nstep + 1) for b in range(-nstep, nstep + 1)),
+                         key=lambda k: abs(k[0]) + abs(k[1])):
         try_shift(np.full(K, ky), np.full(K, kx), sub)
     typical = np.median(np.stack(coarse), axis=0)
     cy0, cx0 = by.copy(), bx.copy()
     best[:] = np.inf
-    for dy in (-1, 0, 1):
-        for dx in (-1, 0, 1):
+    for dy in range(-step, step + 1):
+        for dx in range(-step, step + 1):
             try_shift(np.clip(cy0 + dy, -R, R), np.clip(cx0 + dx, -R, R), 1)
     Pb = _grab(Pp, ys, xs, -by, -bx, R, 1)
     Nb = _grab(Np, ys, xs, by, bx, R, 1)
@@ -422,7 +440,7 @@ def _natural_files(d):
     return [os.path.join(d, f) for f in sorted(names, key=_natural)]
 
 
-def main(paths=None, dir=None, block=16, max_motion_px=24, flicker_threshold=0.03, reject_ratio=0.5,
+def main(paths=None, dir=None, block=None, max_motion_px=None, scale=None, flicker_threshold=0.03, reject_ratio=0.5,
          ambiguity_margin=0.02, bound=0.09, slack=0.5, ambiguous_support=4, global_fraction=0.6, min_measured=0.5, dropout_level=0.015, dropout_flat_dev=0.01,
          dropout_gap=0.02, neighbour_agreement=0.5):
     if bool(paths) == bool(dir):
@@ -433,14 +451,23 @@ def main(paths=None, dir=None, block=16, max_motion_px=24, flicker_threshold=0.0
     for f in files:
         if not os.path.isfile(f):
             raise ValueError(f"frame not found: {f}")
-    B, R = int(block), int(max_motion_px)
-    if B < 4 or R < 0:
-        raise ValueError("'block' must be >= 4 and 'max_motion_px' >= 0")
     thr = float(flicker_threshold)
     frames = [_load_luma(f) for f in files]
     H, W = frames[0].shape
     if any(fr.shape != (H, W) for fr in frames):
         raise ValueError("all frames must have the same size")
+    # Every pixel-sized default was tuned at 640x360 and is multiplied by the frame scale: the shorter side over 360, rounded
+    # to a whole number (1 up to 539 px, 2 at 720p, 3 at 1080p, 6 at 4K). An explicit `block` / `max_motion_px` wins as given.
+    sc = max(1, int(round(min(H, W) / 360.0))) if scale is None else int(scale)
+    if sc < 1:
+        raise ValueError("'scale' must be >= 1")
+    B = int(block) if block is not None else 16 * sc
+    R = int(max_motion_px) if max_motion_px is not None else 24 * sc
+    if B < 4 or R < 0:
+        raise ValueError("'block' must be >= 4 and 'max_motion_px' >= 0")
+    # The coarse searches average sc x sc (first window) and 2sc x 2sc (wide window) px, which needs a block that divides by
+    # both; otherwise (an explicit odd block) they run at full resolution as at 640x360, and the search scale is 1.
+    us = sc if B % (2 * sc) == 0 else 1
     if H < B or W < B:
         raise ValueError(f"frames {W}x{H} are smaller than one {B}px block")
     # The blocks tile the frame from the top-left. A size that is not a multiple of B leaves a bottom strip and/or a right
@@ -449,7 +476,8 @@ def main(paths=None, dir=None, block=16, max_motion_px=24, flicker_threshold=0.0
     # where the strip begins (real context), and the strip pixels are then scored at that motion: the region reported is the
     # strip itself, and a defect inside it is neither diluted nor taken for part of the match.
     nby, nbx = H // B, W // B
-    hs, ws = max(H - nby * B, 4) if H % B else 0, max(W - nbx * B, 4) if W % B else 0
+    smin = 4 * sc  # a smaller leftover overlaps the main grid
+    hs, ws = max(H - nby * B, smin) if H % B else 0, max(W - nbx * B, smin) if W % B else 0
     regions = [(0, 0, nby, nbx, B, B, None)]  # y0, x0, rows of blocks, cols of blocks, block h, w, scored sub-rectangle
     yb, xr = max(0, H - hs - B), max(0, W - ws - B)  # origin of the context block above / left of a strip
     if hs:
@@ -476,8 +504,8 @@ def main(paths=None, dir=None, block=16, max_motion_px=24, flicker_threshold=0.0
     for (ry, rx, ny, nx, bh, bw, sub) in regions:
         r0, r1, c0, c1 = sub or (0, bh, 0, bw)
         for t in range(1, len(frames) - 1):
-            mp, cp, pyo, pxo, lop, hip, rsp = _match(frames[t], frames[t - 1], ry, rx, ny, nx, bh, bw, R, ambiguity_margin, reject_ratio, thr / 2)
-            mn, cn, nyo, nxo, lon, hin, rsn = _match(frames[t], frames[t + 1], ry, rx, ny, nx, bh, bw, R, ambiguity_margin, reject_ratio, thr / 2)
+            mp, cp, pyo, pxo, lop, hip, rsp = _match(frames[t], frames[t - 1], ry, rx, ny, nx, bh, bw, R, ambiguity_margin, reject_ratio, thr / 2, us)
+            mn, cn, nyo, nxo, lon, hin, rsn = _match(frames[t], frames[t + 1], ry, rx, ny, nx, bh, bw, R, ambiguity_margin, reject_ratio, thr / 2, us)
             code = np.maximum(cp, cn)
             tmean = frames[t][ry:ry + ny * bh, rx:rx + nx * bw].reshape(ny, bh, nx, bw).mean(axis=(1, 3))
             if sub:  # score only the leftover pixels of an edge block, at the offsets the whole block matched at
@@ -581,7 +609,7 @@ def main(paths=None, dir=None, block=16, max_motion_px=24, flicker_threshold=0.0
                     break
     cell = max(4, B // 2)
     for t in per_frame:
-        drops_by_t[t] = _dropouts(frames, t, cell, min(R, 8), dropout_level, dropout_flat_dev, dropout_gap)
+        drops_by_t[t] = _dropouts(frames, t, cell, min(R, 8 * us), dropout_level, dropout_flat_dev, dropout_gap, us)
 
     events = []
     unconfirmed = []
@@ -666,7 +694,8 @@ def main(paths=None, dir=None, block=16, max_motion_px=24, flicker_threshold=0.0
     verdict = "flicker" if events else ("pass" if share >= min_measured and not unmeasured_frames else "inconclusive")
     return {"verdict": verdict, "events": events, "unconfirmed_events": unconfirmed, "unmeasured_frames": unmeasured_frames,
             "frames": len(frames), "evaluated_frames": len(per_frame),
-            "block_px": B, "max_motion_px": R, "flicker_threshold": thr,
+            "scale": sc, "block_px": B, "max_motion_px": R, "dropout_search_px": min(R, 8 * us), "cell_px": cell,
+            "scaled_defaults": [k for k, v in (("block", block), ("max_motion_px", max_motion_px)) if v is None], "flicker_threshold": thr,
             "measured_blocks": n_meas, "total_blocks": n_all, "measured_share": round(share, 4),
             "not_measured": {"blocks": n_all - n_meas, **totals}, "ambiguous_ranged": ranged_total,
             "per_frame": [per_frame[t] for t in sorted(per_frame)],
