@@ -19,8 +19,7 @@ Long or batch work runs in a background process from a saved snapshot. Automated
 Measured on Windows 11, Microsoft Store Blender 5.2.3, blender-mcp 1.0.3, and re-tested by an independent agent.
 
 1. **Check the window before trusting a screenshot.** Minimized, the screenshot tool returns a black image, or corrupt
-   colours if a render window is open, with no error. A partly covered window captured correctly; a fully covered one
-   is untested. Judge the image, and ask the user to restore the window.
+   colours if a render window is open, with no error. A covered window (partly or fully) is untested. Judge the image, and ask the user to restore the window.
 2. **Checkpoint before editing.** Python-run edits add no undo steps, so one undo can jump past all of them, even past
    the last save (`ed.redo` recovered it). `bpy.ops.ed.undo_push` before and after a phase makes one undo revert only
    that phase. Saving a uniquely named copy with `save_as_mainfile(copy=True)` is the recovery boundary for bigger steps.
@@ -47,7 +46,7 @@ stdout, and `blender.exe` under `WindowsApps` gives access denied (reported upst
 
 - The launcher is never a valid `BLENDER_PATH` for `*_for_cli` tools.
 - `No result marker` means **outcome unknown**: the code may have run. Check outputs before running anything again.
-- `*_for_cli` tools give up at 120 s (through the launcher Blender kept running to at least 150 s) with no override (`_CLI_TIMEOUT`), so long work on every platform uses a direct
+- `*_for_cli` tools give up at 120 s (through the launcher Blender kept running until its code finished at 170 s) with no override (`_CLI_TIMEOUT`), so long work on every platform uses a direct
   `-b file.blend --python script.py` process with a script that writes JSON, as the tests do; Store users run it through
   the launcher.
 - Other installs: set `BLENDER_PATH` to `blender.exe`. Upstream #42 reports a hang on Windows; untested here. macOS and
