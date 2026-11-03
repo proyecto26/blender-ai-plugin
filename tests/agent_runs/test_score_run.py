@@ -121,6 +121,7 @@ def extra_cases():
         ]
         checks += announcement_cases(tmp)
         checks += window_cases(tmp)
+        checks += b_cases(tmp)
         checks += flag_cases()
         checks += args_file_cases()
         checks += plan_state_cases()
@@ -286,8 +287,14 @@ def plan_state_cases():
         ("Edit of another folder's args file", run([edit('"plan": true', '"plan": false', other)]), "OK"),
         ("shell write to another folder's args file", run([sh("echo {} > C:/elsewhere/args.json")]), "OK"),
         ("Edit turning plan on after a Write without it", run([edit("false", "true")], {"out_dir": "C:\\run\\out", "plan": False}), "OK"),
+        # B4: a shell comment is not part of the command, so it cannot grant the exemption (this case used to expect OK).
+        ("plan only in a shell comment", announce(launch_run(None, "PowerShell", PS_LAUNCH + ' # {"plan": true}', args_call=ARGS_FILE)), "FLAG"),
+        ("plan only in a comment, Bash foreground", announce(launch_run(None, "Bash", 'blender -b scene.blend -a # {"plan": true}', took=90)), "FLAG"),
+        ("# inside quotes is not a comment", announce(launch_run(None, "Bash", "blender -b scene.blend -a --args '# {\"plan\": true}'", took=90)), "OK"),
         ("inline plan in the launch command itself",
-         announce(launch_run(None, "PowerShell", PS_LAUNCH + ' # {"plan": true}', args_call=ARGS_FILE)), "OK"),
+         announce(launch_run(None, "PowerShell", PS_LAUNCH + ' \'{"plan": true}\'', args_call=ARGS_FILE)), "OK"),
+        ("inline escaped plan in the launch command", announce(launch_run(
+            None, "Bash", 'blender -b scene.blend -a --args "{\\"plan\\": true}"', took=90)), "OK"),
     ]
     return cases
 
@@ -411,6 +418,44 @@ def announcement_cases(tmp):
         # The duration said must match what the render took.
         ("said 12 s, took 120 s", announce(launch_run(GOOD_SAY), slow, tmp), "FLAG"),
         ("said 110 s, took 120 s", announce(launch_run(GOOD_SAY.replace("12 s", "110 s")), slow, tmp), "OK"),
+    ]
+
+
+def b_cases(tmp):
+    """B1-B3 and the status-path half of B4."""
+    esc_cmd = lambda out: 'blender -b f.blend --python r.py --args "{\\"out_dir\\": \\"' + out + '\\"}"'
+    ps = lambda cmd: announce(launch_run(None, "PowerShell", cmd))
+    sh90 = lambda cmd: announce(launch_run(None, "Bash", cmd, took=90))
+    ps90 = lambda cmd: announce(launch_run(None, "PowerShell", cmd, took=90))
+    plat = lambda cmd: score_run.detect_platform(replay([(T0, assistant(tool("x", "Bash", command=cmd))), (T0 + 1, done("x"))]))
+    sent = lambda say, secs: announce(launch_run(say, "Bash", "blender -b f.blend --python r.py", background=True),
+                                      {"started": T0, "ended": T0 + secs}, tmp)
+    escaped_out = "C:\\\\\\\\renders\\\\\\\\x"  # as typed inside an escaped JSON string: C:\\\\renders\\\\x
+    bg = lambda say, cmd: announce(launch_run(say, "Bash", cmd, background=True))
+    return [
+        # B1: a one-string -ArgumentList, and launches through a variable
+        ("Start-Process one-string -ArgumentList with -a", ps('Start-Process blender -ArgumentList "-b scene.blend -a"'), "FLAG"),
+        ("Start-Process one-string without a work flag", ps('Start-Process blender -ArgumentList "-b scene.blend"'), "OK"),
+        ("& $blender launch", ps90("& $blender -b scene.blend -a"), "FLAG"),
+        ("& $blender without -b", ps90("& $blender scene.blend -a"), "OK"),
+        ('"$BLENDER" launch', sh90('"$BLENDER" -b scene.blend -a'), "FLAG"),
+        ('& "$env:BLENDER" launch', ps90('& "$env:BLENDER" -b scene.blend -f 1'), "FLAG"),
+        ("echo of $BLENDER is not a job", sh90('echo "$BLENDER"'), "OK"),
+        ("another variable is not blender", sh90('"$OTHER" -b scene.blend -a'), "OK"),
+        # B2: escaped inline JSON out_dir, and a URL is not a drive path
+        ("escaped inline out_dir, real folder said", bg("About 12 s. Progress: C:/renders/x/render_status.json", esc_cmd(escaped_out)), "OK"),
+        ("escaped inline out_dir, other folder said", bg("About 12 s. Progress: C:/other/render_status.json", esc_cmd(escaped_out)), "FLAG"),
+        ("URL p:/ is not a Windows path", plat("curl https://example.com/p:/x"), "unknown"),
+        ("URL plus /home is linux", plat("curl https://example.com/p:/x -o /home/u/f"), "linux"),
+        ("a real drive path is Windows", plat('dir "C:\\run"'), "windows"),
+        # B3: the total, not the first number
+        ("stated total matches the render", sent("About 12 s per frame, 4 frames, total 48 s. Progress: C:/run/out/render_status.json", 48), "OK"),
+        ("stated total far from the render", sent("About 10 s per frame, total 5 min. Progress: C:/run/out/render_status.json", 12), "FLAG"),
+        ("sum of parts matches the render", sent("About 2 min 30 s. Progress: C:/run/out/render_status.json", 400), "OK"),
+        ("sum of parts far from the render", sent("About 2 min 30 s. Progress: C:/run/out/render_status.json", 20), "FLAG"),
+        # B4: the status path is the status file with a directory, not any slash
+        ("slash elsewhere is not a status path", bg("About 12 s, and/or see render_status.json", "blender -b f.blend --python r.py"), "FLAG"),
+        ("directory before render_status.json", bg("About 12 s, see out/render_status.json", "blender -b f.blend --python r.py"), "OK"),
     ]
 
 

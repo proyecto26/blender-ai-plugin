@@ -42,6 +42,8 @@ DETACHED = r"\bnohup\b|(?<![&>|])&(?![&>])"
 DETACHED_PS = r"\bStart-Process\b|\bStart-Job\b|-AsJob\b|\bstart\s+/b\b"
 SHELLS = ("Bash", "PowerShell")
 BLENDER_EXE = r"blender(?:-launcher)?(?:\.exe)?"
+# A launch through a variable: `& $blender`, `"$BLENDER"`, `& "$env:BLENDER"`, `${BLENDER_EXE}`.
+BLENDER_VAR = r"\$\{?(?:env:)?blender(?:_?(?:exe|path|bin|launcher))?\}?"
 # Blender stops reading its own flags at `--`; what follows belongs to the script. Flags are case-sensitive (`-F` is not `-f`).
 BG_FLAGS = {"-b", "--background"}
 # Work that starts a job: render animation / frame, run a script. Short and long spellings, plus the `--flag=value` forms.
@@ -50,6 +52,10 @@ RENDER_FLAGS = {"-a", "--render-anim", "-f", "--render-frame"}
 # Not valid Blender, but an agent may write `-ba` or `-bf 1`; scoring leans to seeing a job, so a cluster of the short
 # letters b/a/f/P (optionally ending in digits, `-f1`) counts as each flag it contains.
 SHORT_CLUSTER = r"-([bafP]+)\d*"
+# A drive-letter path: not the tail of a word or URL (`https://`, `example.com/p:/x`); `file:///C:/x` still counts.
+DRIVE_PATH = r"(?:(?<![\w/.:\-])|(?<=file:///))[A-Za-z]:[\\/]"
+# The status file with a directory in front of it (`out/render_status.json`), not a slash elsewhere in the message.
+STATUS_PATH = r"[^\s\"'<>|*?]*[\\/]render_status\.json"
 TOKEN = r"\"([^\"]*)\"|'([^']*)'|([^\s,\"']+)"
 PIPE_END = {"&&", "||", ";", "|"}
 PLAN_ON = r"[\"']?plan[\"']?\s*[:=]\s*[\"']?(?:true|\$true)\b"
@@ -146,7 +152,7 @@ def local_clock(t):
 def detect_platform(run):
     """windows | macos | linux, from the tools and paths in the trace; 'unknown' when nothing decides."""
     blob = " ".join(str(c["input"]) for c in run["calls"])
-    if any(c["name"] == "PowerShell" for c in run["calls"]) or re.search(r"[A-Za-z]:[\\/]", blob):
+    if any(c["name"] == "PowerShell" for c in run["calls"]) or re.search(DRIVE_PATH, blob):
         return "windows"
     if re.search(r"/Users/|/Applications/|\.app/", blob):
         return "macos"
@@ -277,18 +283,44 @@ def seconds_in(text):
     return found
 
 
+TOTAL_WORD = r"\b(?:total\w*|en total|overall|in all|altogether|en conjunto)\b[^\d]{0,12}$"
+PART_JOIN = r"[\s,+]*(?:\b(?:and|y|e|plus)\b)?[\s,+]*"
+
+
+def claimed_seconds(text):
+    """The total duration the message claims: a stated total (`total 48 s`), else the first figure. A figure written in
+    parts (`2 min 30 s`, falling units) is the sum of its parts."""
+    groups = []  # [start, end, seconds, unit scale of the last part]
+    for m in re.finditer(DURATION, text, re.I):
+        unit = m.group(2).lower()
+        scale = UNIT_SECONDS.get(unit) or (60 if unit.startswith("min") else 3600 if unit[0] == "h" else 1)
+        value = float(m.group(1).replace(",", ".")) * scale
+        prev = groups[-1] if groups else None
+        if prev and scale < prev[3] and re.fullmatch(PART_JOIN, text[prev[1]:m.start()], re.I):
+            prev[1], prev[2], prev[3] = m.end(), prev[2] + value, scale
+        else:
+            groups.append([m.start(), m.end(), value, scale])
+    if not groups:
+        return None
+    stated = [g for g in groups if re.search(TOTAL_WORD, text[max(0, g[0] - 16):g[0]], re.I)]
+    return (stated[-1] if stated else groups[0])[2]
+
+
 def blender_segments(command):
     """Each Blender invocation in the command, as the flags Blender itself reads (up to `--` or the next shell operator).
     Quoted pieces and comma lists (PowerShell -ArgumentList "-b","f.blend") become separate tokens."""
     segments, current = [], None
     for quoted, single, bare in re.findall(TOKEN, command):
         tok = quoted or single or bare
-        if re.fullmatch(BLENDER_EXE, tok.replace("\\", "/").rsplit("/", 1)[-1], re.I):
+        last = tok.replace("\\", "/").rsplit("/", 1)[-1]
+        if re.fullmatch(BLENDER_EXE, last, re.I) or re.fullmatch(BLENDER_VAR, last, re.I):
             current = []
             segments.append(current)
         elif current is not None:
             if tok == "--" or (bare and tok in PIPE_END):
                 current = None
+            elif quoted and tok.lstrip().startswith("-") and re.search(r"\s", tok):
+                current.extend(tok.split())  # -ArgumentList "-b scene.blend -a": one string holding several flags
             else:
                 current.append(tok)
     return segments
@@ -433,10 +465,32 @@ def args_file_text(call, run, ref, base):
     return re.sub(PLAN_ON, "plan: unknown", text, flags=re.I) if unknown else text
 
 
+def strip_comment(command):
+    """The command without shell comments: a `#` that starts a word outside quotes, to the end of its line."""
+    out = []
+    for line in command.split("\n"):
+        quote, i = None, 0
+        while i < len(line):
+            ch = line[i]
+            if quote:
+                if ch == "\\" and quote == '"' and i + 1 < len(line):
+                    i += 1
+                elif ch == quote:
+                    quote = None
+            elif ch in "\"'":
+                quote = ch
+            elif ch == "#" and (i == 0 or line[i - 1].isspace()):
+                line = line[:i]
+                break
+            i += 1
+        out.append(line)
+    return "\n".join(out)
+
+
 def related_text(call, run):
     """The launch command plus the text of the args file it names, if an earlier call wrote it."""
     command = call["input"].get("command", "")
-    parts = [command]
+    parts = [strip_comment(command)]
     for groups in re.findall(r"--args-file[\"']?[\s,=]+(?:\"([^\"]+)\"|'([^']+)'|([^\s\"',]+))", command):
         ref = next(g for g in groups if g)
         ref = re.sub(r"^(?:\./|\.\./)+", "", norm_path(ref))
@@ -452,11 +506,11 @@ def launch_kind(call, run):
     """None, or 'detached' / 'foreground' for a Blender job that needs a message before it starts."""
     if call["name"] not in SHELLS:
         return None
-    command = call["input"].get("command", "")
+    command = strip_comment(call["input"].get("command", ""))
     job = blender_job(command)
     if not job:
         return None
-    if re.search(PLAN_ON, related_text(call, run), re.I):
+    if re.search(PLAN_ON, related_text(call, run).replace('\\"', '"'), re.I):
         return None  # the plan step makes the message; it is not the job
     pattern = DETACHED if call["name"] == "Bash" else DETACHED_PS
     if call["input"].get("run_in_background") or re.search(pattern, command):
@@ -468,7 +522,9 @@ def launch_kind(call, run):
 
 
 def out_dirs(call, run):
-    found = re.findall(r"out_dir[\"']?\s*[:=]\s*[\"']([^\"']+)[\"']", related_text(call, run))
+    # Inline JSON inside a command string arrives escaped: {\"out_dir\": \"C:\\\\x\"}.
+    text = related_text(call, run).replace('\\"', '"')
+    found = re.findall(r"out_dir[\"']?\s*[:=]\s*[\"']([^\"']+)[\"']", text)
     return [norm_path(p) for p in found]
 
 
@@ -496,7 +552,7 @@ def score_announcements(run, args=None):
         def has_path(text):
             flat = norm_path(text)
             # The folder as a whole path: "c:/run/outdated" is not "c:/run/out", "/x/run/out" is not "/run/out".
-            return any(re.search(r"(?<![\w./\-])" + re.escape(d) + r"(?![\w.\-])", flat) for d in dirs) if dirs else bool(re.search(r"render_status", text) and re.search(r"[\\/]", text))
+            return any(re.search(r"(?<![\w./\-])" + re.escape(d) + r"(?![\w.\-])", flat) for d in dirs) if dirs else bool(re.search(STATUS_PATH, text))
         full = [x for x in before if has_path(x["text"]) and seconds_in(x["text"])]
         if not full:
             missing = []
@@ -506,7 +562,7 @@ def score_announcements(run, args=None):
                 missing.append("a duration")
             problems.append(f"{kind} Blender job announced without {' or '.join(missing)}")
             continue
-        claimed = seconds_in(full[-1]["text"])[0]
+        claimed = claimed_seconds(full[-1]["text"])
     if claimed is not None and args is not None and getattr(args, "status", None):
         status = json.load(open(args.status, encoding="utf-8"))
         if status.get("started") and status.get("ended"):
