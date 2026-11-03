@@ -262,6 +262,13 @@ def run_all(out_dir, check):
     check("at 320x184 the scale is 1: block 16, window 24, results as before",
           r["scale"] == 1 and r["block_px"] == 16 and r["max_motion_px"] == 24, summary(r))
 
+    # a block whose match in ONE neighbour is rejected is not measured, even when the other match is ambiguous (a smooth ramp
+    # fits many shifts): a last frame that is a foreign image must not let the sequence pass
+    ramp = np.tile((0.2 + 0.002 * np.arange(W))[None, :], (H, 1))
+    r = run({"paths": seq(os.path.join(base, "ramp_cut"), [ramp, ramp, noise(H, W, 11)])})
+    check("ramp, ramp, foreign image: not a pass (rejected neighbour is not measured)",
+          r["verdict"] == "inconclusive" and r["measured_share"] < 0.5, summary(r))
+
     check("no images leaked", len([i for i in bpy.data.images if i.name.startswith("tmp_iter13")]) == 0)
 
 
