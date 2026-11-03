@@ -2,7 +2,8 @@
 
   E1  mocap-cleanup.md      evaluated error of the recipe's reduced keys: Bezier outside the stated tolerance, linear inside
   E2  scan-match.md         scan-to-model direction sees a part the model lacks; model-to-scan does not
-  E3  facial-shape-keys...  Edit Mode vertex add/delete keeps shape keys consistent; a new vertex has zero offset
+  E3  facial-shape-keys...  Edit Mode vertex add/delete keeps shape keys consistent; an isolated new vertex has zero offset;
+                            extrude, duplicate and subdivide give new vertices a non-zero offset
   E4  scatter-systems.md    density = cap / area is a soft cap (count above the cap on some seeds)
 
 Recipes are read from the docs themselves (the first ```python block of each file), so the doc and the test cannot drift.
@@ -75,7 +76,14 @@ def test_scan_to_model():
     s2m_mean, s2m_max = deviation(bumpy, model)
     assert m2s_max < 0.02, ("model to scan should stay small", m2s_max)
     assert s2m_max > 0.25, ("scan to model must see the handle", s2m_max)
-    return {"model_to_scan_max": round(m2s_max, 4), "scan_to_model_max": round(s2m_max, 4)}
+    # through the recipe's own verdict(): the model lacks the part, so only the scan-to-model distance can fail it
+    g["scan"] = bumpy
+    diag = g["diagonal"](bumpy)
+    assert m2s_max / diag <= 0.015 and m2s_mean / diag <= 0.002, "fixture must pass on the model-to-scan direction alone"
+    v = g["verdict"](model)
+    assert not v["ok"], ("verdict() passed a model that lacks a part of the scan", v)
+    assert v["worst_pct"] > 1.5, v
+    return {"model_to_scan_max": round(m2s_max, 4), "scan_to_model_max": round(s2m_max, 4), "verdict": v}
 
 
 def test_shape_keys_edit_mode():
@@ -111,6 +119,68 @@ def test_shape_keys_edit_mode():
     assert len(me.vertices) == n0 and all(len(k.data) == n0 for k in keys), "keys not resized after delete"
     assert all(abs(keys["smile"].data[i].co.z - keys["Basis"].data[i].co.z - 0.5) < 1e-5 for i in range(n0 - 1)), "offsets changed after delete"
     return {"verts": n0, "key_lengths": [len(k.data) for k in keys]}
+
+
+def _keyed_grid(name):
+    me = bpy.data.meshes.new(name)
+    bm = bmesh.new()
+    bmesh.ops.create_grid(bm, x_segments=3, y_segments=3, size=1.0)
+    bm.to_mesh(me)
+    bm.free()
+    ob = bpy.data.objects.new(name, me)
+    bpy.context.scene.collection.objects.link(ob)
+    bpy.context.view_layer.objects.active = ob
+    ob.shape_key_add(name="Basis")
+    key = ob.shape_key_add(name="smile")
+    for i, v in enumerate(key.data):
+        v.co.z += 0.1 * (i % 4)  # a different offset per vertex
+    return me
+
+
+def _key_offsets(me):
+    ks = me.shape_keys.key_blocks
+    return [ks["smile"].data[i].co.z - ks["Basis"].data[i].co.z for i in range(len(me.vertices))]
+
+
+def _select_vertex(me, idx):
+    b = bmesh.from_edit_mesh(me)
+    b.verts.ensure_lookup_table()
+    for v in b.verts:
+        v.select = False
+    b.verts[idx].select = True
+    b.select_flush(True)
+    bmesh.update_edit_mesh(me)
+
+
+def test_shape_keys_copying_ops():
+    """Extrude, duplicate and subdivide on a keyed mesh: key lengths follow the mesh, new vertices are NOT zero offset."""
+    out = {}
+    for op in ("extrude", "duplicate", "subdivide"):
+        me = _keyed_grid("Keyed_" + op)
+        n0, before = len(me.vertices), _key_offsets(me)
+        bpy.ops.object.mode_set(mode="EDIT")
+        if op == "subdivide":
+            bpy.ops.mesh.select_all(action="SELECT")
+            bpy.ops.mesh.subdivide(number_cuts=1)
+        else:
+            _select_vertex(me, 5)
+            if op == "extrude":
+                bpy.ops.mesh.extrude_region_move(TRANSFORM_OT_translate={"value": (0, 0, 0.3)})
+            else:
+                bpy.ops.mesh.duplicate()
+        bpy.ops.object.mode_set(mode="OBJECT")
+        after = _key_offsets(me)
+        assert len(me.vertices) > n0 and all(len(k.data) == len(me.vertices) for k in me.shape_keys.key_blocks), op
+        assert all(abs(after[i] - before[i]) < 1e-5 for i in range(n0)), ("old offsets changed", op)
+        new = after[n0:]
+        assert any(abs(x) > 1e-4 for x in new), ("new vertices all have zero offset", op, new)
+        out[op] = {"new_vertices": len(new), "new_offsets": [round(x, 4) for x in new]}
+    # extrude and duplicate copy vertex 5 (offset 0.1); extrude then moves only the Basis position by 0.3
+    assert abs(out["duplicate"]["new_offsets"][0] - 0.1) < 1e-4, out
+    assert abs(out["extrude"]["new_offsets"][0] - (0.1 - 0.3)) < 1e-4, out
+    # subdivide interpolates: every new offset lies within the old range
+    assert all(-1e-4 <= x <= 0.3 + 1e-4 for x in out["subdivide"]["new_offsets"]), out
+    return out
 
 
 def test_scatter_soft_cap():
@@ -162,7 +232,7 @@ def main():
     out_dir = args.get("out_dir", ".")
     os.makedirs(out_dir, exist_ok=True)
     checks, failed = {}, []
-    for fn in (test_mocap_tolerance, test_scan_to_model, test_shape_keys_edit_mode, test_scatter_soft_cap):
+    for fn in (test_mocap_tolerance, test_scan_to_model, test_shape_keys_edit_mode, test_shape_keys_copying_ops, test_scatter_soft_cap):
         try:
             checks[fn.__name__] = {"ok": True, "data": fn()}
         except Exception:
