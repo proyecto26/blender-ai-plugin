@@ -36,7 +36,9 @@ first frame plus the second for each remaining frame (`measured_frames` is 2; `f
 this machine (Windows, Blender 5.2.3, 320x180 to 480x270, 4 and 12 frames, 3 repeats): with n times the first frame, real
 time over the estimate was 0.88 to 1.03 for Cycles on the CPU (16 and 64 samples) but 0.24 to 0.40 for Eevee, whose first
 frame took 1.0 s and the rest 0.1 to 0.4 s; using only the second frame gave 1.7 to 3.3 for Eevee. With the first frame
-added once, as now, the ratio was 1.00 to 1.17 in all 15 runs: the estimate still runs a little short, by the process start. Check `time` before trusting an older plan file.
+added once, as now, the ratio was 1.00 to 1.17 in all 15 runs: the estimate still runs a little short, by the process start. On macOS (M2 Max, Cycles on METAL, 480x270, 12 frames)
+it was 1.03 to 1.13 once warm, but 0.87 and 0.99 on the first plan of a new scene, whose first frame paid a one-off
+compile the real run did not: the estimate then runs long. Check `time` before trusting an older plan file.
 The real run prints nothing useful for this: its output usually goes to a log, and the Microsoft Store launcher drops it.
 
 One process owns an out_dir at a time, through an OS lock on `<out_dir>/render.lock`. The operating system drops the lock

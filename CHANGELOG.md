@@ -48,6 +48,9 @@ Iteration 12: example parity and the open roadmap. Plan: `docs/plans/iteration-1
 - `flicker_check.py` reports a tile, band or whole frame that goes flat black or white for one frame (`dropout_cells`; `dropout_level`, `dropout_flat_dev`, `dropout_gap`), checked only on near-uniform near-black or near-white cells against the frames either side. Textured content showing for one frame and a cut are not events; a fast flat black or white object can be reported as a dropout. A black frame in a very dark scene is a stated limit
 - The Blender suites now exit non-zero when a check fails
 
+- `hdrp-material-mapping.md` says Blender tags its 8-bit PNG as sRGB even for Non-Color (seen on Windows and macOS); the earlier text said it wrote no colour chunk
+- The `background_render.py` estimate notes the macOS timings, which run long on the first plan of a new scene
+
 Known open issues from the final review are listed in `docs/ROADMAP.md`.
 - `validate_asset.py` and `clash_audit.py` refuse a mesh in Edit Mode rather than judge stale data; `export_asset.py` exports the current edit
 - `fix_asset.py` scales shape keys together with the mesh

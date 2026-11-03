@@ -69,8 +69,10 @@ What follows:
 - **A correct 16-bit file is possible by writing the PNG yourself.** `write_png16` in the recipe (standard library and
   numpy only) stores the straight RGBA values with no colour management and no premultiplication. Its output was verified
   by decoding the bytes.
-- Blender writes no colour-space chunk for a Non-Color image, and neither does `write_png16`: import the map in Unity
-  with sRGB off. Whether a given Unity version keeps 16 bits of a PNG on import was not checked; the 8-bit file is the
+- Blender's PNG writer tags the 8-bit file as sRGB (`sRGB`, `gAMA` and `cHRM` chunks) whatever the image's colour
+  space, Non-Color included; this was seen on Windows and macOS with Blender 5.2.3. `write_png16` writes no colour
+  chunk. So import the map in Unity with sRGB off: that setting, not the file, decides how it is read. A tool that
+  honours the chunks could read the 8-bit map as sRGB; the Unity import itself was not tested. Whether a given Unity version keeps 16 bits of a PNG on import was not checked; the 8-bit file is the
   one to rely on.
 
 ## Packing recipe (tested)
