@@ -227,12 +227,21 @@ def test_scatter_soft_cap():
     return out
 
 
+def test_shape_key_doc_text():
+    """The doc must not contradict the measurements: Edit Mode add/delete keeps keys, and key lengths grow with the mesh."""
+    text = open(os.path.join(SKILLS, "rigging/references/facial-shape-keys-drivers.md"), encoding="utf8").read()
+    assert "never add or delete vertices once keys exist" not in text, "stale blanket ban on vertex edits"
+    assert "key lengths were unchanged" not in text, "key lengths grow with the vertex count"
+    assert "key length equals mesh vertex count" in text
+    return {"checked": 3}
+
+
 def main():
     args = _cli_args()
     out_dir = args.get("out_dir", ".")
     os.makedirs(out_dir, exist_ok=True)
     checks, failed = {}, []
-    for fn in (test_mocap_tolerance, test_scan_to_model, test_shape_keys_edit_mode, test_shape_keys_copying_ops, test_scatter_soft_cap):
+    for fn in (test_mocap_tolerance, test_scan_to_model, test_shape_keys_edit_mode, test_shape_keys_copying_ops, test_scatter_soft_cap, test_shape_key_doc_text):
         try:
             checks[fn.__name__] = {"ok": True, "data": fn()}
         except Exception:

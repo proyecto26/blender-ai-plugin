@@ -38,7 +38,7 @@ Iteration 13: the review follow-ups of iteration 12. Plan: `docs/plans/iteration
   the scan-to-model direction tested, the Unity attribution, the 170 s background run, a covered window marked untested
 
 ### Added
-- `docs/evidence/iteration-12.md`: each measured sentence of iteration 12 with its backing, or marked unbacked
+- `docs/evidence/iteration-12.md`: the measured sentences of iteration 12 found by a pattern search of the `.md` files changed between `6493832` and `98d7076` (not `.py` docstrings), each with its backing or marked unbacked
 - Suites `tests/blender/test_iter13_flicker.py`, `test_iter13_scene.py`, `test_iter13_content.py`, `test_iter13_docs.py`
 
 ---
