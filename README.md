@@ -317,7 +317,7 @@ This repository is available under the [MIT License](./LICENSE).
 
 ## 👍 Credits
 
-- [blender-skills](https://github.com/arjun988/blender-skills) by arjun988: the original skill pack this plugin is forked from
+- [blender-skills](https://github.com/arjun988/blender-skills) by arjun988: the original skill pack this plugin is based on
 - [Blender Lab MCP server](https://www.blender.org/lab/mcp-server/): the official Blender MCP integration
 - [Agent Plugins](https://agent-plugins.org/) and [Agent Skills](https://agentskills.io/): the packaging standards
 

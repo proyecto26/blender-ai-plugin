@@ -3,11 +3,22 @@
 
     python tests/agent_runs/score_run.py --trace run.jsonl --skills-dir skills
         [--monitor monitor.csv] [--manifest run_manifest.json] [--status render_status.json] [--log render.log]
-        [--deliverable final.mp4]
+        [--deliverable final.mp4] [--platform auto|windows|macos|linux]
 
 The trace is `claude -p --output-format stream-json --verbose` output, raw or with each line wrapped as
 {"t": epoch, "line": "..."} (timings need the wrapped form). Prints one verdict per finding: OK, FLAG, NOTE (worth
 reading, not a defect) or SKIP (input missing). --strict exits 1 on any FLAG.
+
+Window: a minimized window gives a black capture on Windows only (blender-mcp-workflow `references/live-session.md`). With
+--platform windows (or auto, when the trace shows Windows paths or the PowerShell tool, or nothing decides) a minimized
+sample needs a message to the user during the run. On macOS and Linux it is a NOTE: the screenshot still works, so the image
+decides, and a blank one recorded as an inspect PASS is caught by the gates check.
+
+Announcements: a Blender job launched in the background (Bash `&`, `nohup`, `run_in_background`; PowerShell `Start-Process`,
+`Start-Job`, `run_in_background`), or a render run in the foreground, needs a message to the user BEFORE the launch that
+names the real out_dir (taken from the launch command or the args file it names; without one, a path to render_status.json)
+and a duration. With --status the duration is compared with the render's real time: more than 3 times off, and more than
+5 s, is a FLAG. The plan step (`plan: true`) is exempt, since it produces the message.
 
 Text matching is heuristic and every such check says so. One run shows one case, not general reliability, and the
 score runs after the job, so it catches regressions rather than stopping a bad report.
@@ -25,8 +36,26 @@ LIVE_CODE = "mcp__blender__execute_blender_code"
 RUNNING_WORDS = r"still running|sigue|en curso|todav[ií]a|no ha terminado|cuando termine|when it finishes|in progress"
 MINIMIZED_WORDS = r"minimi|restaur|restore|black|negr"
 FREEZE_WORDS = r"congel|freez|bloque|block|not responding|no responde"
-# A shell job sent to the background (`nohup`, or a lone `&`, not `&&`, `2>&1` or `&>`), as agents do on macOS/Linux.
+# A Bash job sent to the background (`nohup`, or a lone `&`, not `&&`, `2>&1` or `&>`), as agents do on macOS/Linux.
 DETACHED = r"\bnohup\b|(?<![&>|])&(?![&>])"
+# PowerShell has no trailing `&` (a leading one is the call operator); it detaches with these.
+DETACHED_PS = r"\bStart-Process\b|\bStart-Job\b|-AsJob\b|\bstart\s+/b\b"
+SHELLS = ("Bash", "PowerShell")
+BLENDER_EXE = r"blender(?:-launcher)?(?:\.exe)?"
+# Blender stops reading its own flags at `--`; what follows belongs to the script. Flags are case-sensitive (`-F` is not `-f`).
+BG_FLAGS = {"-b", "--background"}
+# Work that starts a job: render animation / frame, run a script. Short and long spellings, plus the `--flag=value` forms.
+WORK_FLAGS = {"-a", "--render-anim", "-f", "--render-frame", "-P", "--python", "--python-text", "--python-expr"}
+RENDER_FLAGS = {"-a", "--render-anim", "-f", "--render-frame"}
+# Not valid Blender, but an agent may write `-ba` or `-bf 1`; scoring leans to seeing a job, so a cluster of the short
+# letters b/a/f/P (optionally ending in digits, `-f1`) counts as each flag it contains.
+SHORT_CLUSTER = r"-([bafP]+)\d*"
+TOKEN = r"\"([^\"]*)\"|'([^']*)'|([^\s,\"']+)"
+PIPE_END = {"&&", "||", ";", "|"}
+PLAN_ON = r"[\"']?plan[\"']?\s*[:=]\s*[\"']?(?:true|\$true)\b"
+DURATION = (r"(\d+(?:[.,]\d+)?)\s*(segundos?|seconds?|secs?|minutos?|minutes?|mins?|horas?|hours?|hrs?|s|h)\b")
+UNIT_SECONDS = {"s": 1, "h": 3600}
+FOREGROUND_LONG_S = 20
 LOG_CLAIM = r"(registro|log)\b.{0,40}(no contiene errores|sin errores|no errors|is clean|limpio)"
 UV_CLAIM = r"\buvs?\b.{0,20}(correct|ok\b)"
 OPEN_CLAIM = r"(abre sin problema|opens? (fine|cleanly|without))"
@@ -59,14 +88,16 @@ def parse_trace(path):
 
 def collect(events):
     run = {"calls": [], "texts": [], "results": [], "by_id": {}}
+    seq = 0
     for t, d in events:
         kind = d.get("type")
         if kind == "assistant":
             for c in d["message"]["content"]:
+                seq += 1
                 if c["type"] == "text" and c["text"].strip():
-                    run["texts"].append({"t": t, "text": c["text"], "child": bool(d.get("parent_tool_use_id"))})
+                    run["texts"].append({"t": t, "seq": seq, "text": c["text"], "child": bool(d.get("parent_tool_use_id"))})
                 elif c["type"] == "tool_use":
-                    call = {"t": t, "end": None, "name": c["name"], "input": c["input"],
+                    call = {"t": t, "seq": seq, "end": None, "name": c["name"], "input": c["input"],
                             "child": bool(d.get("parent_tool_use_id")), "result": ""}
                     run["calls"].append(call)
                     run["by_id"][c["id"]] = call
@@ -112,12 +143,31 @@ def local_clock(t):
     return datetime.fromtimestamp(t).strftime("%H:%M:%S")
 
 
+def detect_platform(run):
+    """windows | macos | linux, from the tools and paths in the trace; 'unknown' when nothing decides."""
+    blob = " ".join(str(c["input"]) for c in run["calls"])
+    if any(c["name"] == "PowerShell" for c in run["calls"]) or re.search(r"[A-Za-z]:[\\/]", blob):
+        return "windows"
+    if re.search(r"/Users/|/Applications/|\.app/", blob):
+        return "macos"
+    if re.search(r"/home/|/usr/|/tmp/", blob):
+        return "linux"
+    return "unknown"
+
+
 def score_window(run, args, manifest):
     if not args.monitor:
         return verdict("window", "SKIP", "no --monitor")
     samples = minimized_spans(args.monitor)
     if not samples:
         return verdict("window", "OK", "window never minimized")
+    platform = getattr(args, "platform", "auto") or "auto"
+    if platform == "auto":
+        platform = detect_platform(run)
+    detail = f"minimized in {len(samples)} sample(s), {samples[0]} to {samples[-1]}"
+    if platform in ("macos", "linux"):
+        return verdict("window", "NOTE", f"{detail}; on {platform} a minimized window still captures, so the image decides, "
+                       "not the window state (a blank capture recorded as an inspect PASS is flagged by the gates check)", True)
     # Only a message sent while the window was still minimized gives the user the chance to act on it.
     told = [x for x in run["texts"] if re.search(MINIMIZED_WORDS, x["text"], re.I) and not x["child"]
             and (x["t"] is None or local_clock(x["t"]) <= max(samples))]
@@ -130,7 +180,7 @@ def score_window(run, args, manifest):
                 tzinfo=datetime.fromisoformat(e["time"]).tzinfo or timezone.utc).astimezone().strftime("%H:%M:%S")
             if min(samples) <= clock <= max(samples):
                 problems.append("inspect recorded PASS while minimized")
-    detail = f"minimized in {len(samples)} sample(s), {samples[0]} to {samples[-1]}"
+    detail += "" if platform == "windows" else " (platform not recognized, judged as Windows)"
     if problems:
         return verdict("window", "FLAG", detail + "; " + "; ".join(problems), True)
     return verdict("window", "OK", detail + "; user told, inspect not passed", True)
@@ -195,7 +245,7 @@ def score_gates(run, manifest):
             problems.append(f"one call writes {len(stages)} gates: {stages}")
     by_time = {}
     for e in events:
-        by_time.setdefault(e["time"], []).append(e["stage"])
+        by_time.setdefault(str(e["time"])[:19], []).append(e["stage"])
     # A loop writes gates with no literal stage= in its code, so also read the manifest's own timestamps.
     problems += [f"{len(v)} gates in the same second: {v}" for v in by_time.values() if len(v) >= 3]
     last = {}
@@ -212,25 +262,262 @@ def score_gates(run, manifest):
     return verdict("gates", "OK", f"{len(events)} events, no call writes three or more", True)
 
 
-def score_announcements(run):
-    if not any(c["t"] is not None for c in run["calls"]):
-        return verdict("announcements", "SKIP", "the trace has no timings")
-    timed = [x for x in run["texts"] if x["t"] is not None]
-    problems = []
+def norm_path(text):
+    flat = re.sub(r"/+", "/", text.replace("\\\\", "/").replace("\\", "/")).lower().rstrip("/")
+    return re.sub(r"^/([a-z])(?=/)", r"\1:", flat)  # Git Bash /c/run -> c:/run
+
+
+def seconds_in(text):
+    """Every duration stated in the text, in seconds."""
+    found = []
+    for number, unit in re.findall(DURATION, text, re.I):
+        unit = unit.lower()
+        scale = UNIT_SECONDS.get(unit) or (60 if unit.startswith("min") else 3600 if unit[0] == "h" else 1)
+        found.append(float(number.replace(",", ".")) * scale)
+    return found
+
+
+def blender_segments(command):
+    """Each Blender invocation in the command, as the flags Blender itself reads (up to `--` or the next shell operator).
+    Quoted pieces and comma lists (PowerShell -ArgumentList "-b","f.blend") become separate tokens."""
+    segments, current = [], None
+    for quoted, single, bare in re.findall(TOKEN, command):
+        tok = quoted or single or bare
+        if re.fullmatch(BLENDER_EXE, tok.replace("\\", "/").rsplit("/", 1)[-1], re.I):
+            current = []
+            segments.append(current)
+        elif current is not None:
+            if tok == "--" or (bare and tok in PIPE_END):
+                current = None
+            else:
+                current.append(tok)
+    return segments
+
+
+def flag_set(tokens, wanted):
+    """Which of the wanted flags the tokens hold, in any spelling: `-f`, `--render-frame=1`, `-bf`, `-f1`."""
+    found = set()
+    for tok in tokens:
+        name = tok.split("=", 1)[0] if tok.startswith("--") else tok
+        if name in wanted:
+            found.add(name)
+        cluster = re.fullmatch(SHORT_CLUSTER, tok)
+        if cluster:
+            found |= {"-" + ch for ch in cluster.group(1) if "-" + ch in wanted}
+    return found
+
+
+def blender_job(command):
+    """None, or {'render': bool}: a background Blender invocation that renders or runs a script."""
+    job = None
+    for tokens in blender_segments(command):
+        if flag_set(tokens, BG_FLAGS) and flag_set(tokens, WORK_FLAGS):
+            job = job or {"render": False}
+            job["render"] = job["render"] or bool(flag_set(tokens, RENDER_FLAGS))
+    if job and re.search(r"background_render\.py", command):
+        job["render"] = True
+    return job
+
+
+ARG_TOKENS = re.compile(r"\"[^\"\n]*\"|'[^'\n]*'|[^\s\"']+")
+REDIRECT = re.compile(r">>?\s*(\"[^\"\n]*\"|'[^'\n]*'|[^\s\"'|&;<>]+)")
+
+
+def path_mentions(text, base):
+    """Every candidate path in the text that holds the file name itself, normalized (backslashes, Git Bash /c/x, case).
+    The name is searched for directly, not parsed out of a path: a quoted string is one candidate, spaces included, and an
+    unquoted word is cut at shell punctuation."""
+    tail = re.compile(r"(?<![\w.\-])" + re.escape(base) + r"(?![\w.\-])")
+    found = []
+    for tok in ARG_TOKENS.findall(text):
+        if len(tok) > 1 and tok[0] in "\"'" and tok[-1] == tok[0]:
+            parts = [tok[1:-1]]
+        else:
+            parts = re.split(r"[=,;()<>|&`]", tok)
+        for part in parts:
+            norm = norm_path(part.strip())
+            if tail.search(norm):
+                found.append(norm)
+    return found
+
+
+def resolved(path):
+    """A path that names one place on its own: a drive letter, and nothing left to expand."""
+    return bool(re.match(r"[a-z]:/", path)) and not re.search(r"[$%~{}*?]", path)
+
+
+def same_file(a, b):
+    """The loose matching that INVALIDATES the plan state: whether two normalized paths can name one file. They are different files only when both are fully resolved absolute
+    paths that differ. A relative path, a ./ path or one holding a variable has the same name and could be anywhere, so
+    it counts as this file: the state is then unknown."""
+    if resolved(a) and resolved(b):
+        return a == b
+    return True
+
+
+def strict_same_file(a, b):
+    """The matching that GRANTS the plan exemption. Equal paths; or a bare name against anything (one side has no
+    directory); or a relative path with directories that is the tail of the other. A relative path never matches a
+    different absolute folder."""
+    if a == b or "/" not in a or "/" not in b:
+        return True
+    short, long_ = (a, b) if len(a) <= len(b) else (b, a)
+    return not re.match(r"[a-z]:/|/|~", short) and long_.endswith("/" + short)
+
+
+# A shell command naming the args file is a read only when each piece naming it starts with one of these (or is the
+# Blender launch itself) and redirects nothing into the file. Anything else may have rewritten it.
+READ_ONLY = {"cat", "type", "head", "tail", "get-content", "ls", "grep"}
+
+
+def shell_may_write(raw, ref, base):
+    """True when a shell command names the args file and is not plainly read-only. Leans to True: an unknown file costs
+    one announcement, a stale `plan: true` hides a real render."""
+    for piece in re.split(r"&&|\|\||[;|\n]", raw):
+        if not any(same_file(m, ref) for m in path_mentions(piece, base)):
+            continue
+        for target in REDIRECT.findall(piece):
+            if any(same_file(m, ref) for m in path_mentions(target, base)):
+                return True
+        if blender_segments(piece):
+            continue
+        words = re.findall(TOKEN, piece.lstrip(" \t&("))
+        first = next(((q or sq or b) for q, sq, b in words), "")
+        first = re.sub(r"\.exe$", "", first.replace("\\", "/").rsplit("/", 1)[-1].lower())
+        if first not in READ_ONLY:
+            return True
+    return False
+
+
+def args_file_text(call, run, ref, base):
+    """What the args file held when this job launched, or its text with `plan` made unreadable when that is not known.
+    The state is known only from a full `Write` (its content), then every later Edit / MultiEdit replayed on it. A Read,
+    Grep, Glob, or a read-only shell command (see shell_may_write) changes nothing. Anything else naming the file (any
+    other shell command, another tool, an Edit whose old text is not in the file, a Write with no text) makes the state
+    unknown until the next full Write, so no plan exemption is granted."""
+    text, unknown = "", True
     for c in run["calls"]:
-        if c["name"] == LIVE_CODE and c["end"] and c["end"] - c["t"] > 5:
+        if c is call or c["seq"] >= call["seq"]:
+            continue
+        inp, name, raw = c["input"], c["name"], str(c["input"])
+        if name in ("Write", "Edit", "MultiEdit"):
+            names = path_mentions('"%s"' % inp.get("file_path", ""), base)  # quoted: a path may hold spaces
+        elif name in SHELLS:
+            raw = str(inp.get("command", ""))
+            names = path_mentions(raw, base)
+        else:
+            names = path_mentions(raw, base)
+        if not any(same_file(m, ref) for m in names):
+            continue
+        body = inp.get("content")
+        strict = any(strict_same_file(m, ref) for m in names)  # only a strict match may establish or replay the state
+        if name == "Write":
+            if isinstance(body, str) and strict:
+                text, unknown = body, False
+            else:
+                unknown = True
+        elif name in ("Edit", "MultiEdit"):
+            for e in inp.get("edits") or [inp]:
+                old, new = e.get("old_string"), e.get("new_string")
+                if not strict or unknown or not isinstance(old, str) or not isinstance(new, str) or not old or old not in text:
+                    unknown = True
+                else:
+                    text = text.replace(old, new) if e.get("replace_all") else text.replace(old, new, 1)
+        elif name in SHELLS:
+            if shell_may_write(raw, ref, base):
+                unknown = True
+                if re.search(r"out_dir", raw):
+                    text += "\n" + raw  # keep its out_dir readable for the announcement check; plan is neutralized
+        elif name not in ("Read", "Grep", "Glob"):
+            unknown = True
+    return re.sub(PLAN_ON, "plan: unknown", text, flags=re.I) if unknown else text
+
+
+def related_text(call, run):
+    """The launch command plus the text of the args file it names, if an earlier call wrote it."""
+    command = call["input"].get("command", "")
+    parts = [command]
+    for groups in re.findall(r"--args-file[\"']?[\s,=]+(?:\"([^\"]+)\"|'([^']+)'|([^\s\"',]+))", command):
+        ref = next(g for g in groups if g)
+        ref = re.sub(r"^(?:\./|\.\./)+", "", norm_path(ref))
+        base = ref.rsplit("/", 1)[-1]
+        # Match by the whole normalized path: two folders can each hold an args.json. The name alone decides only
+        # when the launch (or the earlier call) gives no directory, since then nothing else can tell them apart.
+        # What the file held when this job launched, not its history: see args_file_text.
+        parts.append(args_file_text(call, run, ref, base))
+    return "\n".join(parts)
+
+
+def launch_kind(call, run):
+    """None, or 'detached' / 'foreground' for a Blender job that needs a message before it starts."""
+    if call["name"] not in SHELLS:
+        return None
+    command = call["input"].get("command", "")
+    job = blender_job(command)
+    if not job:
+        return None
+    if re.search(PLAN_ON, related_text(call, run), re.I):
+        return None  # the plan step makes the message; it is not the job
+    pattern = DETACHED if call["name"] == "Bash" else DETACHED_PS
+    if call["input"].get("run_in_background") or re.search(pattern, command):
+        return "detached"
+    long = call["end"] is not None and call["t"] is not None and call["end"] - call["t"] > FOREGROUND_LONG_S
+    if long or job["render"]:
+        return "foreground"
+    return None
+
+
+def out_dirs(call, run):
+    found = re.findall(r"out_dir[\"']?\s*[:=]\s*[\"']([^\"']+)[\"']", related_text(call, run))
+    return [norm_path(p) for p in found]
+
+
+def score_announcements(run, args=None):
+    timed = [x for x in run["texts"] if x["t"] is not None]
+    launches = [(c, launch_kind(c, run)) for c in run["calls"]]
+    launches = [(c, k) for c, k in launches if k]
+    problems, checked = [], 0
+    for c in run["calls"]:
+        if c["name"] == LIVE_CODE and c["t"] is not None and c["end"] and c["end"] - c["t"] > 5:
             before = [x["text"] for x in timed if c["t"] - 120 <= x["t"] <= c["t"]]
             if not any(re.search(FREEZE_WORDS, b, re.I) for b in before):
                 problems.append(f"live call of {c['end'] - c['t']:.0f} s with no warning")
-        command = c["input"].get("command", "")
-        if c["name"] == "Bash" and (c["input"].get("run_in_background") or re.search(DETACHED, command)) and re.search(
-                r"(-b|--background)\b.*--python", command):
-            near = [x["text"] for x in timed if c["t"] - 30 <= x["t"] <= c["t"] + 60]
-            if not any(re.search(r"render_status|status|[\\/]", n) for n in near):
-                problems.append("background job started with no path or status file in the text")
+    if not launches and not any(c["t"] is not None for c in run["calls"]):
+        return verdict("announcements", "SKIP", "the trace has no timings and no Blender job was launched")
+    claimed = None
+    for c, kind in launches:
+        checked += 1
+        before = [x for x in run["texts"] if not x["child"] and x["seq"] < c["seq"]
+                  and (x["t"] is None or c["t"] is None or c["t"] - 900 <= x["t"] <= c["t"])]
+        if not before:
+            problems.append(f"{kind} Blender job with no message to the user before it")
+            continue
+        dirs = out_dirs(c, run)
+        def has_path(text):
+            flat = norm_path(text)
+            # The folder as a whole path: "c:/run/outdated" is not "c:/run/out", "/x/run/out" is not "/run/out".
+            return any(re.search(r"(?<![\w./\-])" + re.escape(d) + r"(?![\w.\-])", flat) for d in dirs) if dirs else bool(re.search(r"render_status", text) and re.search(r"[\\/]", text))
+        full = [x for x in before if has_path(x["text"]) and seconds_in(x["text"])]
+        if not full:
+            missing = []
+            if not any(has_path(x["text"]) for x in before):
+                missing.append("the real out_dir" if dirs else "a path to render_status.json")
+            if not any(seconds_in(x["text"]) for x in before):
+                missing.append("a duration")
+            problems.append(f"{kind} Blender job announced without {' or '.join(missing)}")
+            continue
+        claimed = seconds_in(full[-1]["text"])[0]
+    if claimed is not None and args is not None and getattr(args, "status", None):
+        status = json.load(open(args.status, encoding="utf-8"))
+        if status.get("started") and status.get("ended"):
+            actual = status["ended"] - status["started"]
+            if abs(claimed - actual) > 5 and (claimed > actual * 3 or claimed < actual / 3):
+                problems.append(f"the message said {claimed:.0f} s and the render took {actual:.0f} s")
     if problems:
         return verdict("announcements", "FLAG", "; ".join(problems), True)
-    return verdict("announcements", "OK", "long calls warned, background job path given", True)
+    if checked:
+        return verdict("announcements", "OK", f"{checked} Blender job(s) announced before launch with the real path and a duration", True)
+    return verdict("announcements", "OK", "long calls warned; no Blender job launched", True)
 
 
 def score_finish(run, args):
@@ -277,13 +564,15 @@ def main(argv=None):
     ap.add_argument("--status")
     ap.add_argument("--log")
     ap.add_argument("--deliverable")
+    ap.add_argument("--platform", choices=("auto", "windows", "macos", "linux"), default="auto",
+                    help="where the run happened; decides whether a minimized window is a defect (Windows only)")
     ap.add_argument("--strict", action="store_true")
     args = ap.parse_args(argv)
     run = collect(parse_trace(args.trace))
     manifest = json.load(open(args.manifest, encoding="utf-8")) if args.manifest else None
     report = [score_preferences(run), score_window(run, args, manifest), score_closing_line(run),
               score_claims(run, args), score_skills(run, args), score_gates(run, manifest),
-              score_announcements(run), score_finish(run, args)]
+              score_announcements(run, args), score_finish(run, args)]
     print(json.dumps(report, indent=2, ensure_ascii=False))
     return 1 if args.strict and any(r["verdict"] == "FLAG" for r in report) else 0
 

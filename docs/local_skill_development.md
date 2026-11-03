@@ -73,7 +73,9 @@ Run the MCP server with `BLENDER_MCP_PORT=9877`. Tested with a JSON-RPC client a
 ## Scoring a Real Agent Run
 
 `tests/agent_runs/score_run.py` compares what a run claimed with its stream-json trace: preference writes, skills named
-but not loaded, gates batched in one call, overclaims, and whether the session finished before its render. Its text
+but not loaded, gates batched in one call, overclaims, whether the session finished before its render, and whether each
+Blender job (background, PowerShell `Start-Process`, or a foreground render) was announced before launch with its real folder
+and a duration that matches the render. A minimized window is a defect on Windows only (`--platform`). Its text
 checks are heuristics and it runs after the job, so it catches regressions rather than stopping a bad report. One run
 shows one case, not general reliability. `tests/agent_runs/test_score_run.py` needs no Blender.
 

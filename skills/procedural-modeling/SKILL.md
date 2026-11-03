@@ -135,15 +135,23 @@ path of this installed script and their ARGS. Don't inline or rewrite the script
 | Script | What it does |
 |--------|--------------|
 | `scripts/gn_curve_profile.py` | Curve-swept pipe/cable/rail: poly curve + Geometry Nodes (Curve to Mesh, Curve Circle profile) with Radius / Resolution / Fill Caps exposed on the modifier. |
+| `scripts/surface_tools.py` | `loft` through ordered sections (resampled to one point count, optional Catmull-Rom rows), `patch` (Coons surface from four boundary curves; refuses curves whose corners do not meet), `continuity` (G0 / G1 / G2 along a shared seam of two surfaces; refuses boundaries that do not coincide). Use `loft` / `patch` for a free-form surface from curves, and `continuity` to prove a join is smooth (a crease fails G1; a tangent join with a curvature jump passes G1 and fails G2) before calling it done. `loft` and `patch` add a new mesh object and change nothing else; `continuity` is read-only. |
+| `scripts/terrain_heightfield.py` | Seeded heightfield terrain mesh (`mathutils.noise`), optionally flattened into a corridor along a curve object. Creates one new object, refuses an existing name unless `replace`. |
 
 ```python
 import runpy
 result = runpy.run_path("<skill_dir>/scripts/gn_curve_profile.py", init_globals={"ARGS": {"name": "GEO_Pipe", "points": [[0, -5, 0.5], [0, 5, 0.5]], "radius": 0.15}})["result"]
 ```
 
+Terrain: ARGS `name`, `size`, `resolution`, `seed`, `height`, `frequency`, `octaves`, `center`, `corridor`
+(`{"curve", "half_width", "falloff", "offset"}`), `collection`, `replace`. The same seed gives the same mesh; inside
+`half_width` of the curve the terrain height equals the curve height (both checked by the test). See
+`references/terrain-road.md` for the road workflow and its limits.
+
 ## Reference Guide
 
 | Topic | Reference | Load When |
 |-------|-----------|-----------|
+| Terrain with a road bed | `references/terrain-road.md` | Terrain, roads on slopes |
 | Geo nodes patterns | `geometry-nodes` skill | Node setup |
 | Environment integration | `environment-artist` skill | Scene placement |

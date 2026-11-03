@@ -125,6 +125,27 @@ result = runpy.run_path("<skill_dir>/scripts/render_preset.py", init_globals={"A
 
 ARGS: `preset`, `resolution_percentage`, `device`
 
+`previous` in the result holds the engine, resolution percentage, view transform and look, plus a `"<group>.<property>"`
+entry (for example `cycles.denoising_quality`) with the prior value of every property the preset changed. Setting those
+back restores the state.
+
+### Denoiser presets (Cycles, OpenImageDenoise)
+
+Every property below is a real `scene.cycles` property in 5.2; the test applies each preset and checks it.
+
+| Preset | Use for | Settings |
+|--------|---------|----------|
+| `denoise_draft` | Fast look checks | 32 samples, quality `FAST`, prefilter `FAST`, passes `RGB_ALBEDO`, adaptive threshold 0.05, 50% size |
+| `denoise_final_still` | Final stills | 1024 samples, quality `HIGH`, prefilter `ACCURATE`, passes `RGB_ALBEDO_NORMAL`, adaptive threshold 0.01 |
+| `denoise_animation` | Frame sequences | 512 samples, quality `BALANCED`, prefilter `ACCURATE`, passes `RGB_ALBEDO_NORMAL`, `use_animated_seed` off, adaptive threshold 0.02 |
+| `denoise_viewport` | Denoised viewport preview only | `use_preview_denoising` on, preview denoiser `AUTO`, preview quality `FAST`, prefilter `FAST`, passes `RGB_ALBEDO`, start sample 1 |
+| `denoise_off` | Judging raw noise | `use_denoising` and `use_preview_denoising` off |
+
+What each choice means is Blender's own wording for the properties: quality is "overall denoising quality", prefilter
+`ACCURATE` "prefilters noisy guiding passes before denoising color" at extra cost, and the albedo/normal passes help the
+denoiser "distinguish noise from shader and geometry detail". Whether `denoise_animation` flickers less than another
+preset on your shot was not measured; check a few frames. The presets leave `denoising_use_gpu` alone.
+
 ### Long renders
 
 Do not run a long render in the user's window: it freezes until the render ends. Save a copy of the file, then start

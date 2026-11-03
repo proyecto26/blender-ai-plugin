@@ -15,6 +15,18 @@
    ]
   },
   {
+   "file": "animation/references/mocap-cleanup.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": false,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts"
+   ]
+  },
+  {
    "file": "apocalypse-worlds/SKILL.md",
    "block": 0,
    "subject": "SM_Asset",
@@ -61,6 +73,18 @@
    "invariants": [
     "no_exception",
     "json_safe"
+   ]
+  },
+  {
+   "file": "blender-mcp-workflow/references/reference-image-depth.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": false,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts"
    ]
   },
   {
@@ -441,6 +465,18 @@
    ]
   },
   {
+   "file": "geometry-nodes/references/scatter-systems.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": false,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts"
+   ]
+  },
+  {
    "file": "hand-painted-style/SKILL.md",
    "block": 0,
    "subject": "SM_Asset",
@@ -606,6 +642,18 @@
    ]
   },
   {
+   "file": "realistic-style/references/scan-match.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": false,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts"
+   ]
+  },
+  {
    "file": "retro-16bit-style/SKILL.md",
    "block": 0,
    "subject": "SM_Asset",
@@ -629,6 +677,18 @@
     "json_safe",
     "stable_counts",
     "camera_unoccluded"
+   ]
+  },
+  {
+   "file": "rigging/references/facial-shape-keys-drivers.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": false,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts"
    ]
   },
   {
@@ -667,6 +727,18 @@
     "json_safe",
     "stable_counts",
     "camera_unoccluded"
+   ]
+  },
+  {
+   "file": "unity-export/references/hdrp-material-mapping.md",
+   "block": 0,
+   "subject": "SM_Asset",
+   "camera": false,
+   "fixture_extras": {},
+   "invariants": [
+    "no_exception",
+    "json_safe",
+    "stable_counts"
    ]
   },
   {
@@ -879,6 +951,11 @@
    "reason": "template: ARGS is a {...} placeholder, not a runnable call"
   },
   {
+   "file": "usd-pipeline/SKILL.md",
+   "block": 0,
+   "reason": "template: ARGS is a {...} placeholder, not a runnable call"
+  },
+  {
    "file": "uv-workflow/SKILL.md",
    "block": 0,
    "reason": "template: ARGS is a {...} placeholder, not a runnable call"
@@ -921,6 +998,11 @@
   {
    "file": "film-production/SKILL.md",
    "block": 2,
+   "reason": "example call on user files (<project> paths, renders or reads images); the script is covered by tests/blender/test_film.py"
+  },
+  {
+   "file": "film-production/SKILL.md",
+   "block": 3,
    "reason": "example call on user files (<project> paths, renders or reads images); the script is covered by tests/blender/test_film.py"
   }
  ]

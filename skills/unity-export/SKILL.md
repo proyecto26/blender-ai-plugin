@@ -110,3 +110,4 @@ ARGS: `objects`, `out_path`, `animation`, `strict`
 |-------|-----------|----------|
 | Unity Checklist | `references/unity-checklist.md` | When needed |
 | Unity Materials | `references/unity-materials.md` | When needed |
+| HDRP material mapping (mask map packing, tested recipe) | `references/hdrp-material-mapping.md` | Project uses HDRP |

@@ -8,6 +8,53 @@ Format: [Semantic Versioning](https://semver.org/) — `Major.Minor.Patch`
 
 ## [Unreleased]
 
+Iteration 12: example parity and the open roadmap. Plan: `docs/plans/iteration-12-parity-and-roadmap.md`.
+
+### Added
+- `blender-mcp-workflow`: `clash_audit.py` (penetration, containment, floating parts), `silhouette_score.py` (camera view
+  against a reference mask, no render), `fit_search.py` (bounded search of named properties against that score),
+  `ingest_asset.py` (local GLB, GLTF, FBX, OBJ or USD file, normalized; URLs and `.blend` refused), `scene_snapshot.py`
+  (save, list, diff, restore without removing anything)
+- `film-production`: `flicker_check.py`, motion-compensated local flicker on an image sequence; blocks it cannot match are
+  reported as not measured
+- `procedural-modeling`: `surface_tools.py` (loft, Coons patch, G0/G1/G2 check) and `terrain_heightfield.py`
+- `usd-pipeline`: new skill with a checked export and reimport
+- `texture-workflow`: `import_painter_textures.py`. Painter itself was not run, and the doc makes no claim about its presets
+- `lowpoly-style`: real ordered dither in `ps1_look.py`; the earlier hint promised one that did not exist
+- `rendering`: denoiser presets per use case in `render_preset.py`
+- References: multi-angle depth, scan match, scatter systems, clothing simulation, hair card topology, facial shape keys and
+  drivers, mocap cleanup, Nanite prep, HDRP mapping, Bloober Team. Unreal, Unity and Painter were not run for these
+- `.github/workflows/checks.yml` (unproven until it runs on a pull request), `.gitattributes`
+
+### Changed
+- **Breaking for one path:** in `run_manifest.py`, a `validate` or `export` PASS now needs `evidence`: a result file written
+  by that stage's producer script through `evidence_path`. A typed `result_summary` alone is refused. A process that can write
+  files can still forge one; this links gates to script output and stops batch typing
+- Parallel work: agents never share one live session, only separate saved copies merged by one owner. Unmeasured
+- `background_render.py` plan times a second frame when the first was short: the estimate was 2.5 to 4 times too long on short
+  Eevee jobs, and is now within 1.00 to 1.17 of real time over 15 Windows runs
+- `score_run.py` sees PowerShell launches and foreground renders, checks the duration claim, and judges the window by platform
+- `rigid_body_setup.py` rejects an invalid collision shape before changing anything
+- `flicker_check.py`: a sequence with a frame below `min_measured` no longer passes. A hard cut that used to return `pass` now
+  returns `inconclusive` and names the frames in `unmeasured_frames`
+- `ingest_asset.py` and `usd_roundtrip.py` leave the scene's world, frame range, current frame and fps as they were
+- `clash_audit.py` reports a solid inside another even when it spans wall to wall
+- `hdrp-material-mapping.md`: Blender's `save()` of a float image divides RGB by alpha; the reference now gives routes checked
+  by decoding the file bytes. The only correct route through Blender's writer is 8 bit; the 16-bit route writes the PNG itself
+- `scene_snapshot.py`: a repeated name in `restore` no longer crashes Blender
+- `fit_search.py`: an integer property steps by at least 1, and `converged` means its neighbours were really tried
+- `fit_search.py`: `converged` is true only after a full sweep of every parameter at its final step found no improvement; running out of `max_evals` gives `converged: false`
+- `test_handoff.py` records an exception raised outside `check()` as a failure (report written, exit 1)
+- `flicker_check.py` reports a tile, band or whole frame that goes flat black or white for one frame (`dropout_cells`; `dropout_level`, `dropout_flat_dev`, `dropout_gap`), checked only on near-uniform near-black or near-white cells against the frames either side. Textured content showing for one frame and a cut are not events; a fast flat black or white object can be reported as a dropout. A black frame in a very dark scene is a stated limit
+- The Blender suites now exit non-zero when a check fails
+
+- `hdrp-material-mapping.md` says Blender tags its 8-bit PNG as sRGB even for Non-Color (seen on Windows and macOS); the earlier text said it wrote no colour chunk
+- The `background_render.py` estimate notes the macOS timings, which run long on the first plan of a new scene
+
+Known open issues from the final review are listed in `docs/ROADMAP.md`.
+- `validate_asset.py` and `clash_audit.py` refuse a mesh in Edit Mode rather than judge stale data; `export_asset.py` exports the current edit
+- `fix_asset.py` scales shape keys together with the mesh
+
 Iteration 11: fixes from a measured run of the real orchestrator agent, reviewed by Codex, then from a macOS review.
 
 ### Fixed after the macOS review
@@ -17,10 +64,11 @@ Iteration 11: fixes from a measured run of the real orchestrator agent, reviewed
   same moment both rendered before, and `overwrite` no longer gets past a run that is still going.
   `tests/blender/race_background_render.py` starts two real processes to check it
 - `animation` -> `turntable.py`: frames by the narrower view angle, so a tall subject is no longer cropped at 16:9
-- Docs: black captures of a minimized window are Windows-only, `BLENDER_PATH` is optional, and the `*_for_cli` timeout
-  kills a directly started Blender
+- Docs: black captures of a minimized window were seen on Windows only (a macOS review reported a minimized window still
+  captured), `BLENDER_PATH` is optional, and a macOS review reported that the `*_for_cli` timeout kills a directly started
+  Blender (not re-run since)
 - `tests/blender/test_skill_scripts.py`: the rigid body case collides with the crate, not `GEO_Ground`, which scatters
-  `COL_Rocks`; the dependency cycle crashed Blender on macOS (exit 139) in 2 of 3 suite runs
+  `COL_Rocks`; the dependency cycle crashed Blender on macOS (exit 139) in 2 of 3 suite runs, as reported by the macOS review
 - `score_run.py`: announcements also sees a background render started with `nohup` or a trailing `&`
 - `collision-proxy` -> `make_collision.py`: a convex proxy is now a closed hull. It kept the source's faces beside the hull
   (a 14-sided cylinder gave 104 faces and 50 non-manifold edges). A flat mesh is now an error that points to `shape: box`

@@ -34,8 +34,9 @@ separate process. Changes are **not saved** unless your code saves (to a new pat
 batch validation, exports and experiments that must not disturb the user's session.
 The `*_for_cli` summary tools mirror the live ones for files on disk.
 Needs a Blender executable: `BLENDER_PATH` in the MCP server's environment (then restart the agent), or `blender` on
-that server's `PATH`; with neither the tool fails with "Blender executable not found". The tool gives up after 120 s:
-measured on macOS, that kills a directly started Blender, while through the Store launcher Blender kept running. It
+that server's `PATH`; with neither the tool fails with "Blender executable not found". The tool gives up after 120 s.
+A macOS review reported that this kills a directly started Blender (not re-run since); through the Store launcher on
+Windows, Blender kept running to at least 150 s (that is the longest wait tried). It
 cannot work on a Microsoft Store install, and `No result marker` means the outcome is unknown: see
 `references/live-session.md`.
 

@@ -41,6 +41,9 @@ def _cli_args():
                          "cmd/PowerShell mangle JSON quotes, so pass --args-file <path.json> instead") from exc
 
 
+SHAPES = ("CONVEX_HULL", "BOX", "SPHERE", "MESH")
+
+
 def _add_rb(obj, kind):
     if obj.rigid_body is None:
         with bpy.context.temp_override(object=obj, active_object=obj,
@@ -51,6 +54,8 @@ def _add_rb(obj, kind):
 
 
 def main(active=(), passive=(), shape="CONVEX_HULL", material="wood", frames=120, substeps=10, bake=False):
+    if shape not in SHAPES:
+        raise ValueError(f"shape must be one of {SHAPES}, got {shape!r}")
     scene = bpy.context.scene
     if scene.rigidbody_world is None:
         with bpy.context.temp_override(scene=scene):

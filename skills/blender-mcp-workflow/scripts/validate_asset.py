@@ -13,8 +13,12 @@ ARGS:
     tri_budget  (int|None)       per-object triangle budget
     prefix      (str)            required name prefix (default "SM_"; use "" to skip)
     max_size_m  (float)          WARN when the largest dimension exceeds this (catches cm/m mix-ups)
+    evidence_path (str|None)     write this run's result there (script-evidence/1: script, time, verdict, summary) so
+                                 run_manifest.py can back a `validate` PASS with it. Use a path inside the run folder.
 """
+import datetime
 import json
+import os
 import sys
 
 import bmesh
@@ -117,11 +121,28 @@ def _check(obj, tri_budget, prefix, max_size_m, depsgraph):
     return tris, checks
 
 
-def main(objects=None, tri_budget=None, prefix="SM_", max_size_m=50.0):
+def _write_evidence(path, verdict, summary):
+    """Write the result file the run manifest reads. Atomic, so a reader never sees half of it."""
+    record = {"schema": "script-evidence/1", "script": "validate_asset.py", "verdict": verdict, "summary": summary,
+              "time": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="microseconds")}
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    tmp = f"{path}.{os.getpid()}.tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(record, fh, indent=2)
+    os.replace(tmp, path)
+
+
+def main(objects=None, tri_budget=None, prefix="SM_", max_size_m=50.0, evidence_path=None):
+    targets = _targets(objects)
+    editing = [o.name for o in targets if o.type == "MESH" and o.data.is_editmode]
+    if editing:
+        raise ValueError(f"{', '.join(editing)} {'is' if len(editing) == 1 else 'are'} in Edit Mode: obj.data holds the "
+                         "pre-edit mesh, so a result read now could PASS on stale geometry. Leave Edit Mode "
+                         "(Tab, or bpy.ops.object.mode_set(mode='OBJECT')) and run again; nothing was written")
     depsgraph = bpy.context.evaluated_depsgraph_get()
     report, overall = {}, "PASS"
     rank = {"PASS": 0, "WARN": 1, "FAIL": 2}
-    for obj in _targets(objects):
+    for obj in targets:
         if obj.type != "MESH":
             continue
         tris, checks = _check(obj, tri_budget, prefix, max_size_m, depsgraph)
@@ -129,7 +150,11 @@ def main(objects=None, tri_budget=None, prefix="SM_", max_size_m=50.0):
         report[obj.name] = {"tris": tris, "verdict": worst, "checks": checks}
         if rank[worst] > rank[overall]:
             overall = worst
-    return {"verdict": overall if report else "FAIL", "objects": report,
+    verdict = overall if report else "FAIL"
+    if evidence_path:
+        _write_evidence(evidence_path, verdict, {"objects": {n: r["verdict"] for n, r in report.items()},
+                                                 "tris": sum(r["tris"] for r in report.values())})
+    return {"verdict": verdict, "objects": report,
             "note": "" if report else "no mesh objects to validate"}
 
 

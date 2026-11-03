@@ -14,6 +14,7 @@ Or through the official Blender MCP, against a scratch .blend:
 """
 import json
 import os
+import re
 import runpy
 import struct
 import sys
@@ -235,6 +236,49 @@ def _work_copy_twice():
     return {"error": err, "pending_after": _wc({"action": "status"})["pending"]}
 
 
+def _edit_mode_evidence(d):
+    """Evidence scripts read obj.data, which is the stale pre-edit mesh while the object is in Edit Mode. A prop whose
+    base sits on its origin, lifted 3 m in Edit Mode, must not PASS the origin check from the old coordinates: the
+    read-only producers refuse (naming Edit Mode, no evidence written); the export loads the edit mesh and writes it."""
+    obj = _cube("SM_EditStale", 1.0, loc=(70, 60, 1))
+    obj.data.materials.append(bpy.data.materials.new("MAT_EditStale"))
+    view_layer = bpy.context.view_layer
+    for o in view_layer.objects:
+        o.select_set(False)
+    view_layer.objects.active = obj
+    obj.select_set(True)
+    bpy.ops.object.mode_set(mode="EDIT")
+    out = {}
+    try:
+        bm = bmesh.from_edit_mesh(obj.data)  # pending edit: not flushed to obj.data.vertices
+        for v in bm.verts:
+            v.co.z += 3.0
+        for key, (skill, script, args) in {
+            "validate": ("blender-mcp-workflow", "validate_asset.py", {"objects": [obj.name]}),
+            "clash": ("blender-mcp-workflow", "clash_audit.py", {"objects": [obj.name]}),
+        }.items():
+            ev = os.path.join(d, f"edit_stale_{key}.json")
+            res, err = None, None
+            try:
+                res = run(skill, script, dict(args, evidence_path=ev))
+            except Exception as exc:
+                err = str(exc)
+            out[key] = {"error": err, "evidence": os.path.exists(ev), "still_edit": obj.data.is_editmode,
+                        "verdict": (res or {}).get("verdict")}
+        # export must write the edited geometry (min height 3 m), not the stale mesh (0 m), and stay in Edit Mode
+        glb = os.path.join(d, "edit_stale.glb")
+        run("export-pipeline", "export_asset.py", {"objects": [obj.name], "out_path": glb, "evidence_path": os.path.join(d, "edit_stale_export.json")})
+        out["export_still_edit"] = obj.data.is_editmode
+        with open(glb, "rb") as fh:
+            raw = fh.read()
+        length = struct.unpack("<I", raw[12:16])[0]
+        doc = json.loads(raw[20:20 + length].decode("utf-8"))
+        out["export_min_y"] = min(a["min"][1] for a in doc["accessors"] if a.get("type") == "VEC3" and "min" in a)
+    finally:
+        bpy.ops.object.mode_set(mode="OBJECT")
+    return out
+
+
 def _expect_error(fn):
     try:
         fn()
@@ -243,17 +287,41 @@ def _expect_error(fn):
     return None
 
 
+def _validate_evidence(d, name="validate_ev.json", obj="SM_EvidenceOk"):
+    """A genuine result file from validate_asset.py, written fresh. Returns (path relative to d, verdict)."""
+    if "SM_EvidenceOk" not in bpy.data.objects:
+        _cube("SM_EvidenceOk", 1.0, loc=(60, 60, 0)).data.materials.append(bpy.data.materials.new("MAT_EvidenceOk"))
+    res = run("blender-mcp-workflow", "validate_asset.py", {"objects": [obj], "evidence_path": os.path.join(d, name)})
+    return name, res["verdict"]
+
+
+def _failing_validate_evidence(d, name="validate_fail.json"):
+    """A genuine validate_asset.py result that FAILs: a mesh with no SM_ prefix and an unapplied scale."""
+    if "BadEvidence" not in bpy.data.objects:
+        _cube("BadEvidence", 1.0, loc=(62, 60, 0)).scale = (2, 1, 1)
+    res = run("blender-mcp-workflow", "validate_asset.py", {"objects": ["BadEvidence"], "evidence_path": os.path.join(d, name)})
+    assert res["verdict"] == "FAIL", res["verdict"]
+    return name
+
+
+def _export_evidence(d, name="export_ev.json", glb="model.glb"):
+    """A genuine result file from export_asset.py, written fresh, next to the exported file."""
+    run("export-pipeline", "export_asset.py", {"objects": ["SM_Crate_01"], "engine": "web", "out_path": os.path.join(d, glb),
+                                               "evidence_path": os.path.join(d, name)})
+    return name
+
+
 def _manifest_case():
     import hashlib
     d = os.path.join(OUT, "manifest_run")
     os.makedirs(d, exist_ok=True)
-    with open(os.path.join(d, "model.glb"), "wb") as fh:
-        fh.write(b"abc")
     base = {"out_dir": d, "skill": "blender-mcp-workflow", "script": "validate_asset.py", "args": {"objects": ["SM_Crate_01"]}}
     rm = lambda **kw: run("blender-director", "run_manifest.py", dict(base, **kw))
     run("blender-director", "run_manifest.py", {"out_dir": d, "brief": {"asset": "SM_Crate_01"}})
-    rm(stage="validate", verdict="PASS", result_summary={"fails": 0})
-    r2 = rm(stage="export", verdict="PASS", exports=["model.glb"], result_summary={"exists": True})
+    ev, verdict = _validate_evidence(d)
+    rm(stage="validate", verdict="PASS", result_summary={"fails": 0}, evidence=ev, warn=verdict == "WARN", reason="crate WARN accepted")
+    r2 = rm(stage="export", verdict="PASS", exports=["model.glb"], result_summary={"exists": True}, script="export_asset.py",
+            evidence=_export_evidence(d))
     outside = _expect_error(lambda: rm(stage="verify", verdict="PASS", exports=[os.path.join(d, "..", "x.glb")]))
     outside_cap = _expect_error(lambda: rm(stage="verify", verdict="PASS", capture="../shot.png"))
     with open(os.path.join(d, "run_manifest.json"), encoding="utf-8") as fh:
@@ -269,7 +337,9 @@ def _manifest_case():
     need_cause = _expect_error(lambda: rm(stage="validate", verdict="FAIL", reason="n-gons again"))
     stopped = rm(stage="validate", verdict="FAIL", reason="n-gons again", cause="geometry")
     return {"events": len(m["events"]), "r2_events": r2["events"], "hash": m["events"][1]["exports"][0]["sha256"],
-            "expect_hash": hashlib.sha256(b"abc").hexdigest(), "outside": outside, "outside_cap": outside_cap,
+            "expect_hash": hashlib.sha256(open(os.path.join(d, "model.glb"), "rb").read()).hexdigest(),
+            "ev_hash": m["events"][1]["evidence"]["sha256"], "ev_script": m["events"][1]["evidence"]["script"],
+            "ev_expect": hashlib.sha256(open(os.path.join(d, "export_ev.json"), "rb").read()).hexdigest(), "outside": outside, "outside_cap": outside_cap,
             "keys_ok": keys_ok, "enums_ok": enums_ok, "blocked": blocked, "need_cause": need_cause,
             "stop": stopped["stop"], "blocked_by": stopped["blocked_by"], "final_events": stopped["events"]}
 
@@ -654,6 +724,9 @@ def _background_render():
         plan_dir = d + "_plan"
         plan = run("rendering", "background_render.py", dict(args, out_dir=plan_dir, plan=True))
         plan_saved = json.load(open(os.path.join(plan_dir, "render_plan.json"), encoding="utf-8"))
+        # Two frames: the first pays the start-up cost, so the second is timed too and the estimate adds the first once.
+        plan_math = abs(plan["expected_s"] - (plan["first_frame_s"] + plan["seconds_per_frame"]) ) <= 0.06
+        one = run("rendering", "background_render.py", dict(args, out_dir=d + "_plan1", frame_end=1, plan=True))
         plan_clean = not os.path.exists(os.path.join(plan_dir, "render_status.json")) and not os.listdir(os.path.join(plan_dir, "frames"))
         after_plan = run("rendering", "background_render.py", dict(args, out_dir=plan_dir))["state"]
         plan_done = _expect_error(lambda: run("rendering", "background_render.py", dict(args, plan=True)))
@@ -666,7 +739,7 @@ def _background_render():
                 "bad_error": bad_state["error"], "kept_error": kept_error, "kept_state": kept_state, "refused_later": refused_later,
                 "unreadable": unreadable, "busy": busy, "died": died, "held": held, "held_no_status": held_no_status,
                 "held_over": held_over, "held_kept": held_kept, "held_reason": held_reason, "after_held": after_held,
-                "plan": plan, "plan_saved": plan_saved, "plan_clean": plan_clean, "after_plan": after_plan, "plan_done": plan_done,
+                "plan": plan, "plan_saved": plan_saved, "plan_math": plan_math, "one": one, "plan_clean": plan_clean, "after_plan": after_plan, "plan_done": plan_done,
                 "plan_bad": plan_bad, "plan_bad_clean": plan_bad_clean,
                 "busy_state": busy_state, "no_backend": no_backend, "strays": strays, "movie": movie, "handlers_kept": len(bpy.app.handlers.render_post) == handlers}
     finally:
@@ -676,20 +749,167 @@ def _background_render():
         scene.frame_set(saved[8])
 
 
+def _rigid_shapes():
+    """The collision shape asked for is the one Blender holds, and a bad shape changes nothing."""
+    names = {"box": "SM_RB_Box", "sphere": "SM_RB_Sphere", "hull": "SM_RB_Hull", "mesh": "SM_RB_Mesh", "bad": "SM_RB_Bad"}
+    for i, n in enumerate(names.values()):
+        _cube(n, 0.5, loc=(40 + 2 * i, 40, 0))
+    base = {"material": "wood", "frames": 3}
+    out = {}
+    for key, shape in (("box", "BOX"), ("sphere", "SPHERE"), ("hull", "CONVEX_HULL")):
+        rep = run("physics-sim", "rigid_body_setup.py", dict(base, active=[names[key]], shape=shape))
+        out[key] = (rep["active"][names[key]]["shape"], bpy.data.objects[names[key]].rigid_body.collision_shape)
+    mesh = run("physics-sim", "rigid_body_setup.py", dict(base, active=[names["mesh"]], shape="MESH"))
+    out["mesh_active"] = bpy.data.objects[names["mesh"]].rigid_body.collision_shape
+    out["bad_error"] = _expect_error(lambda: run("physics-sim", "rigid_body_setup.py", dict(base, active=[names["bad"]], shape="TRIANGLES")))
+    out["bad_untouched"] = bpy.data.objects[names["bad"]].rigid_body is None
+    out["box_mass"] = bpy.data.objects[names["box"]].rigid_body.mass
+    out["sphere_mass"] = bpy.data.objects[names["sphere"]].rigid_body.mass
+    return out
+
+
+def _manifest_evidence_binding():
+    """validate and export PASS only on the right producer's fresh, passing result file."""
+    import time
+    d = os.path.join(OUT, "manifest_binding")
+    os.makedirs(d, exist_ok=True)
+    base = {"out_dir": d, "skill": "blender-mcp-workflow"}
+    rm = lambda **kw: run("blender-director", "run_manifest.py", dict(base, **kw))
+    gates = lambda: rm()["gates"]
+    summary = {"result_summary": {"fails": 0}}
+    warn_ok = lambda v: {"warn": True, "reason": "crate WARN accepted"} if v == "WARN" else {}
+
+    def forged(name, script, verdict="PASS", when=None, schema="script-evidence/1"):
+        import datetime
+        stamp = when or datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="microseconds")
+        with open(os.path.join(d, name), "w", encoding="utf-8") as fh:
+            json.dump({"schema": schema, "script": script, "verdict": verdict, "summary": {}, "time": stamp}, fh)
+        return name
+
+    out = {}
+    # 1. only a typed summary
+    out["summary_only"] = _expect_error(lambda: rm(stage="validate", script="validate_asset.py", verdict="PASS", **summary))
+    out["summary_only_gate"] = gates()["validate"]
+    # 2. a failing file
+    out["failing"] = _expect_error(lambda: rm(stage="validate", script="validate_asset.py", verdict="PASS",
+                                              evidence=_failing_validate_evidence(d), **summary))
+    out["failing_gate"] = gates()["validate"]
+    # 3. another script's file: an export file cannot back a validate PASS, nor an unknown or malformed one
+    out["export_for_validate"] = _expect_error(lambda: rm(
+        stage="validate", script="export_asset.py", verdict="PASS", evidence=_export_evidence(d, "genuine_export.json"), **summary))
+    out["unknown_script"] = _expect_error(lambda: rm(
+        stage="validate", script="made_up.py", verdict="PASS", evidence=forged("other.json", "made_up.py"), **summary))
+    out["not_evidence"] = _expect_error(lambda: rm(
+        stage="validate", script="validate_asset.py", verdict="PASS", evidence=forged("schema.json", "validate_asset.py", schema="x"), **summary))
+    out["outside"] = _expect_error(lambda: rm(
+        stage="validate", script="validate_asset.py", verdict="PASS", evidence="../genuine_export.json", **summary))
+    out["gates_after_refusals"] = (gates()["validate"], gates()["export"])
+    # 4. a stale file: the model was recorded after the script wrote it
+    ev, verdict = _validate_evidence(d, "stale.json")
+    time.sleep(1.2)
+    rm(stage="model", script="manual", verdict="PASS", **summary)
+    out["stale"] = _expect_error(lambda: rm(stage="validate", script="validate_asset.py", verdict="PASS", evidence=ev,
+                                            **summary, **warn_ok(verdict)))
+    out["stale_gate"] = gates()["validate"]
+    # 4b. the same second: evidence written, then a model event less than a second later, must also be stale
+    ev, verdict = _validate_evidence(d, "stale_fast.json")
+    rm(stage="model", script="manual", verdict="PASS", **summary)
+    out["stale_fast"] = _expect_error(lambda: rm(stage="validate", script="validate_asset.py", verdict="PASS", evidence=ev,
+                                                 **summary, **warn_ok(verdict)))
+    out["stale_fast_gate"] = gates()["validate"]
+    out["event_time_fraction"] = "." in json.load(open(os.path.join(d, "run_manifest.json")))["events"][-1]["time"]
+    # 5. a fresh file passes; clash_audit.py is an allowed validate producer, export_asset.py the only export producer
+    ev, verdict = _validate_evidence(d, "fresh.json")
+    out["fresh"] = rm(stage="validate", script="validate_asset.py", verdict="PASS", evidence=ev, **summary, **warn_ok(verdict))["gates"]["validate"]
+    out["clash_allowed"] = rm(stage="validate", script="clash_audit.py", verdict="PASS",
+                              evidence=forged("clash.json", "clash_audit.py"), **summary)["gates"]["validate"]
+    # 6. validate is PASS now, so an export refusal below is about the evidence and nothing else
+    ev, _ = _validate_evidence(d, "genuine_validate.json")
+    out["validate_for_export"] = _expect_error(lambda: rm(
+        stage="export", script="export_asset.py", verdict="PASS", evidence=ev, **summary))
+    out["validate_for_export_script"] = _expect_error(lambda: rm(
+        stage="export", script="validate_asset.py", verdict="PASS", evidence=ev, **summary))
+    out["clash_for_export"] = _expect_error(lambda: rm(stage="export", script="clash_audit.py", verdict="PASS",
+                                                        evidence=forged("clash2.json", "clash_audit.py"), **summary))
+    out["export_gate_after_refusals"] = gates()["export"]
+    out["export"] = rm(stage="export", script="export_asset.py", verdict="PASS", evidence=_export_evidence(d, "ok_export.json"),
+                       **summary)["gates"]["export"]
+    # 7. the stored record carries the file's hash and the producer
+    with open(os.path.join(d, "run_manifest.json"), encoding="utf-8") as fh:
+        events = json.load(fh)["events"]
+    out["recorded"] = [(e["stage"], e["evidence"]["script"], len(e["evidence"]["sha256"])) for e in events if "evidence" in e]
+    # 8. a PASS refused for its evidence must not leave an earlier PASS standing: the gate reads NOT_CHECKED again
+    out["export_before_reject"] = gates()["export"]
+    out["rejected_after_pass"] = _expect_error(lambda: rm(
+        stage="export", script="export_asset.py", verdict="PASS", evidence=forged("late_fail.json", "export_asset.py", verdict="FAIL"), **summary))
+    out["export_after_reject"] = gates()["export"]
+    with open(os.path.join(d, "run_manifest.json"), encoding="utf-8") as fh:
+        last = json.load(fh)["events"][-1]
+    out["reject_event"] = (last["stage"], last["verdict"], last.get("rejected"), "reports FAIL" in (last.get("reason") or ""))
+    return out
+
+
+def _export_evidence_collision():
+    """evidence_path equal to out_path is refused before anything is written."""
+    d = os.path.join(OUT, "export_collision")
+    os.makedirs(d, exist_ok=True)
+    target = os.path.join(d, "collide.glb")
+    err = {}
+    for label, ev in (("same", target), ("dotdot", os.path.join(d, "sub", "..", "collide.glb"))):
+        err[label] = _expect_error(lambda: run("export-pipeline", "export_asset.py", {
+            "objects": ["SM_Crate_01"], "engine": "web", "out_path": target, "evidence_path": ev}))
+    # a glTF export writes model.bin beside model.gltf: evidence named model.bin must be refused, not replace it
+    side = os.path.join(d, "sidecar.gltf")
+    err["sidecar"] = _expect_error(lambda: run("export-pipeline", "export_asset.py", {
+        "objects": ["SM_Crate_01"], "engine": "web", "out_path": side, "evidence_path": os.path.join(d, "sidecar.bin")}))
+    return {"errors": err, "written": os.path.exists(target), "side_written": os.path.exists(side)}
+
+
+def _manifest_docstring_example():
+    """The example at the top of run_manifest.py runs as written, once the producer's files it names exist."""
+    import ast
+    import datetime
+    path = os.path.join(SKILLS, "blender-director", "scripts", "run_manifest.py")
+    with open(path, encoding="utf-8") as fh:
+        doc = ast.get_docstring(ast.parse(fh.read()), clean=True)
+    import textwrap
+    code = textwrap.dedent(doc.split("\n\n")[1])
+    d = os.path.join(OUT, "manifest_docstring")
+    os.makedirs(os.path.join(d, "views"), exist_ok=True)
+    names = re.findall(r"\"(?:evidence|capture)\":\s*\"([^\"]+)\"", code)
+    for name in names:
+        full = os.path.join(d, name)
+        if name.endswith(".png"):
+            with open(full, "wb") as fh:
+                fh.write(b"\x89PNG")
+        else:
+            stamp = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="microseconds")
+            with open(full, "w", encoding="utf-8") as fh:
+                json.dump({"schema": "script-evidence/1", "script": "validate_asset.py", "verdict": "PASS",
+                           "summary": {}, "time": stamp}, fh)
+    scope = {"__builtins__": __builtins__}
+    code = code.replace("<skill_dir>/scripts/run_manifest.py", path.replace(os.sep, "/")).replace("/tmp/run", d.replace(os.sep, "/"))
+    exec(compile(code, "docstring_example", "exec"), scope)
+    return {"names": names, "gates": scope["result"]["gates"], "events": scope["result"]["events"]}
+
+
 def _manifest_validate_gate():
     d = os.path.join(OUT, "manifest_gate")
     os.makedirs(d, exist_ok=True)
     base = {"out_dir": d, "skill": "blender-mcp-workflow", "script": "validate_asset.py"}
     rm = lambda **kw: run("blender-director", "run_manifest.py", dict(base, **kw))
     ok = {"result_summary": {"fails": 0}}
+    # Valid export evidence in every call, so only the validate gate can be the reason for a refusal.
+    exp = lambda: dict(ok, script="export_asset.py", evidence=_export_evidence(d))
     rm(stage="model", verdict="PASS", **ok)
-    missing = _expect_error(lambda: rm(stage="export", verdict="PASS"))
+    missing = _expect_error(lambda: rm(stage="export", verdict="PASS", **exp()))
     rm(stage="validate", verdict="NOT_CHECKED", reason="not run yet")
-    not_checked = _expect_error(lambda: rm(stage="export", verdict="PASS"))
+    not_checked = _expect_error(lambda: rm(stage="export", verdict="PASS", **exp()))
     verify_nc = _expect_error(lambda: rm(stage="verify", verdict="PASS"))
     rm(stage="validate", verdict="N/A", reason="no mesh output")
-    ok_na = rm(stage="export", verdict="PASS", **ok)
-    rm(stage="validate", verdict="PASS", **ok)
+    ok_na = rm(stage="export", verdict="PASS", **exp())
+    ev, verdict = _validate_evidence(d)
+    rm(stage="validate", verdict="PASS", evidence=ev, warn=verdict == "WARN", reason="crate WARN accepted", **ok)
     ok_verify = rm(stage="verify", verdict="PASS", **ok)
     return {"missing": missing, "not_checked": not_checked, "verify_nc": verify_nc,
             "export_after_na": ok_na["gates"]["export"], "verify_after_pass": ok_verify["gates"]["verify"]}
@@ -870,6 +1090,10 @@ def build_cases(out_dir):
         ("physics-sim.rigid_body_setup", lambda: run("physics-sim", "rigid_body_setup.py", {
             "active": ["SM_Rock_B"], "passive": ["SM_Crate_01"], "material": "stone", "frames": 20, "bake": True}),
          lambda r: r["active"]["SM_Rock_B"]["mass_kg"] > 0 and r.get("baked") is True),
+        ("physics-sim.rigid_body_shapes_applied", lambda: _rigid_shapes(),
+         lambda r: r["box"] == ("BOX", "BOX") and r["sphere"] == ("SPHERE", "SPHERE") and r["hull"] == ("CONVEX_HULL", "CONVEX_HULL")
+         and r["mesh_active"] == "CONVEX_HULL" and r["bad_error"] and "shape" in r["bad_error"] and r["bad_untouched"]
+         and r["box_mass"] > r["sphere_mass"] > 0),
         ("cloth-sim.cloth_setup", lambda: run("cloth-sim", "cloth_setup.py", {
             "cloth": "SM_Flag", "fabric": "silk", "pin_group": "Pin", "colliders": ["SM_Crate_01"]}),
          lambda r: r["pinned"] and r["colliders"] == ["SM_Crate_01"]),
@@ -982,11 +1206,35 @@ def build_cases(out_dir):
          and "outside this frame range" in (r["strays"] or "") and "image format" in (r["movie"] or "")
          and r["plan"] == r["plan_saved"] and r["plan"]["frames_total"] == 2 and r["plan"]["expected_s"] > 0
          and r["plan"]["status_path"] in r["plan"]["tell_user"] and "2 frames" in r["plan"]["tell_user"]
+         and r["plan"]["measured_frames"] == 2 and r["plan"]["first_frame_s"] > 0 and r["plan_math"]
+         and r["one"]["measured_frames"] == 1 and abs(r["one"]["expected_s"] - r["one"]["first_frame_s"]) <= 0.06
          and r["plan_clean"] and r["after_plan"] == "done" and "already exist" in (r["plan_done"] or "")
          and "device" in (r["plan_bad"] or "") and r["plan_bad_clean"]
          and r["handlers_kept"]),
+        ("scripts.edit_mode_is_never_stale_evidence", lambda: _edit_mode_evidence(tempfile.mkdtemp(dir=OUT)),
+         lambda r: all(r[k]["still_edit"] and not r[k]["evidence"] and "Edit Mode" in (r[k]["error"] or "") for k in ("validate", "clash"))
+         and r["export_still_edit"] and abs(r["export_min_y"] - 3.0) < 1e-3),
+        ("director.evidence_binds_producers", lambda: _manifest_evidence_binding(),
+         lambda r: "without evidence" in (r["summary_only"] or "") and r["summary_only_gate"] == "NOT_CHECKED"
+         and "reports FAIL" in (r["failing"] or "") and r["failing_gate"] == "NOT_CHECKED"
+         and "must come from" in (r["validate_for_export"] or "") and "export_asset.py" in (r["validate_for_export"] or "")
+         and "must come from" in (r["validate_for_export_script"] or "")
+         and "must come from" in (r["export_for_validate"] or "")
+         and "must come from" in (r["unknown_script"] or "") and "script-evidence/1" in (r["not_evidence"] or "")
+         and "outside" in (r["outside"] or "") and list(r["gates_after_refusals"]) == ["NOT_CHECKED", "NOT_CHECKED"] and r["export_gate_after_refusals"] == "NOT_CHECKED"
+         and "stale" in (r["stale"] or "") and r["stale_gate"] == "NOT_CHECKED"
+         and "stale" in (r["stale_fast"] or "") and r["stale_fast_gate"] == "NOT_CHECKED" and r["event_time_fraction"]
+         and r["fresh"] == "PASS" and r["clash_allowed"] == "PASS" and "must come from" in (r["clash_for_export"] or "")
+         and r["export"] == "PASS"
+         and r["recorded"] == [("validate", "validate_asset.py", 64), ("validate", "clash_audit.py", 64), ("export", "export_asset.py", 64)]
+         and r["export_before_reject"] == "PASS" and "reports FAIL" in (r["rejected_after_pass"] or "")
+         and r["export_after_reject"] == "NOT_CHECKED" and r["reject_event"] == ("export", "NOT_CHECKED", True, True)),
+        ("export-pipeline.evidence_path_is_not_out_path", lambda: _export_evidence_collision(),
+         lambda r: all(r["errors"].get(k) and "same file" in r["errors"][k] for k in ("same", "dotdot"))
+         and "shares the export's name" in (r["errors"].get("sidecar") or "") and not r["written"] and not r["side_written"]),
         ("director.run_manifest", lambda: _manifest_case(),
          lambda r: r["events"] == 2 and r["r2_events"] == 2 and r["hash"] == r["expect_hash"]
+         and r["ev_hash"] == r["ev_expect"] and r["ev_script"] == "export_asset.py"
          and r["outside"] and "outside" in r["outside"] and r["outside_cap"] and "outside" in r["outside_cap"]
          and r["keys_ok"] and r["enums_ok"] and r["blocked"] and "blocked" in r["blocked"]
          and r["need_cause"] and "cause" in r["need_cause"] and r["stop"] is True
@@ -1005,6 +1253,8 @@ def build_cases(out_dir):
         ("director.export_needs_validate_pass", lambda: _manifest_validate_gate(),
          lambda r: r["missing"] and "validate" in r["missing"] and r["not_checked"] and "validate" in r["not_checked"]
          and r["verify_nc"] and r["export_after_na"] == "PASS" and r["verify_after_pass"] == "PASS"),
+        ("director.docstring_example_runs", lambda: _manifest_docstring_example(),
+         lambda r: r["gates"]["validate"] == "PASS" and r["events"] == 1 and "views/crate_3q.png" in r["names"]),
         ("collision-proxy.user_duplicate_survives", lambda: _collision_dup_survives(),
          lambda r: r["survives"] and r["proxies"] == ["UCX_SM_DupCol_01"]),
         ("camera.eye_height_distance_and_notes", lambda: _camera_eye_height_case(),

@@ -65,11 +65,23 @@ Add world/mood/genre packs on top (e.g. `sci-fi-punk-worlds` + `neon-retrofuturi
 
 **Sequential (default):** Genre/style lock → Modeling → UV → Materials → Lookdev → Export
 
-**Parallel allowed:**
-- Material prototyping while UVs in progress (separate collections)
-- Lighting setup while optimization runs on duplicate collection
-- Collision proxies while LOD1+ generates
-- Mood/world reference gathering during blockout
+**Never share one live session.** Two agents must not edit the same open Blender session, not even in separate
+collections: both change one scene, one undo stack, one selection and one active object, so one agent's operator can act on
+the other's objects, and an undo rolls back both. Collections do not isolate them.
+
+**Parallel is allowed only like this:**
+- Work with no Blender session at all: reference gathering, mood boards, shot lists, budgets, reading the engine docs.
+- Separate saved copies. The owner saves copies of the file (`save_as_mainfile(copy=True)`) to new paths. Each helper agent
+  opens its own copy in its own Blender process (background is fine) and works only on its stage: for example materials on
+  one copy, collision proxies and LODs on another. Helpers do not touch the owner's open file.
+- One owner merges. When a helper reports done, the owner appends the helper's named objects, materials or collections into
+  the live file, checks for name clashes first, and runs the stage's gate on the merged result. A helper's own gate result does
+  not count for the merged file.
+- Only stages that touch different data run in parallel (materials and collision proxies, for example). Anything where one
+  depends on the other's output stays sequential, as in the list below.
+
+Whether this saves time has not been measured: the copy, the merge and the re-check cost time too. For a single asset, run
+the stages one after another in the live session.
 
 **Never parallel:**
 - Retopology before sculpt complete

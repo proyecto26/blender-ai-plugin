@@ -150,6 +150,45 @@ After each phase, capture and compare:
 5. Repeat until PASS or 3 iterations
 ```
 
+### Measure the silhouette instead of eyeballing it
+
+When a reference gives a clean outline (a transparent-background render, a cut-out, or a photo on a flat background),
+score it. `scripts/silhouette_score.py` projects the evaluated triangles of the named objects through a named camera
+(lens, sensor fit, shift, orthographic and the clip planes are honoured) and compares them with the reference mask: IoU,
+bounding-box drift and centroid drift per view. No render is needed, so it is cheap enough to run after every phase. Match
+the camera first (Phase 1): a wrong camera scores low whatever the geometry.
+
+```json
+{"objects": ["SM_Ship"], "min_iou": 0.9,
+ "views": [{"camera": "CAM_Ship_Hero", "reference": "C:/proj/ref/ship_front.png"}]}
+```
+
+- The mask is the alpha channel when the image has any transparency, otherwise everything that differs from the
+  background colour read at the four corners; if the corners disagree the script refuses. A busy photo background needs
+  a cut-out first.
+- The silhouette is the union of the projected triangles: other objects do not hide it, so name only the subject, and
+  features thinner than a pixel can drop out. IoU near 1 means the outline matches at that image size, not that the
+  surface does.
+- Read the drift as a direction: a centroid drift with a good size ratio means the object is offset; a size ratio away from
+  1 with a centred centroid means it is too big or small; a low IoU with both near zero means the shape differs.
+- Measured against real Workbench renders of the same cameras in the plugin's test (`tests/blender/test_parity.py`):
+  IoU 0.992 for a perspective close-up with anti-aliasing, 1.0 for an orthographic view and for hard edges. Treat 0.98 as the
+  ceiling for edge noise and 0.9 as a sensible pass line for a hand-built match.
+
+If the score is low only because of a few known dials, `scripts/fit_search.py` can find them: it moves the named numeric
+properties one at a time (for example `scale`, `location[0]`, a modifier width) to raise the mean IoU, within `min`/`max`
+bounds and `max_evals`, then restores every value unless `apply` is true. It is a local search from the current values: it
+finds the nearest good fit, cannot fix a wrong shape, and is as accurate as the mask resolution allows (about one pixel).
+Run it with `apply: false` first, read `best`, then decide.
+
+```json
+{"objects": ["SM_Ship"], "max_evals": 60,
+ "views": [{"camera": "CAM_Ship_Hero", "reference": "C:/proj/ref/ship_front.png"}],
+ "params": [{"object": "SM_Ship", "path": "scale", "min": 0.3, "max": 3.0}]}
+```
+
+Both snippets are the ARGS for `runpy.run_path` as in the scripts table of the `blender-mcp-workflow` skill.
+
 ### Gap categories (prioritize top-down)
 
 1. Camera / framing wrong

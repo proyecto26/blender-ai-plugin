@@ -1,0 +1,1606 @@
+"""Headless Blender tests for clash_audit.py, silhouette_score.py, fit_search.py and ingest_asset.py
+(blender-mcp-workflow, iteration 12 batch H).
+
+Every section builds its own tiny scene, runs the real script, and asserts on the result; each also has a case that
+must FAIL when the script is wrong. The silhouette masks are NOT made by the scorer: they come from real Workbench
+renders of the same camera, plus masks computed by hand from the pinhole equations and written with a pure-Python
+PNG writer. Writes <out_dir>/parity_tests_report.json (passed / total / failures / results / measured).
+
+    blender -b --factory-startup --python tests/blender/test_parity.py -- '{"out_dir": "<a NEW folder>"}'
+
+Use a new out_dir each run. The launcher on Windows Store installs drops console output: read the report file.
+"""
+import json
+import math
+import os
+import runpy
+import struct
+import sys
+import traceback
+import zlib
+
+import bmesh
+import bpy
+import numpy as np
+from mathutils import Matrix, Vector
+
+HERE = os.path.dirname(os.path.abspath(globals().get("__file__") or sys.argv[0]))
+SCRIPTS = os.path.normpath(os.path.join(HERE, "..", "..", "skills", "blender-mcp-workflow", "scripts"))
+
+
+def _cli_args():
+    if "--" in sys.argv:
+        raw = sys.argv[sys.argv.index("--") + 1:]
+        if raw and raw[0] == "--args-file":
+            with open(raw[1], encoding="utf-8") as fh:
+                return json.load(fh)
+        if raw:
+            return json.loads(raw[0])
+    return {}
+
+
+def run(script, args):
+    res = runpy.run_path(os.path.join(SCRIPTS, script), init_globals={"ARGS": args}, run_name="__skill_test__")["result"]
+    json.dumps(res)  # the script contract: a JSON-safe result
+    return res
+
+
+def tb():
+    """The last lines of the current traceback: where it ended, not where it began."""
+    return " | ".join(traceback.format_exc().strip().splitlines()[-3:])[-380:]
+
+
+def near(seq, value, tol=1e-5):
+    return all(abs(a - b) <= tol for a, b in zip(seq, value))
+
+
+def leaked_images():
+    return [i.name for i in bpy.data.images if i.name not in ("Render Result", "Viewer Node")]
+
+
+def raises(fn, kinds=(ValueError,)):
+    try:
+        fn()
+    except kinds as exc:
+        return str(exc) or type(exc).__name__
+    return None
+
+
+# ---------------------------------------------------------------- scene helpers
+def reset_scene():
+    for o in list(bpy.data.objects):
+        bpy.data.objects.remove(o)
+    for coll in (bpy.data.meshes, bpy.data.cameras, bpy.data.materials, bpy.data.images, bpy.data.worlds,
+                 bpy.data.lights):
+        for d in list(coll):
+            coll.remove(d)
+    sc = bpy.context.scene
+    for c in list(sc.collection.children):
+        sc.collection.children.unlink(c)
+    for c in list(bpy.data.collections):
+        bpy.data.collections.remove(c)
+    sc.camera = None
+    sc.world = None
+    bpy.context.view_layer.update()
+
+
+def mesh_obj(name, build, loc=(0, 0, 0), rot=(0, 0, 0), parent=None):
+    bm = bmesh.new()
+    build(bm)
+    me = bpy.data.meshes.new(name)
+    bm.to_mesh(me)
+    bm.free()
+    o = bpy.data.objects.new(name, me)
+    bpy.context.scene.collection.objects.link(o)
+    o.location, o.rotation_euler = loc, rot
+    if parent:
+        o.parent = parent
+    return o
+
+
+def boxes(*specs):
+    """bmesh builder: union of axis-aligned boxes, each (dims, centre)."""
+    def build(bm):
+        for dims, centre in specs:
+            bmesh.ops.create_cube(bm, size=1.0, matrix=Matrix.Translation(centre) @ Matrix.Diagonal((*dims, 1.0)))
+    return build
+
+
+def box(name, dims, loc=(0, 0, 0), **kw):
+    return mesh_obj(name, boxes((dims, (0, 0, 0))), loc=loc, **kw)
+
+
+def open_box(name, dims, loc):
+    """Five faces: a box without its top."""
+    def build(bm):
+        bmesh.ops.create_cube(bm, size=1.0, matrix=Matrix.Diagonal((*dims, 1.0)))
+        top = max(bm.faces, key=lambda f: f.calc_center_median().z)
+        bmesh.ops.delete(bm, geom=[top], context="FACES_ONLY")
+    return mesh_obj(name, build, loc=loc)
+
+
+def ico(name, dims, loc=(0, 0, 0), parent=None, rot=(0, 0, 0)):
+    def build(bm):
+        bmesh.ops.create_icosphere(bm, subdivisions=2, radius=0.5, matrix=Matrix.Diagonal((*dims, 1.0)))
+        for f in bm.faces:
+            f.smooth = True
+    return mesh_obj(name, build, loc=loc, parent=parent, rot=rot)
+
+
+def uvsphere(name, radius, loc=(0, 0, 0)):
+    def build(bm):
+        bmesh.ops.create_uvsphere(bm, u_segments=32, v_segments=16, radius=radius)
+    return mesh_obj(name, build, loc=loc)
+
+
+def camera(name, loc, look_at=None, rot_deg=None, lens=50.0, ortho=None, clip=(0.1, 100.0)):
+    cd = bpy.data.cameras.new(name)
+    cd.lens = lens
+    cd.clip_start, cd.clip_end = clip
+    if ortho:
+        cd.type, cd.ortho_scale = "ORTHO", ortho
+    o = bpy.data.objects.new(name, cd)
+    bpy.context.scene.collection.objects.link(o)
+    o.location = loc
+    if look_at is not None:
+        o.rotation_euler = (Vector(look_at) - Vector(loc)).to_track_quat("-Z", "Y").to_euler()
+    else:
+        o.rotation_euler = tuple(math.radians(a) for a in rot_deg)
+    return o
+
+
+def world_verts(obj):
+    me = obj.data
+    return np.array([tuple(obj.matrix_world @ v.co) for v in me.vertices])
+
+
+def snapshot():
+    """Everything a read-only script must leave alone."""
+    bpy.context.view_layer.update()  # matrices are lazy: settle them so a script's own evaluation cannot look like a change
+    sc = bpy.context.scene
+    return {"objects": {o.name: (tuple(round(x, 6) for x in sum((list(r) for r in o.matrix_world), [])),
+                                 len(o.data.vertices) if o.type == "MESH" else 0, len(o.modifiers),
+                                 o.select_get(), o.hide_viewport, tuple(c.name for c in o.users_collection))
+                        for o in bpy.data.objects},
+            "datablocks": {**{k: len(getattr(bpy.data, k)) for k in ("meshes", "cameras", "materials", "collections", "objects")},
+                           "images": len(leaked_images())},
+            "camera": sc.camera.name if sc.camera else None, "engine": sc.render.engine,
+            "res": (sc.render.resolution_x, sc.render.resolution_y), "frame": sc.frame_current}
+
+
+def snap_diff(a, b):
+    out = {}
+    for k in a:
+        if a[k] != b[k]:
+            if isinstance(a[k], dict):
+                out[k] = {kk: (a[k].get(kk), b[k].get(kk)) for kk in set(a[k]) | set(b[k]) if a[k].get(kk) != b[k].get(kk)}
+            else:
+                out[k] = (a[k], b[k])
+    return out
+
+
+# ---------------------------------------------------------------- png helpers (independent of the scorer)
+def write_png_rgba(path, rows):
+    """rows: list of rows (top first) of lists of (r, g, b, a) bytes. Standard PNG: no Blender involved."""
+    h, w = len(rows), len(rows[0])
+    raw = b"".join(b"\x00" + bytes(v for px in row for v in px) for row in rows)
+
+    def chunk(tag, data):
+        c = struct.pack(">I", len(data)) + tag + data
+        return c + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+
+    with open(path, "wb") as fh:
+        fh.write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0))
+                 + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+
+
+def write_mask_png(path, mask_rows):
+    on, off = (255, 255, 255, 255), (0, 0, 0, 0)
+    write_png_rgba(path, [[on if v else off for v in row] for row in mask_rows])
+
+
+def hand_mask(w, h, f_px, inside):
+    """Mask computed by hand from the pinhole equations: inside(u, v) takes image-plane coordinates (x/depth, z/depth)."""
+    return [[inside((c + 0.5 - w / 2) / f_px, (h / 2 - (r + 0.5)) / f_px) for c in range(w)] for r in range(h)]
+
+
+def read_alpha(path):
+    """Alpha >= 0.5 of a PNG, top row first, read here (not by the scorer)."""
+    img = bpy.data.images.load(path, check_existing=False)
+    try:
+        w, h = img.size
+        buf = np.empty(w * h * 4, dtype=np.float32)
+        img.pixels.foreach_get(buf)
+    finally:
+        bpy.data.images.remove(img)
+    return np.flipud(buf.reshape(h, w, 4))[..., 3] >= 0.5
+
+
+def save_array_png(path, arr_top_down_bool):
+    h, w = arr_top_down_bool.shape
+    write_mask_png(path, arr_top_down_bool.tolist())
+
+
+def render(path, cam, w=160, h=120, transparent=True, aa="FXAA"):
+    """A real Workbench render of the current scene through `cam`."""
+    sc = bpy.context.scene
+    sc.camera = cam
+    r = sc.render
+    r.engine = "BLENDER_WORKBENCH"
+    r.resolution_x, r.resolution_y, r.resolution_percentage = w, h, 100
+    r.film_transparent = transparent
+    r.image_settings.file_format, r.image_settings.color_mode = "PNG", "RGBA"
+    sc.display.shading.light, sc.display.shading.color_type = "FLAT", "SINGLE"
+    sc.display.shading.single_color = (1.0, 1.0, 1.0)
+    sc.display.render_aa = aa
+    sc.view_settings.view_transform = "Standard"
+    r.filepath = path
+    bpy.ops.render.render(write_still=True)
+    return path
+
+
+# ---------------------------------------------------------------- H1 clash_audit
+def test_clash(check, out_dir):
+    reset_scene()
+    audit = lambda **kw: run("clash_audit.py", {"objects": None, **kw})  # a non-empty ARGS: {} would fall back to the CLI
+
+    # touching cubes pass (face contact), a clearly separate pair is not a clash either
+    box("A", (1, 1, 1), (0, 0, 0))
+    box("B", (1, 1, 1), (1, 0, 0))
+    r = audit(objects=["A", "B"])
+    check("H1 touching cubes pass", r["verdict"] == "PASS" and not r["clashes"] and not r["contained"], r)
+    check("H1 touching cubes form one group", len(r["groups"]) == 1, r["groups"])
+
+    # interpenetrating equal cubes (no vertex strictly inside: needs the finer sampling), known 0.25 m overlap
+    bpy.data.objects["B"].location.x = 0.75
+    r = audit(objects=["A", "B"])
+    d = r["clashes"][0]["depth_m"] if r["clashes"] else None
+    check("H1 interpenetrating cubes fail", r["verdict"] == "FAIL" and len(r["clashes"]) == 1, r["verdict"])
+    check("H1 equal-cube depth 0.25 within 10%", d is not None and abs(d - 0.25) <= 0.025, d)
+
+    # small cube poking 0.25 m through the face of a big one: deepest vertex gives the depth
+    reset_scene()
+    box("Big", (2, 2, 2))
+    box("Small", (0.5, 0.5, 0.5), (1.0, 0, 0))
+    r = audit(objects=["Big", "Small"])
+    d = r["clashes"][0]["depth_m"] if r["clashes"] else None
+    check("H1 vertex depth 0.25 within 10%", d is not None and abs(d - 0.25) <= 0.025, d)
+
+    # review H-1: the depth is the penetration along the overlap axis, not the distance to the nearest surface.
+    # The box pokes 0.25 m into the cube along X but sits only 0.01 m from the cube's Y and Z faces.
+    reset_scene()
+    box("Cube", (2, 2, 2))
+    box("Slab", (0.5, 1.98, 1.98), (1.0, 0, 0))
+    for order in (["Cube", "Slab"], ["Slab", "Cube"]):
+        r = audit(objects=order)
+        d = r["clashes"][0]["depth_m"] if r["clashes"] else None
+        check(f"H1 depth is along the overlap axis (0.25, not the 0.01 to the nearest face), order {order[0]} first",
+              r["verdict"] == "FAIL" and d is not None and abs(d - 0.25) <= 0.025, r["clashes"])
+
+    # review H-2: two coincident solids are the worst overlap there is; they must not pass
+    reset_scene()
+    box("Twin1", (1, 1, 1))
+    box("Twin2", (1, 1, 1))
+    r = audit(objects=["Twin1", "Twin2"])
+    check("H1 coincident cubes fail as a clash", r["verdict"] == "FAIL" and len(r["clashes"]) == 1
+          and r["clashes"][0].get("depth") == "coincident", r)
+    box("Twin3", (1, 1, 1), (1, 0, 0))  # a neighbour that only touches Twin1 stays a pass
+    r = audit(objects=["Twin1", "Twin3"])
+    check("H1 face-touching neighbour of a coincident pair still passes", r["verdict"] == "PASS", r)
+    r = audit(objects=["Twin1", "Twin2"], ignore_pairs=[["Twin1", "Twin2"]])
+    check("H1 coincident pair can be allowed with ignore_pairs", r["verdict"] == "PASS", r)
+    reset_scene()
+    for n in ("Sheet1", "Sheet2"):
+        mesh_obj(n, lambda bm: bmesh.ops.create_grid(bm, x_segments=2, y_segments=2, size=1.0))
+    r = audit(objects=["Sheet1", "Sheet2"])
+    check("H1 coincident open sheets fail too", r["verdict"] == "FAIL", r)
+
+    # round 2 H: face-touching thin slabs (thinner than min_depth_m) are neighbours, not duplicates; a true duplicate
+    # slab next to them must still be caught, in the same audit
+    reset_scene()
+    box("SlabA", (1, 1, 0.0005), (0, 0, 0))
+    box("SlabB", (1, 1, 0.0005), (0, 0, 0.0005))
+    r = audit(objects=["SlabA", "SlabB"])
+    check("H1r2 face-touching thin slabs pass (no penetration)", r["verdict"] == "PASS" and not r["clashes"], r["clashes"])
+    box("SlabA2", (1, 1, 0.0005), (0, 0, 0))
+    r = audit(objects=["SlabA", "SlabB", "SlabA2"])
+    pairs = sorted(sorted((c["a"], c["b"])) for c in r["clashes"])
+    check("H1r2 thin touching pair and a coincident thin duplicate at once: only the duplicate is a clash",
+          r["verdict"] == "FAIL" and pairs == [["SlabA", "SlabA2"]] and r["clashes"][0].get("depth") == "coincident", r["clashes"])
+
+    # round 3 H: every decision about a pair depends on that pair only, never on the scene-wide size or other objects
+    reset_scene()
+    box("SlabA", (1, 1, 0.0005), (0, 0, 0))
+    box("SlabB", (1, 1, 0.0005), (0, 0, 0.0005))
+    box("FarAway", (1, 1, 1), (1000, 0, 0))
+    r = audit(objects=["SlabA", "SlabB", "FarAway"], require_connected=False)
+    check("H1r3 thin touching slabs still pass with an object 1000 m away", r["verdict"] == "PASS" and not r["clashes"], r["clashes"])
+    fixtures = {
+        "cube-in-cube": [("A", (2, 2, 2), (0, 0, 0)), ("B", (0.5, 0.5, 0.5), (0, 0, 0))],
+        "crossing bars": [("A", (4, 0.2, 0.2), (0, 0, 0)), ("B", (0.3, 4, 0.3), (0, 0, 0))],
+        "twins": [("A", (1, 1, 1), (0, 0, 0)), ("B", (1, 1, 1), (0, 0, 0))],
+        "poke": [("A", (2, 2, 2), (0, 0, 0)), ("B", (0.5, 1.98, 1.98), (1.0, 0, 0))],
+        "thin twins": [("A", (1, 1, 0.0005), (0, 0, 0)), ("B", (1, 1, 0.0005), (0, 0, 0))],
+        "touching cubes": [("A", (1, 1, 1), (0, 0, 0)), ("B", (1, 1, 1), (1, 0, 0))],
+    }
+    for label, specs in fixtures.items():
+        outs = []
+        for far in (None, (1000, 0, 0), (-5e4, 3e4, 0)):
+            reset_scene()
+            for n, dims, loc in specs:
+                box(n, dims, loc)
+            names = ["A", "B"]
+            if far:
+                box("Far", (1, 1, 1), far)
+                names.append("Far")
+            r = audit(objects=names, require_connected=False)
+            outs.append(json.dumps({k: r[k] for k in ("clashes", "contained", "touching")}, sort_keys=True))
+        check(f"H1r3 {label}: findings identical with unrelated distant geometry in the audit", len(set(outs)) == 1, outs)
+
+    # a cube inside a cube: no surfaces cross, still a fail
+    reset_scene()
+    box("Outer", (2, 2, 2))
+    box("Inner", (0.5, 0.5, 0.5))
+    r = audit(objects=["Outer", "Inner"])
+    check("H1 cube inside cube fails as contained",
+          r["verdict"] == "FAIL" and not r["clashes"] and len(r["contained"]) == 1
+          and r["contained"][0]["inner"] == "Inner" and r["contained"][0]["outer"] == "Outer", r)
+    check("H1 containment depth ~0.75", abs(r["contained"][0]["depth_m"] - 0.75) < 0.02, r["contained"])
+
+    # two bars crossing so that no vertex of either is inside the other
+    reset_scene()
+    box("BarX", (4, 0.2, 0.2))
+    box("BarY", (0.3, 4, 0.3))
+    r = audit(objects=["BarX", "BarY"])
+    d = r["clashes"][0]["depth_m"] if r["clashes"] else None
+    check("H1 crossing bars fail with a measured lower-bound depth", r["verdict"] == "FAIL" and d is not None and 0.04 <= d <= 0.16, r)
+
+    # floating part is named; gap_max_m decides the grouping (known 0.03 m gap)
+    reset_scene()
+    box("Top", (2, 1, 0.1), (0, 0, 0.75))
+    for i, (x, y) in enumerate([(-0.9, -0.4), (0.9, -0.4), (-0.9, 0.4), (0.9, 0.4)]):
+        box(f"Leg{i}", (0.1, 0.1, 0.7), (x, y, 0.35))
+    box("Cup", (0.2, 0.2, 0.2), (0, 0, 0.8 + 0.03 + 0.1))  # 0.03 m above the top (top surface z = 0.8)
+    r = audit(gap_max_m=0.01)
+    check("H1 floating cup is named", r["verdict"] == "FAIL" and len(r["floating"]) == 1 and r["floating"][0]["objects"] == ["Cup"], r["floating"])
+    check("H1 floating gap measured ~0.03", r["floating"] and abs(r["floating"][0]["nearest_gap_m"] - 0.03) < 0.002, r["floating"])
+    r2 = audit(gap_max_m=0.05)
+    check("H1 same scene groups at gap_max_m 0.05", r2["verdict"] == "PASS" and len(r2["groups"]) == 1, r2["groups"])
+    r3 = audit(gap_max_m=0.01, require_connected=False)
+    check("H1 require_connected false lets floating pass", r3["verdict"] == "PASS" and r3["floating"], r3["verdict"])
+    r4 = audit(gap_max_m=0.01, anchor="Cup")
+    check("H1 anchor picks the main group", r4["main_group"] == ["Cup"], r4["main_group"])
+
+    # bounding boxes overlap but the surfaces are 0.2 m apart (a cube in the crook of an L-shaped bracket)
+    reset_scene()
+    mesh_obj("Bracket", boxes(((3.0, 1.0, 0.2), (0, 0, 0.1)), ((0.2, 1.0, 2.0), (-1.4, 0, 1.1))))
+    box("Block", (0.4, 0.4, 0.4), (0.3, 0, 0.2 + 0.2 + 0.2))
+    r = audit(gap_max_m=0.01)
+    check("H1 overlapping bounding boxes without contact are floating, not contained or clashing",
+          r["verdict"] == "FAIL" and not r["clashes"] and not r["contained"] and len(r["floating"]) == 1
+          and abs(r["floating"][0]["nearest_gap_m"] - 0.2) < 0.01, r)
+    check("H1 the same scene groups once gap_max_m reaches the gap", audit(gap_max_m=0.25)["verdict"] == "PASS")
+
+    # modifiers count: the array copy hits B, the base mesh does not
+    reset_scene()
+    a = box("ArrA", (1, 1, 1))
+    box("ArrB", (1, 1, 1), (3.75, 0, 0))
+    mod = a.modifiers.new("Arr", "ARRAY")
+    mod.count, mod.use_relative_offset, mod.use_constant_offset = 2, False, True
+    mod.constant_offset_displace = (3.0, 0, 0)
+    r_on = audit(objects=["ArrA", "ArrB"], require_connected=False)
+    mod.show_viewport = False
+    bpy.context.view_layer.update()
+    r_off = audit(objects=["ArrA", "ArrB"], require_connected=False)
+    check("H1 modifier result clashes", len(r_on["clashes"]) == 1, r_on["clashes"])
+    check("H1 same pair without the modifier is clean", not r_off["clashes"], r_off["clashes"])
+
+    # open meshes: no inside, so containment is not_measured and never a pass
+    reset_scene()
+    open_box("Bowl", (2, 2, 1), (0, 0, 0))
+    box("Ball", (0.3, 0.3, 0.3), (0, 0, -0.35))  # resting on the bowl floor, inside its walls
+    r = audit()
+    check("H1 containment in an open mesh is not_measured", len(r["not_measured"]) == 1 and r["verdict"] == "WARN"
+          and "Bowl" in r["open_meshes"], r)
+    # an open plane through a closed cube still measures depth into the cube
+    reset_scene()
+    box("Cube", (1, 1, 1))
+    mesh_obj("Sheet", lambda bm: bmesh.ops.create_grid(bm, x_segments=4, y_segments=4, size=1.0,
+                                                       matrix=Matrix.Rotation(math.radians(90), 4, "X")),
+             loc=(0, 0, 0))
+    r = audit(objects=["Cube", "Sheet"], require_connected=False)
+    check("H1 open sheet through a cube is a clash with depth", r["verdict"] == "FAIL" and r["clashes"]
+          and r["clashes"][0]["depth_m"] is not None, r["clashes"])
+
+    # ignore_pairs and hidden objects
+    reset_scene()
+    box("P", (1, 1, 1))
+    box("Q", (1, 1, 1), (0.5, 0, 0))
+    r = audit(objects=["P", "Q"], ignore_pairs=[["P", "Q"]])
+    check("H1 ignore_pairs allows a known overlap", r["verdict"] == "PASS", r["verdict"])
+    h = box("Hidden", (1, 1, 1), (0.25, 0, 0))
+    h.hide_viewport = True
+    r = audit(objects=None, ignore_pairs=[["P", "Q"]])
+    check("H1 default scope skips hidden objects", "Hidden" not in r["main_group"] and r["objects_checked"] == 2, r["main_group"])
+
+    # read-only: nothing in the scene changes, no leaked meshes
+    reset_scene()
+    box("A", (1, 1, 1))
+    b = box("B", (1, 1, 1), (0.75, 0, 0))
+    b.select_set(True)
+    before = snapshot()
+    audit(objects=["A", "B"])
+    check("H1 scene unchanged", snapshot() == before, snap_diff(before, snapshot()))
+
+    # argument errors
+    check("H1 unknown object -> ValueError", raises(lambda: audit(objects=["Nope"])))
+    check("H1 bad max_samples -> ValueError", raises(lambda: audit(objects=["A", "B"], max_samples=3)))
+
+    # evidence file
+    reset_scene()
+    run_dir = os.path.join(out_dir, "h1_run")
+    os.makedirs(run_dir, exist_ok=True)
+    box("A", (1, 1, 1))
+    box("B", (1, 1, 1), (1, 0, 0))
+    ev = os.path.join(run_dir, "clash.json")
+    audit(objects=["A", "B"], evidence_path=ev)
+    doc = json.load(open(ev, encoding="utf-8"))
+    from datetime import datetime, timedelta
+    t = datetime.fromisoformat(doc["time"])
+    check("H1 evidence has script, UTC time, verdict, numbers",
+          doc["script"] == "clash_audit.py" and doc["verdict"] == "PASS" and t.utcoffset() == timedelta(0)
+          and doc["summary"]["clashes"] == 0 and "objects_checked" in doc["summary"], doc)
+    bpy.data.objects["B"].location.x = 0.75
+    audit(objects=["A", "B"], evidence_path=ev)
+    doc = json.load(open(ev, encoding="utf-8"))
+    check("H1 failing audit writes verdict FAIL with the numbers",
+          doc["verdict"] == "FAIL" and doc["summary"]["clashes"] == 1 and abs(doc["summary"]["max_depth_m"] - 0.25) < 0.03, doc)
+    check("H1 evidence folder must exist", raises(lambda: audit(objects=["A", "B"], evidence_path=os.path.join(out_dir, "no_such", "e.json"))))
+    foreign = os.path.join(run_dir, "other.json")
+    json.dump({"script": "validate_asset.py", "verdict": "PASS"}, open(foreign, "w"))
+    check("H1 refuses to overwrite another script's file", raises(lambda: audit(objects=["A", "B"], evidence_path=foreign))
+          and json.load(open(foreign))["script"] == "validate_asset.py")
+    check("H1 evidence must be .json", raises(lambda: audit(objects=["A", "B"], evidence_path=os.path.join(run_dir, "e.txt"))))
+    bpy.data.objects["B"].location.x = 1.0
+    audit(objects=["A", "B"], evidence_path=ev)  # a PASS run replaces the earlier FAIL file
+    check("H1 later PASS replaces own evidence", json.load(open(ev))["verdict"] == "PASS")
+    # a failing audit that raises writes nothing new
+    stale = json.load(open(ev))["time"]
+    raises(lambda: audit(objects=["Nope"], evidence_path=ev))
+    check("H1 a crashed audit leaves the earlier evidence alone", json.load(open(ev))["time"] == stale)
+
+    # the real run manifest accepts this file for `validate`, and refuses a failing one and `export`
+    manifest_py = os.path.normpath(os.path.join(SCRIPTS, "..", "..", "blender-director", "scripts", "run_manifest.py"))
+
+    def manifest(**kw):
+        return runpy.run_path(manifest_py, init_globals={"ARGS": dict(out_dir=run_dir, skill="qa-review", script="clash_audit.py", **kw)})["result"]
+
+    good = manifest(stage="validate", verdict="PASS", evidence="clash.json", result_summary={"clashes": 0})
+    check("H1 run_manifest accepts clash evidence for validate", good["gates"]["validate"] == "PASS", good)
+    check("H1 run_manifest refuses clash evidence for export",
+          raises(lambda: manifest(stage="export", verdict="PASS", evidence="clash.json", result_summary={"clashes": 0})))
+    bpy.data.objects["B"].location.x = 0.75
+    audit(objects=["A", "B"], evidence_path=ev)
+    check("H1 run_manifest refuses a failing clash file",
+          raises(lambda: manifest(stage="validate", verdict="PASS", evidence="clash.json", result_summary={"clashes": 0})))
+
+
+# ---------------------------------------------------------------- H2 silhouette_score + H3 fit_search
+def sil(objects, views, **kw):
+    return run("silhouette_score.py", {"objects": objects, "views": views, **kw})
+
+
+def test_silhouette(check, out_dir, measured):
+    reset_scene()
+    d = os.path.join(out_dir, "h2")
+    os.makedirs(d, exist_ok=True)
+
+    # 1. real Workbench render of an asymmetric object, a perspective camera close enough to foreshorten
+    obj = mesh_obj("Chair", boxes(((1.0, 1.0, 0.2), (0, 0, 0)), ((0.2, 1.0, 1.0), (-0.4, 0, 0.6)),
+                                   ((0.3, 0.3, 0.7), (0.35, 0.3, -0.45))),
+                   rot=(0, 0, math.radians(35)))
+    cam = camera("CamP", (2.6, -3.0, 1.9), look_at=(0, 0, 0.2), lens=28)
+    ref = render(os.path.join(d, "persp.png"), cam)
+    ref_px = int(read_alpha(ref).sum())
+    n_img = len(leaked_images())
+    before = snapshot()
+    r = sil(["Chair"], [{"camera": "CamP", "reference": ref}])
+    v = r["views"][0]
+    measured["workbench_perspective_iou"] = v["iou"]
+    check("H2 exact mask (Workbench perspective): IoU > 0.98", v["iou"] > 0.98 and r["verdict"] == "PASS", v)
+    check("H2 reference pixels agree with an independent alpha read", v["pixels_reference"] == ref_px, (v["pixels_reference"], ref_px))
+    check("H2 mask taken from alpha", v["mask_from"] == "alpha", v["mask_from"])
+    check("H2 loaded images removed", len(leaked_images()) == n_img, (n_img, leaked_images()))
+    check("H2 scene unchanged", snapshot() == before, snap_diff(before, snapshot()))
+    check("H2 drift near zero", v["centroid_drift_px"] < 0.6 and v["bbox_drift_px"] <= 1.5, v)
+
+    for aa in ("OFF", "8"):
+        p = render(os.path.join(d, f"persp_aa{aa}.png"), cam, aa=aa)
+        vv = sil(["Chair"], [{"camera": "CamP", "reference": p}])["views"][0]
+        measured[f"workbench_perspective_iou_aa_{aa}"] = vv["iou"]
+        check(f"H2 Workbench AA={aa}: IoU > 0.98", vv["iou"] > 0.98, vv["iou"])
+
+    # orthographic camera and a bigger frame
+    ocam = camera("CamO", (0, -6, 0.5), look_at=(0, 0, 0.5), ortho=3.2)
+    oref = render(os.path.join(d, "ortho.png"), ocam, 200, 150)
+    vo = sil(["Chair"], [{"camera": "CamO", "reference": oref}])["views"][0]
+    measured["workbench_ortho_iou"] = vo["iou"]
+    check("H2 orthographic camera: IoU > 0.98", vo["iou"] > 0.98, vo)
+
+    # 2. moved / scaled / wrong shape all score measurably lower; the right one still passes
+    base = v["iou"]
+    obj.location.x += 0.15
+    moved = sil(["Chair"], [{"camera": "CamP", "reference": ref}])
+    check("H2 moved object scores lower and fails", moved["views"][0]["iou"] < base - 0.1 and moved["verdict"] == "FAIL", moved["views"][0]["iou"])
+    check("H2 moved object shows centroid drift", moved["views"][0]["centroid_drift_px"] > 3, moved["views"][0])
+    obj.location.x -= 0.15
+    obj.scale = (1.15, 1.15, 1.15)
+    scaled = sil(["Chair"], [{"camera": "CamP", "reference": ref}])
+    check("H2 scaled object scores lower", scaled["views"][0]["iou"] < base - 0.05, scaled["views"][0]["iou"])
+    check("H2 scaled object: size ratio > 1", scaled["views"][0]["size_ratio"][0] > 1.05, scaled["views"][0].get("size_ratio"))
+    obj.scale = (1, 1, 1)
+    small = sil(["Chair"], [{"camera": "CamP", "reference": ref}])
+    check("H2 restored object scores like the first run", abs(small["views"][0]["iou"] - base) < 1e-9, small["views"][0]["iou"])
+    obj.location.x += 0.02
+    nudge = sil(["Chair"], [{"camera": "CamP", "reference": ref}])["views"][0]["iou"]
+    check("H2 a 2 cm nudge is visible in the score", nudge < base - 0.003, (nudge, base))
+    obj.location.x -= 0.02
+
+    reset_scene()
+    box("Cube", (1, 1, 1))
+    cam = camera("CamF", (0, -5, 0), rot_deg=(90, 0, 0))
+    cube_ref = render(os.path.join(d, "cube.png"), cam)
+    ok = sil(["Cube"], [{"camera": "CamF", "reference": cube_ref}])
+    check("H2 cube vs its own render passes", ok["views"][0]["iou"] > 0.98, ok["views"][0]["iou"])
+    sph = uvsphere("Sphere", 0.5)
+    wrong = sil(["Sphere"], [{"camera": "CamF", "reference": cube_ref}])
+    measured["sphere_vs_cube_iou"] = wrong["views"][0]["iou"]
+    check("H2 wrong shape (sphere vs cube render) fails", wrong["verdict"] == "FAIL" and wrong["views"][0]["iou"] < 0.85, wrong["views"][0]["iou"])
+    bpy.data.objects["Cube"].hide_render = True
+    sph_ref = render(os.path.join(d, "sphere.png"), cam)
+    bpy.data.objects["Cube"].hide_render = False
+    right = sil(["Sphere"], [{"camera": "CamF", "reference": sph_ref}])
+    check("H2 sphere vs its own render passes", right["views"][0]["iou"] > 0.97, right["views"][0]["iou"])
+    check("H2 cube vs sphere render fails", sil(["Cube"], [{"camera": "CamF", "reference": sph_ref}])["verdict"] == "FAIL")
+
+    # 3. object partly outside the frame, and fully outside
+    bpy.data.objects.remove(bpy.data.objects["Sphere"])
+    bpy.data.objects["Cube"].location = (1.05, 0, 0)  # half the cube is right of the frame edge
+    edge_ref = render(os.path.join(d, "edge.png"), cam)
+    edge = sil(["Cube"], [{"camera": "CamF", "reference": edge_ref}])["views"][0]
+    measured["partly_outside_frame_iou"] = edge["iou"]
+    check("H2 object partly outside the frame: IoU > 0.97", edge["iou"] > 0.97 and edge["pixels_reference"] > 500, edge)
+    bpy.data.objects["Cube"].location = (40, 0, 0)
+    gone = sil(["Cube"], [{"camera": "CamF", "reference": edge_ref}])
+    check("H2 object outside the view scores 0 with a note", gone["views"][0]["iou"] == 0.0 and "note" in gone["views"][0] and gone["verdict"] == "FAIL", gone["views"][0])
+
+    # 4. orientation: an asymmetric shape against a real render, flipped / mirrored copies must fail
+    reset_scene()
+    mesh_obj("L", boxes(((2.0, 0.3, 0.5), (0, 0, -0.75)), ((0.5, 0.3, 1.5), (-0.75, 0, 0.25))))  # foot at the bottom-right of the stroke
+    cam = camera("CamF", (0, -6, 0), rot_deg=(90, 0, 0))
+    lref = render(os.path.join(d, "l.png"), cam)
+    good = sil(["L"], [{"camera": "CamF", "reference": lref}])["views"][0]["iou"]
+    a = read_alpha(lref)
+    save_array_png(os.path.join(d, "l_flipud.png"), np.flipud(a))
+    save_array_png(os.path.join(d, "l_fliplr.png"), np.fliplr(a))
+    fu = sil(["L"], [{"camera": "CamF", "reference": os.path.join(d, "l_flipud.png")}])["views"][0]["iou"]
+    fl = sil(["L"], [{"camera": "CamF", "reference": os.path.join(d, "l_fliplr.png")}])["views"][0]["iou"]
+    measured["orientation_iou_good_flipud_fliplr"] = [good, fu, fl]
+    check("H2 asymmetric shape: right way up scores high, flipped copies score low", good > 0.98 and fu < 0.7 and fl < 0.7, (good, fu, fl))
+    check("H2 render has the foot where expected (top-down check)", a[:, :a.shape[1] // 2].sum() > a[:, a.shape[1] // 2:].sum(), None)
+
+    # 5. masks computed by hand from the pinhole equations (no render, no scorer, pure-Python PNG)
+    W, H = 160, 120
+    f_px = 50.0 / 36.0 * W
+    reset_scene()
+    # 5a. L-shaped pair of rectangles facing the camera, camera at y=-5: asymmetric, tests orientation
+    def rects(bm):
+        for (x0, x1, z0, z1) in ((-1.0, 1.0, -1.0, -0.5), (-1.0, -0.5, -0.5, 1.0)):
+            vs = [bm.verts.new(p) for p in ((x0, 0, z0), (x1, 0, z0), (x1, 0, z1), (x0, 0, z1))]
+            bm.faces.new(vs)
+    mesh_obj("Quads", rects)
+    camera("CamH", (0, -5, 0), rot_deg=(90, 0, 0))
+    inside_l = lambda u, v: (-1 <= u * 5 <= 1 and -1 <= v * 5 <= -0.5) or (-1 <= u * 5 <= -0.5 and -0.5 <= v * 5 <= 1)
+    write_mask_png(os.path.join(d, "hand_l.png"), hand_mask(W, H, f_px, inside_l))
+    hl = sil(["Quads"], [{"camera": "CamH", "reference": os.path.join(d, "hand_l.png")}])["views"][0]
+    measured["hand_mask_L_iou"] = hl["iou"]
+    check("H2 hand-computed L mask: IoU > 0.98", hl["iou"] > 0.98, hl)
+    write_mask_png(os.path.join(d, "hand_l_flip.png"), hand_mask(W, H, f_px, lambda u, v: inside_l(u, -v)))
+    hf = sil(["Quads"], [{"camera": "CamH", "reference": os.path.join(d, "hand_l_flip.png")}])["views"][0]["iou"]
+    check("H2 hand-computed L mask flipped vertically scores low", hf < 0.7, hf)
+
+    # 5b. perspective foreshortening: a ground plane receding from the camera is a trapezoid
+    reset_scene()
+    def ground(y0, y1):
+        def build(bm):
+            vs = [bm.verts.new(p) for p in ((-2, y0, -1), (2, y0, -1), (2, y1, -1), (-2, y1, -1))]
+            bm.faces.new(vs)
+        return build
+    mesh_obj("Ground", ground(3.0, 10.0))
+    camera("CamG", (0, 0, 0), rot_deg=(90, 0, 0))
+    def inside_g(y0, y1):
+        def fn(u, v):
+            if v >= 0:
+                return False
+            t = -1.0 / v
+            return y0 <= t <= y1 and abs(u * t) <= 2.0
+        return fn
+    write_mask_png(os.path.join(d, "hand_g.png"), hand_mask(W, H, f_px, inside_g(3.0, 10.0)))
+    hg = sil(["Ground"], [{"camera": "CamG", "reference": os.path.join(d, "hand_g.png")}])["views"][0]
+    measured["hand_mask_foreshortening_iou"] = hg["iou"]
+    check("H2 hand-computed foreshortened trapezoid: IoU > 0.97", hg["iou"] > 0.97, hg)
+
+    # 5c. part of the object is behind the camera (plane runs from y=-10 to y=10 under the camera)
+    bpy.data.objects.remove(bpy.data.objects["Ground"])
+    mesh_obj("Ground", ground(-10.0, 10.0))
+    write_mask_png(os.path.join(d, "hand_gb.png"), hand_mask(W, H, f_px, inside_g(0.1, 10.0)))
+    hb = sil(["Ground"], [{"camera": "CamG", "reference": os.path.join(d, "hand_gb.png")}])["views"][0]
+    measured["hand_mask_behind_camera_iou"] = hb["iou"]
+    check("H2 object partly behind the camera: IoU > 0.97", hb["iou"] > 0.97, hb)
+    # same, with the camera inside the object's span of a tall wall (near plane cuts it)
+    # 5d. far clip: shrink the far plane to 6 m and the visible trapezoid shrinks too
+    bpy.data.objects["CamG"].data.clip_end = 6.0
+    write_mask_png(os.path.join(d, "hand_gf.png"), hand_mask(W, H, f_px, inside_g(0.1, 6.0)))
+    hfar = sil(["Ground"], [{"camera": "CamG", "reference": os.path.join(d, "hand_gf.png")}])["views"][0]
+    check("H2 far clip plane honoured: IoU > 0.97", hfar["iou"] > 0.97, hfar)
+
+    # 6. background taken from the corners when there is no alpha
+    reset_scene()
+    box("Cube", (1, 1, 1), rot=(0.3, 0.2, 0.6))
+    cam = camera("CamF", (0, -5, 0), rot_deg=(90, 0, 0))
+    wd = bpy.data.worlds.new("W")
+    wd.color = (0.1, 0.25, 0.4)
+    bpy.context.scene.world = wd
+    opaque = render(os.path.join(d, "opaque.png"), cam, transparent=False)
+    vo = sil(["Cube"], [{"camera": "CamF", "reference": opaque}])["views"][0]
+    check("H2 opaque render: mask from the corner background, IoU > 0.97", vo["mask_from"] == "background" and vo["iou"] > 0.97, vo)
+    # corners that disagree -> refuse
+    arr = np.ones((60, 80, 4), dtype=np.float32)
+    arr[:30, :40, :3] = 0.9
+    arr[30:, 40:, :3] = 0.1
+    img = bpy.data.images.new("tmp_two", 80, 60, alpha=True)
+    img.pixels.foreach_set(arr.ravel())
+    img.filepath_raw = os.path.join(d, "two.png")
+    img.file_format = "PNG"
+    img.save()
+    bpy.data.images.remove(img)
+    check("H2 corners that disagree -> ValueError", raises(lambda: sil(["Cube"], [{"camera": "CamF", "reference": os.path.join(d, "two.png")}])))
+    check("H2 alpha mode on an opaque image -> ValueError", raises(lambda: sil(["Cube"], [{"camera": "CamF", "reference": opaque, "mask": "alpha"}])))
+
+    # argument errors
+    check("H2 missing camera -> ValueError", raises(lambda: sil(["Cube"], [{"camera": "Nope", "reference": opaque}])))
+    check("H2 missing image -> ValueError", raises(lambda: sil(["Cube"], [{"camera": "CamF", "reference": os.path.join(d, "nope.png")}])))
+    check("H2 non-mesh subject -> ValueError", raises(lambda: sil(["CamF"], [{"camera": "CamF", "reference": opaque}])))
+    empty = os.path.join(d, "empty.png")
+    write_mask_png(empty, [[False] * 16 for _ in range(12)])
+    check("H2 empty reference mask -> ValueError", raises(lambda: sil(["Cube"], [{"camera": "CamF", "reference": empty}])))
+    check("H2 no images leaked", not leaked_images(), leaked_images())
+
+
+def fit(**kw):
+    return run("fit_search.py", kw)
+
+
+def test_fit(check, out_dir, measured):
+    reset_scene()
+    d = os.path.join(out_dir, "h3")
+    os.makedirs(d, exist_ok=True)
+    box("Box", (1, 1, 1))
+    cam = camera("CamF", (0, -6, 0), rot_deg=(90, 0, 0))
+    bpy.data.objects["Box"].scale = (1.3, 1.3, 1.3)
+    bpy.data.objects["Box"].location.x = 0.25
+    ref = render(os.path.join(d, "box13.png"), cam)
+    views = [{"camera": "CamF", "reference": ref}]
+
+    # wrong start: scale 0.8 and no shift. apply false -> everything restored
+    box_o = bpy.data.objects["Box"]
+    box_o.scale, box_o.location = (0.8, 0.8, 0.8), (0, 0, 0)
+    start_iou = sil(["Box"], views)["views"][0]["iou"]
+    before = snapshot()
+    r = fit(objects=["Box"], views=views, params=[{"object": "Box", "path": "scale", "min": 0.3, "max": 3.0},
+                                                  {"object": "Box", "path": "location[0]", "min": -1.0, "max": 1.0, "step": 0.4}],
+            max_evals=80)
+    found = {p["param"]: p["value"] for p in r["best"]}
+    measured["fit_scale_found"] = found.get("Box.scale")
+    measured["fit_location_x_found"] = found.get("Box.location[0]")
+    measured["fit_evals"] = r["evals"]
+    measured["fit_score_best"] = r["score_best"]
+    check("H3 recovers the known scale 1.3 within 0.03", abs(found["Box.scale"] - 1.3) <= 0.03, found)
+    check("H3 recovers the known shift 0.25 within 0.03", abs(found["Box.location[0]"] - 0.25) <= 0.03, found)
+    check("H3 score improves a lot", r["score_best"] > 0.97 and r["score_best"] > start_iou + 0.2, (start_iou, r["score_best"]))
+    check("H3 evals bounded", r["evals"] <= 80, r["evals"])
+    check("H3 apply false restores every value", near(box_o.scale, (0.8, 0.8, 0.8)) and near(box_o.location, (0, 0, 0)) and r["restored"] and not r["applied"], (tuple(box_o.scale), tuple(box_o.location)))
+    check("H3 scene otherwise unchanged", snapshot() == before, snap_diff(before, snapshot()))
+
+    # apply true keeps the best values, and the H2 scorer agrees with the fit's own score
+    r = fit(objects=["Box"], views=views, params=[{"object": "Box", "path": "scale", "min": 0.3, "max": 3.0},
+                                                  {"object": "Box", "path": "location[0]", "min": -1.0, "max": 1.0, "step": 0.4}],
+            max_evals=80, apply=True)
+    check("H3 apply true keeps the fit", abs(box_o.scale[0] - 1.3) <= 0.03 and abs(box_o.scale[2] - 1.3) <= 0.03 and abs(box_o.location.x - 0.25) <= 0.03 and r["applied"], (tuple(box_o.scale), box_o.location.x))
+    after = sil(["Box"], views)["views"][0]["iou"]
+    check("H3 scored by H2: the applied state scores the reported best", abs(after - r["score_best"]) < 1e-6 and after > 0.97, (after, r["score_best"]))
+
+    # max_evals bound
+    box_o.scale, box_o.location = (0.8, 0.8, 0.8), (0, 0, 0)
+    r = fit(objects=["Box"], views=views, params=[{"object": "Box", "path": "scale", "min": 0.3, "max": 3.0}], max_evals=5)
+    check("H3 max_evals respected", r["evals"] == 5 and not r["converged"], (r["evals"], r["converged"]))
+    check("H3 values restored after a capped run", near(box_o.scale, (0.8, 0.8, 0.8)), tuple(box_o.scale))
+
+    # review M-1: count the real score calls (rasterize runs once per view per score) with a counter the script does not own
+    calls = []
+    real_run_path = runpy.run_path
+
+    def counting_run_path(path, *a, **k):
+        g = real_run_path(path, *a, **k)
+        if os.path.basename(path) == "silhouette_score.py" and "rasterize" in g:
+            inner = g["rasterize"]
+            g["rasterize"] = lambda *x, **y: (calls.append(1), inner(*x, **y))[1]
+        return g
+
+    runpy.run_path = counting_run_path
+    try:
+        for cap in (1, 2, 5):
+            calls.clear()
+            box_o.scale, box_o.location = (0.8, 0.8, 0.8), (0, 0, 0)
+            r = fit(objects=["Box"], views=views, params=[{"object": "Box", "path": "scale", "min": 0.3, "max": 3.0}], max_evals=cap)
+            check(f"H3 max_evals={cap}: real score calls never exceed it, and the reported count is the real one",
+                  len(calls) <= cap and r["evals"] == len(calls), (cap, len(calls), r["evals"]))
+    finally:
+        runpy.run_path = real_run_path
+
+    # single axis component
+    box_o.scale, box_o.location = (0.8, 1.3, 1.3), (0.25, 0, 0)  # the camera looks along Y, so X is the visible axis
+    r = fit(objects=["Box"], views=views, params=[{"object": "Box", "path": "scale[0]", "min": 0.3, "max": 3.0}], max_evals=60, apply=True)
+    check("H3 single component fit moves only that axis", near(box_o.scale[1:], (1.3, 1.3)) and abs(box_o.scale[0] - 1.3) <= 0.03, tuple(box_o.scale))
+
+    # round 2 H: a whole-vector param on a non-uniform start must never leave an unscored state applied
+    box_o.scale, box_o.location = (0.8, 1.3, 1.3), (0, 0, 0)
+    nref = render(os.path.join(d, "nonuniform.png"), cam)
+    nviews = [{"camera": "CamF", "reference": nref}]
+    for cap in (1, 2, 3, 12):
+        box_o.scale, box_o.location = (0.8, 1.3, 1.3), (0, 0, 0)
+        r = fit(objects=["Box"], views=nviews, params=[{"object": "Box", "path": "scale", "min": 0.3, "max": 3.0}],
+                max_evals=cap, apply=True)
+        iou = sil(["Box"], nviews)["views"][0]["iou"]
+        check(f"H3r2 whole-vector apply, max_evals={cap}: applied state is the scored best (scale kept, iou {iou:.4f} == {r['score_best']})",
+              near(box_o.scale, (0.8, 1.3, 1.3)) and abs(iou - r["score_best"]) < 1e-6, (tuple(box_o.scale), iou, r["score_best"]))
+    box_o.scale, box_o.location = (0.8, 0.8, 0.8), (0, 0, 0)
+
+    # round 3 H: several params on one property (components, or a component beside the whole vector): a rejected
+    # candidate must restore only its own component, and the applied state must be the scored best
+    sc = {"object": "Box", "min": 0.3, "max": 3.0}
+    combos = {"scale[0]+scale[2]": ["scale[0]", "scale[2]"], "scale[2]+scale[0]": ["scale[2]", "scale[0]"],
+              "scale[0]+scale[1]+scale[2]": ["scale[0]", "scale[1]", "scale[2]"],
+              "scale+scale[2]": ["scale", "scale[2]"], "scale[2]+scale": ["scale[2]", "scale"]}
+    for label, paths in combos.items():
+        for cap in (8, 40):
+            box_o.scale, box_o.location = (0.8, 1.3, 1.3), (0.25, 0, 0)
+            r = fit(objects=["Box"], views=views, params=[dict(sc, path=pth) for pth in paths], max_evals=cap, apply=True)
+            iou = sil(["Box"], views)["views"][0]["iou"]
+            check(f"H3r3 {label}, max_evals={cap}: applied state scores the reported best ({iou:.4f} vs {r['score_best']}, checked {r['score_checked']})",
+                  abs(iou - r["score_best"]) < 1e-6 and abs(r["score_checked"] - r["score_best"]) < 1e-6, (tuple(box_o.scale), iou, r["score_best"], r["score_checked"]))
+    box_o.scale, box_o.location = (0.8, 1.3, 1.3), (0.25, 0, 0)
+    r = fit(objects=["Box"], views=views, params=[dict(sc, path="scale[0]"), dict(sc, path="scale[2]")], max_evals=60, apply=True)
+    check("H3r3 accepted X survives a rejected Z (X reaches 1.3, Z stays 1.3)",
+          abs(box_o.scale[0] - 1.3) <= 0.03 and abs(box_o.scale[2] - 1.3) <= 0.03 and abs(box_o.scale[1] - 1.3) < 1e-6, tuple(box_o.scale))
+    box_o.scale, box_o.location = (0.8, 1.3, 1.3), (0.25, 0, 0)
+    before = snapshot()
+    fit(objects=["Box"], views=views, params=[dict(sc, path="scale[0]"), dict(sc, path="scale[2]")], max_evals=40)
+    check("H3r3 apply false restores every component", snapshot() == before and near(box_o.scale, (0.8, 1.3, 1.3)), tuple(box_o.scale))
+    box_o.scale, box_o.location = (0.8, 0.8, 0.8), (0, 0, 0)
+
+    # every error comes before any change
+    box_o.scale, box_o.location = (0.8, 0.8, 0.8), (0, 0, 0)
+    before = snapshot()
+    good = {"object": "Box", "path": "scale", "min": 0.3, "max": 3.0}
+    for label, bad in (("unknown property", {"object": "Box", "path": "scalee", "min": 0, "max": 1}),
+                       ("unknown object", {"object": "Nope", "path": "scale", "min": 0, "max": 1}),
+                       ("index out of range", {"object": "Box", "path": "scale[5]", "min": 0, "max": 1}),
+                       ("read-only property", {"object": "Box", "path": "users", "min": 0, "max": 1}),
+                       ("non-numeric property", {"object": "Box", "path": "name", "min": 0, "max": 1}),
+                       ("bad data path", {"object": "Box", "path": "modifiers['X'].width", "min": 0, "max": 1}),
+                       ("start outside bounds", {"object": "Box", "path": "scale", "min": 1.0, "max": 3.0}),
+                       ("min above max", {"object": "Box", "path": "scale", "min": 3.0, "max": 1.0})):
+        msg = raises(lambda bad=bad: fit(objects=["Box"], views=views, params=[good, bad], max_evals=20))
+        check(f"H3 {label} -> error before any change", msg and snapshot() == before and near(box_o.scale, (0.8, 0.8, 0.8)), msg)
+    check("H3 missing reference -> error", raises(lambda: fit(objects=["Box"], views=[{"camera": "CamF", "reference": os.path.join(d, "no.png")}], params=[good])))
+    check("H3 no params -> error", raises(lambda: fit(objects=["Box"], views=views, params=[])))
+
+    # round 4 H: different paths that resolve to one RNA property share one committed state
+    reset_scene()
+    cam = camera("CamF", (0, -6, 0), rot_deg=(90, 0, 0))
+    bx = box("Bev", (2, 2, 2))
+    md = bx.modifiers.new("Bevel", "BEVEL")
+    md.segments = 1
+    md.width = 0.25
+    aref = render(os.path.join(d, "bevel025.png"), cam)
+    aviews = [{"camera": "CamF", "reference": aref}]
+    md.width = 0.0
+    spec = {"object": "Bev", "min": 0.0, "max": 1.0, "step": 0.25}
+    r = fit(objects=["Bev"], views=aviews, params=[dict(spec, path="modifiers[0].width"), dict(spec, path="modifiers[\"Bevel\"].width")],
+            max_evals=4, apply=True)
+    aiou = sil(["Bev"], aviews)["views"][0]["iou"]
+    check("H3r4 aliased paths (modifiers[0] / modifiers['Bevel']): applied state scores the reported best",
+          abs(aiou - r["score_best"]) < 1e-6 and abs(r["score_checked"] - r["score_best"]) < 1e-6 and abs(md.width - 0.25) < 1e-6,
+          (md.width, aiou, r["score_best"], r["score_checked"]))
+    md.width = 0.0
+    r = fit(objects=["Bev"], views=aviews, params=[dict(spec, path="modifiers[\"Bevel\"].width"), dict(spec, path="modifiers[0].width")], max_evals=4)
+    check("H3r4 aliased paths, apply false: restored", abs(md.width) < 1e-9 and r["restored"], md.width)
+
+    # round 4 H: an integer candidate stays inside the bounds after rounding
+    bx.modifiers.remove(md)
+    sd = bx.modifiers.new("Sub", "ARRAY")
+    sd.count = 4
+    cam.location.y = -24
+    iref = render(os.path.join(d, "array4.png"), cam)
+    iviews = [{"camera": "CamF", "reference": iref}]
+    sd.count = 3
+    r = fit(objects=["Bev"], views=iviews, params=[{"object": "Bev", "path": "modifiers[\"Sub\"].count", "min": 1, "max": 3.7, "step": 1}],
+            max_evals=12, apply=True)
+    check("H3r4 integer candidate never exceeds max 3.7 after rounding", sd.count <= 3 and r["best"][0]["value"] <= 3.7, (sd.count, r["best"]))
+    sd.count = 3
+    check("H3r4 integer range with no integer inside -> error",
+          raises(lambda: fit(objects=["Bev"], views=iviews, params=[{"object": "Bev", "path": "modifiers[\"Sub\"].count", "min": 3.2, "max": 3.7}])))
+    check("H3r4 integer fit leaves count untouched on error", sd.count == 3, sd.count)
+    check("H3 no images leaked", not leaked_images(), leaked_images())
+
+
+def test_fit_integer(check, out_dir, measured):
+    """Integer properties: the step is never below 1, a candidate rounding to the current value is not a try,
+    and converged means the in-bounds neighbours were really evaluated."""
+    reset_scene()
+    d = os.path.join(out_dir, "h3int")
+    os.makedirs(d, exist_ok=True)
+    cam = camera("CamF", (0, -8, 0), rot_deg=(90, 0, 0), ortho=8.0)
+    bx = box("Arr", (1, 1, 1))
+    md = bx.modifiers.new("Arr", "ARRAY")
+    md.count = 2
+    ref2 = render(os.path.join(d, "arr2.png"), cam)
+    bx.location.z = 0.6
+    ref2z = render(os.path.join(d, "arr2z.png"), cam)
+    bx.location.z = 0.0
+    v2, v2z = [{"camera": "CamF", "reference": ref2}], [{"camera": "CamF", "reference": ref2z}]
+    cnt = {"object": "Arr", "path": "modifiers[\"Arr\"].count"}
+
+    def run_case(label, start, views, params, want, max_evals=30):
+        md.count, bx.location.z = start, 0.0
+        r = fit(objects=["Arr"], views=views, params=params, max_evals=max_evals)
+        measured[f"fit_int_{label}"] = {"best": r["best"], "score_best": r["score_best"], "evals": r["evals"], "converged": r["converged"]}
+        got = r["best"][0]["value"]
+        check(f"H3int {label}: count reaches {want}", got == want and r["score_best"] > 0.97, (r["best"], r["score_best"], r["evals"]))
+        check(f"H3int {label}: budget holds and values restored", r["evals"] <= max_evals and md.count == start and r["restored"] and abs(bx.location.z) < 1e-9, (r["evals"], md.count))
+        return r
+
+    run_case("[1,2] from 1, default step", 1, v2, [dict(cnt, min=1, max=2)], 2)
+    run_case("[2,3] from 3, default step", 3, v2, [dict(cnt, min=2, max=3)], 2)
+    run_case("[1,2] from 1, small user step 0.25", 1, v2, [dict(cnt, min=1, max=2, step=0.25)], 2)
+    run_case("[1,3] from 1, small user step 0.4 and tol", 1, v2, [dict(cnt, min=1, max=3, step=0.4, tol=0.01)], 2)
+    run_case("[1,2] from 1, step 1 still works", 1, v2, [dict(cnt, min=1, max=2, step=1)], 2)
+    # mixed float and integer: the float (z shift 0.6) and the count both have to move
+    md.count, bx.location.z = 1, 0.0
+    r = fit(objects=["Arr"], views=v2z, params=[dict(cnt, min=1, max=2), {"object": "Arr", "path": "location[2]", "min": -1.0, "max": 1.0}], max_evals=80)
+    measured["fit_int_mixed"] = {"best": r["best"], "score_best": r["score_best"], "evals": r["evals"], "converged": r["converged"]}
+    got = {p["param"]: p["value"] for p in r["best"]}
+    check("H3int mixed: count 2 and z within 0.05 of 0.6", got["Arr.modifiers[\"Arr\"].count"] == 2 and abs(got["Arr.location[2]"] - 0.6) <= 0.05 and r["score_best"] > 0.97, r["best"])
+    check("H3int mixed: budget holds and values restored", r["evals"] <= 80 and md.count == 1 and abs(bx.location.z) < 1e-9, (r["evals"], md.count))
+    # converged on an integer means both in-bounds neighbours were evaluated: start at the best, bounds [1,3]
+    md.count, bx.location.z = 2, 0.0
+    r = fit(objects=["Arr"], views=v2, params=[dict(cnt, min=1, max=3)], max_evals=30)
+    check("H3int converged at the optimum evaluated both neighbours (start + 2 + closing >= 4 evals)", r["converged"] and r["best"][0]["value"] == 2 and r["evals"] >= 4, (r["evals"], r["converged"]))
+    # a tiny budget never reports converged on an integer that was not explored
+    md.count = 1
+    r = fit(objects=["Arr"], views=v2, params=[dict(cnt, min=1, max=2)], max_evals=2)
+    check("H3int tiny budget: not converged", not r["converged"] and r["evals"] <= 2, (r["evals"], r["converged"]))
+    check("H3int count restored after all runs", md.count == 1, md.count)
+    check("H3int no images leaked", not leaked_images(), leaked_images())
+
+
+def test_fit_budget_converged(check, out_dir, measured):
+    """converged is true only when a full sweep of every parameter at its final step found no improvement; a stop
+    on the evaluation budget is never convergence."""
+    reset_scene()
+    d = os.path.join(out_dir, "h3conv")
+    os.makedirs(d, exist_ok=True)
+    cam = camera("CamF", (0, -8, 0), rot_deg=(90, 0, 0), ortho=8.0)
+    bx = box("Arr", (1, 1, 1))
+    md = bx.modifiers.new("Arr", "ARRAY")
+    md.count = 3
+    ref3 = render(os.path.join(d, "arr3.png"), cam)
+    md.count = 2
+    ref2 = render(os.path.join(d, "arr2.png"), cam)
+    v3, v2 = [{"camera": "CamF", "reference": ref3}], [{"camera": "CamF", "reference": ref2}]
+    cnt = {"object": "Arr", "path": "modifiers[\"Arr\"].count"}
+    zloc = {"object": "Arr", "path": "location[2]", "min": -1.0, "max": 1.0}
+
+    def go(label, start, views, params, max_evals):
+        md.count, bx.location.z = start, 0.0
+        r = fit(objects=["Arr"], views=views, params=params, max_evals=max_evals)
+        measured[f"fit_conv_{label}"] = {"best": r["best"], "score_best": r["score_best"], "evals": r["evals"], "converged": r["converged"]}
+        return r
+
+    r = go("array_5_to_3_budget3", 5, v3, [dict(cnt, min=1, max=8, step=1)], 3)
+    check("H3conv array 5->3, max_evals 3: budget stop is not converged", not r["converged"] and r["score_best"] < 0.97, (r["converged"], r["best"], r["score_best"], r["evals"]))
+    r = go("array_5_to_3_budget6", 5, v3, [dict(cnt, min=1, max=8, step=1)], 6)
+    check("H3conv array 5->3, max_evals 6: reaches IoU 1.0", r["best"][0]["value"] == 3 and r["score_best"] > 0.99, (r["best"], r["score_best"], r["evals"]))
+    r = go("array_5_to_3_full", 5, v3, [dict(cnt, min=1, max=8, step=1)], 30)
+    check("H3conv array 5->3, generous budget: converged", r["converged"] and r["best"][0]["value"] == 3, (r["converged"], r["best"], r["evals"]))
+    r = go("int_bounds_reject_exhausts", 2, v2, [dict(cnt, min=1, max=3, step=1)], 3)
+    check("H3conv int [1,3] from 2, max_evals 3: neighbour 1 skipped, not converged", not r["converged"], (r["converged"], r["evals"]))
+    r = go("two_params_second_unevaluated", 2, v2, [dict(cnt, min=1, max=3, step=1), dict(zloc, step=0.1, tol=0.09)], 4)
+    check("H3conv two params, second never evaluated: not converged", not r["converged"], (r["converged"], r["evals"]))
+    r = go("float_budget", 2, v2, [dict(zloc, step=0.1, tol=0.09)], 3)
+    check("H3conv float step .1 tol .09, max_evals 3: not converged", not r["converged"], (r["converged"], r["evals"]))
+    r = go("float_normal", 2, v2, [dict(zloc, step=0.25, tol=0.05)], 60)
+    check("H3conv float normal convergence still true", r["converged"] and abs(r["best"][0]["value"]) < 0.06, (r["converged"], r["best"], r["evals"]))
+    r = go("mixed_normal", 2, v2, [dict(cnt, min=1, max=3, step=1), dict(zloc, step=0.25, tol=0.05)], 80)
+    check("H3conv int plus float normal convergence still true", r["converged"], (r["converged"], r["best"], r["evals"]))
+    check("H3conv no images leaked", not leaked_images(), leaked_images())
+
+
+# ---------------------------------------------------------------- H4 ingest_asset
+def build_source(sc_dims=100.0):
+    """A two-mesh parented hierarchy at 100x scale ("centimetres"), smooth icospheres with no UVs, so that the file
+    formats can keep one vertex per source vertex."""
+    body = ico("Body", (0.6 * sc_dims, 0.4 * sc_dims, 1.8 * sc_dims), loc=(10, -20, 0.9 * sc_dims), rot=(0, 0, math.radians(20)))
+    head = ico("Head", (0.3 * sc_dims, 0.3 * sc_dims, 0.3 * sc_dims), loc=(5, 0, 1.15 * sc_dims), parent=body)
+    bpy.context.view_layer.update()
+    return body, head
+
+
+def export_src(kind, path):
+    bpy.ops.object.select_all(action="DESELECT")
+    for n in ("Body", "Head"):
+        bpy.data.objects[n].select_set(True)
+    bpy.context.view_layer.objects.active = bpy.data.objects["Body"]
+    if kind == "glb":
+        bpy.ops.export_scene.gltf(filepath=path, export_format="GLB", use_selection=True)
+    elif kind == "gltf":
+        bpy.ops.export_scene.gltf(filepath=path, export_format="GLTF_SEPARATE", use_selection=True)
+    elif kind == "fbx":
+        bpy.ops.export_scene.fbx(filepath=path, use_selection=True)
+    elif kind == "obj":
+        bpy.ops.wm.obj_export(filepath=path, export_selected_objects=True)
+    elif kind == "usd":
+        bpy.ops.wm.usd_export(filepath=path, selected_objects_only=True)
+
+
+def hausdorff(a, b):
+    d = np.sqrt(((a[:, None, :] - b[None, :, :]) ** 2).sum(2))
+    return float(max(d.min(1).max(), d.min(0).max()))
+
+
+def test_ingest(check, out_dir, measured):
+    d = os.path.join(out_dir, "h4")
+    os.makedirs(d, exist_ok=True)
+    target = 1.8
+    formats = {"glb": ".glb", "gltf": ".gltf", "fbx": ".fbx", "obj": ".obj", "usd": ".usd"}
+    outcome = {}
+    for kind, ext in formats.items():
+        label = f"H4 {kind}"
+        try:
+            reset_scene()
+            body, head = build_source()
+            src_verts = np.concatenate([world_verts(body), world_verts(head)])
+            src_count = len(src_verts)
+            height = src_verts[:, 2].max() - src_verts[:, 2].min()
+            s = target / height
+            centre = np.array([(src_verts[:, 0].max() + src_verts[:, 0].min()) / 2, (src_verts[:, 1].max() + src_verts[:, 1].min()) / 2, src_verts[:, 2].min()])
+            expected = (src_verts - centre) * s
+            path = os.path.join(d, f"model_{kind}{ext}")
+            export_src(kind, path)
+            reset_scene()
+            existing = box("Existing", (1, 1, 1), (3, 3, 0.5))
+            existing.select_set(True)
+            bpy.context.view_layer.update()
+            before = {"m": [tuple(r) for r in existing.matrix_world], "v": len(existing.data.vertices),
+                      "cols": [c.name for c in existing.users_collection], "all_cols": set(bpy.data.collections.keys())}
+            r = run("ingest_asset.py", {"path": path, "target_size_m": target})
+            meshes = [bpy.data.objects[n] for n in r["meshes"]]
+            actual = np.concatenate([world_verts(m) for m in meshes])
+            size_z = actual[:, 2].max() - actual[:, 2].min()
+            hd = hausdorff(expected, actual)
+            outcome[kind] = {"height_m": round(float(size_z), 5), "hausdorff_m": round(hd, 6),
+                             "vertices_source": src_count, "vertices_imported": r["vertices"]["imported"],
+                             "vertices_final": r["vertices"]["final"], "scale_factor": r["scale_factor"]}
+            check(f"{label}: wrong-scale file comes out at the target height", abs(size_z - target) < 1e-3 * target, size_z)
+            check(f"{label}: normalizing keeps the vertex count", r["vertices"]["imported"] == r["vertices"]["final"], r["vertices"])
+            check(f"{label}: vertex count equals the source's", r["vertices"]["final"] == src_count, (r["vertices"], src_count))
+            check(f"{label}: world shape matches the source normalized (Hausdorff < 0.2% of height)", hd < 0.002 * target, hd)
+            base = [(actual[:, 0].max() + actual[:, 0].min()) / 2, (actual[:, 1].max() + actual[:, 1].min()) / 2, actual[:, 2].min()]
+            check(f"{label}: base centre at the world origin", all(abs(v) < 2e-3 for v in base), base)
+            cond = ([tuple(x) for x in existing.matrix_world] == before["m"], len(existing.data.vertices) == before["v"],
+                    [c.name for c in existing.users_collection] == before["cols"], existing.select_get())
+            check(f"{label}: existing object untouched (matrix, vertices, collection, selection)", all(cond), cond)
+            check(f"{label}: imported objects live only in the new collection",
+                  all([c.name for c in bpy.data.objects[n].users_collection] == [r["collection"]] for n in r["imported_objects"])
+                  and set(bpy.data.collections.keys()) == before["all_cols"] | {r["collection"]}, (r["collection"], list(bpy.data.collections.keys())))
+            check(f"{label}: meshes carry the prefix", all(n.startswith("SM_") for n in r["meshes"]), r["meshes"])
+            check(f"{label}: validate_asset ran on the imported meshes", set(r["validation"]["objects"]) == set(r["meshes"]), list(r["validation"]["objects"]))
+            check(f"{label}: transforms were baked (validate transforms_applied PASS)",
+                  all(o["checks"]["transforms_applied"]["status"] == "PASS" for o in r["validation"]["objects"].values()), r["validation"]["objects"])
+            roots = [bpy.data.objects[n] for n in r["imported_objects"] if bpy.data.objects[n].parent is None]
+            check(f"{label}: every imported root has its origin at the world origin (base centre)",
+                  roots and all(o.matrix_world.translation.length < 2e-3 for o in roots), [(o.name, tuple(o.matrix_world.translation)) for o in roots])
+            if kind != "obj":  # OBJ has no hierarchy
+                head_m = next(m for m in meshes if "Head" in m.name)
+                chain, p = [], head_m.parent
+                while p is not None:
+                    chain.append(p.name)
+                    p = p.parent
+                check(f"{label}: head stays parented under the body", any("Body" in n for n in chain)
+                      and all(n in r["imported_objects"] for n in chain), chain)
+            outcome[kind]["passed"] = True
+        except Exception:
+            outcome.setdefault(kind, {})["passed"] = False
+            check(f"{label}: round trip ran", False, tb())
+    measured["ingest_formats"] = outcome
+
+    # gltf with external buffers: the .bin is next to the .gltf and the .gltf refers to it by name
+    gl = os.path.join(d, "model_gltf.gltf")
+    doc = json.load(open(gl, encoding="utf-8"))
+    uris = [b.get("uri", "") for b in doc.get("buffers", [])]
+    check("H4 gltf fixture has an external .bin buffer", uris and all(u.endswith(".bin") and not u.startswith("data:") for u in uris)
+          and all(os.path.isfile(os.path.join(d, u)) for u in uris), uris)
+    # the same .gltf copied alone (buffer missing) must fail and roll back everything
+    import shutil
+    lone = os.path.join(d, "lone")
+    os.makedirs(lone, exist_ok=True)
+    shutil.copy(gl, os.path.join(lone, "model_gltf.gltf"))
+    reset_scene()
+    box("Existing", (1, 1, 1))
+    names, cols = set(bpy.data.objects.keys()), set(bpy.data.collections.keys())
+    msg = raises(lambda: run("ingest_asset.py", {"path": os.path.join(lone, "model_gltf.gltf")}), (ValueError, RuntimeError))
+    check("H4 gltf without its .bin fails", msg is not None, msg)
+    check("H4 failed import rolls back objects and collections", set(bpy.data.objects.keys()) == names and set(bpy.data.collections.keys()) == cols,
+          (set(bpy.data.objects.keys()) - names, set(bpy.data.collections.keys()) - cols))
+
+    # round 2 H: a planar textured OBJ asked for a height fails; its material and image must not be left behind
+    reset_scene()
+    tex = os.path.join(d, "plane_tex.png")
+    write_png_rgba(tex, [[(255, 0, 0, 255), (0, 255, 0, 255)], [(0, 0, 255, 255), (255, 255, 0, 255)]])
+    mtl_text = chr(10).join(["newmtl PlaneMat", "Kd 1 1 1", "map_Kd plane_tex.png", ""])
+    obj_text = chr(10).join(["mtllib plane.mtl", "o Plane", "v 0 0 0", "v 1 0 0", "v 1 0 1", "v 0 0 1", "vt 0 0", "vt 1 0",
+                             "vt 1 1", "vt 0 1", "usemtl PlaneMat", "f 1/1 2/2 3/3 4/4", ""])
+    with open(os.path.join(d, "plane.mtl"), "w", encoding="utf-8") as fh:
+        fh.write(mtl_text)
+    with open(os.path.join(d, "plane.obj"), "w", encoding="utf-8") as fh:
+        fh.write(obj_text)
+    box("Existing", (1, 1, 1))
+    mats, imgs = set(bpy.data.materials.keys()), set(bpy.data.images.keys())
+    got = []
+    msg = raises(lambda: got.append(run("ingest_asset.py", {"path": os.path.join(d, "plane.obj"), "target_size_m": 1.8})))
+    check("H4r2 planar OBJ with a height target is refused", msg is not None,
+          got and {k: got[0][k] for k in ("size_before_m", "size_after_m", "scale_factor")})
+    check("H4r2 failed import leaves no new material or image", set(bpy.data.materials.keys()) == mats and set(bpy.data.images.keys()) == imgs,
+          (set(bpy.data.materials.keys()) - mats, set(bpy.data.images.keys()) - imgs))
+
+    # a file with no mesh: the import creates an object, then the script refuses and removes what it created
+    reset_scene()
+    bpy.ops.object.empty_add(location=(1, 2, 3))
+    bpy.context.object.name = "OnlyAnEmpty"
+    only = os.path.join(d, "only_empty.glb")
+    bpy.ops.export_scene.gltf(filepath=only, export_format="GLB", use_selection=True)
+    reset_scene()
+    box("Existing", (1, 1, 1))
+    names, cols = set(bpy.data.objects.keys()), set(bpy.data.collections.keys())
+    msg = raises(lambda: run("ingest_asset.py", {"path": only}))
+    check("H4 a file with no mesh is refused", msg and "no mesh" in msg, msg)
+    check("H4 refusal after the import removes the objects and the collection it made",
+          set(bpy.data.objects.keys()) == names and set(bpy.data.collections.keys()) == cols,
+          (set(bpy.data.objects.keys()) - names, set(bpy.data.collections.keys()) - cols))
+
+    # round 3 H: a refused import removes every datablock type it created (cameras, lights, ...), not only meshes
+    def all_ids():
+        out = {}
+        for attr in dir(bpy.data):
+            coll = getattr(bpy.data, attr, None)
+            if attr != "all_ids" and isinstance(coll, bpy.types.bpy_prop_collection) and hasattr(coll, "keys"):
+                out[attr] = set(coll.keys())
+        return out
+
+    reset_scene()
+    cd = bpy.data.cameras.new("OnlyCam")
+    co = bpy.data.objects.new("OnlyCam", cd)
+    bpy.context.scene.collection.objects.link(co)
+    ld = bpy.data.lights.new("OnlyLight", "POINT")
+    lo = bpy.data.objects.new("OnlyLight", ld)
+    bpy.context.scene.collection.objects.link(lo)
+    bpy.ops.object.select_all(action="DESELECT")
+    co.select_set(True)
+    lo.select_set(True)
+    camfile = os.path.join(d, "only_cam_light.glb")
+    bpy.ops.export_scene.gltf(filepath=camfile, export_format="GLB", use_selection=True, export_cameras=True,
+                              export_import_convert_lighting_mode="RAW", export_lights=True)
+    reset_scene()
+    box("Existing", (1, 1, 1))
+    keep = bpy.data.cameras.new("PreexistingCam")  # unused and pre-existing: must survive
+    before_ids = all_ids()
+    msg = raises(lambda: run("ingest_asset.py", {"path": camfile}))
+    after_ids = all_ids()
+    check("H4r3 a camera-and-light-only file is refused", msg and "no mesh" in msg, msg)
+    check("H4r3 refusal leaves every bpy.data collection as it was (cameras, lights, ...)",
+          before_ids == after_ids and "PreexistingCam" in bpy.data.cameras,
+          {k: sorted(before_ids.get(k, set()) ^ after_ids.get(k, set())) for k in after_ids if before_ids.get(k) != after_ids.get(k)})
+    bpy.data.cameras.remove(keep)
+
+    # review (non-blocking): an importer that creates an object and then raises must not leave it behind
+    reset_scene()
+    box("Existing", (1, 1, 1))
+    names, cols, meshes_before = set(bpy.data.objects.keys()), set(bpy.data.collections.keys()), set(bpy.data.meshes.keys())
+    src = open(os.path.join(SCRIPTS, "ingest_asset.py"), encoding="utf-8").read()
+    head, tail = src.split("def _run_import(kind, path):", 1)
+    tail = tail.split("\ndef _layer_collection", 1)[1]
+    broken = head + ("def _run_import(kind, path):\n"
+                     "    me = bpy.data.meshes.new('Half'); o = bpy.data.objects.new('Half', me)\n"
+                     "    bpy.context.scene.collection.objects.link(o)\n"
+                     "    raise RuntimeError('corrupt mesh 2')\n\n\ndef _layer_collection") + tail
+    g = {"ARGS": {"path": os.path.join(d, "model_glb.glb")}, "__name__": "__skill_test__", "__file__": os.path.join(SCRIPTS, "ingest_asset.py")}
+    msg = raises(lambda: exec(compile(broken, "ingest_asset_broken.py", "exec"), g), (RuntimeError, ValueError))
+    check("H4 partial import: the importer's error surfaces", msg and "corrupt mesh 2" in msg, msg)
+    check("H4 partial import: the object the importer made is removed, with its mesh and the collection",
+          set(bpy.data.objects.keys()) == names and set(bpy.data.collections.keys()) == cols and set(bpy.data.meshes.keys()) == meshes_before,
+          (set(bpy.data.objects.keys()) - names, set(bpy.data.collections.keys()) - cols, set(bpy.data.meshes.keys()) - meshes_before))
+
+    # up-axis fix: OBJ written with Y up, read with the importer's default -> comes in lying down
+    reset_scene()
+    body, head = build_source()
+    sel = os.path.join(d, "lying.obj")
+    bpy.ops.object.select_all(action="DESELECT")
+    body.select_set(True)
+    head.select_set(True)
+    bpy.context.view_layer.objects.active = body
+    bpy.ops.wm.obj_export(filepath=sel, export_selected_objects=True, forward_axis="NEGATIVE_Z", up_axis="Z")
+    reset_scene()
+    plain = run("ingest_asset.py", {"path": sel, "target_size_m": target, "size_axis": "max"})
+    reset_scene()
+    def head_above_body(res):
+        z = {k: np.mean([world_verts(bpy.data.objects[n])[:, 2].mean() for n in res["meshes"] if k in n]) for k in ("Head", "Body")}
+        return bool(z["Head"] > z["Body"])
+
+    fixed = {}
+    for fix in ("y_up_to_z_up", "z_up_to_y_up"):
+        reset_scene()
+        rr = run("ingest_asset.py", {"path": sel, "target_size_m": target, "size_axis": "max", "up_axis_fix": fix})
+        fixed[fix] = (rr["size_after_m"], head_above_body(rr))
+    standing = {k: v[0][2] > v[0][0] and v[0][2] > v[0][1] and v[1] for k, v in fixed.items()}
+    check("H4 up_axis_fix: the lying file ends up standing with its head up for exactly one direction", sum(standing.values()) == 1,
+          {"plain": plain["size_after_m"], **{k: v for k, v in fixed.items()}})
+    check("H4 up_axis_fix: without it the long side is not up", not (plain["size_after_m"][2] > plain["size_after_m"][0] and plain["size_after_m"][2] > plain["size_after_m"][1]), plain["size_after_m"])
+
+    # refusals leave the scene untouched
+    reset_scene()
+    box("Existing", (1, 1, 1))
+    before = (set(bpy.data.objects.keys()), set(bpy.data.collections.keys()))
+    real = os.path.join(d, "model_glb.glb")
+    for label, p, word in (("URL", "https://example.com/model.glb", "only local files"),
+                           ("file URL naming a real file", "file:///" + real.replace("\\", "/"), "only local files"),
+                           ("network path", "\\\\server\\share\\model.glb", "only local files"),
+                           (".blend", os.path.join(d, "x.blend"), ".blend"),
+                           ("unsupported type", os.path.join(d, "x.txt"), "unsupported"),
+                           ("missing file", os.path.join(d, "missing.glb"), "not found")):
+        msg = raises(lambda p=p: run("ingest_asset.py", {"path": p}))
+        check(f"H4 refuses {label} for the right reason", msg and word in msg and
+              (set(bpy.data.objects.keys()), set(bpy.data.collections.keys())) == before, msg)
+    check("H4 bad size_axis -> ValueError", raises(lambda: run("ingest_asset.py", {"path": os.path.join(d, "model_glb.glb"), "size_axis": "w"})))
+
+    # options: no scaling, no prefix, no baking
+    reset_scene()
+    r = run("ingest_asset.py", {"path": os.path.join(d, "model_glb.glb"), "prefix": "", "apply_transforms": False})
+    check("H4 no target keeps the file's scale ratio and skips the prefix",
+          r["scale_factor"] == 1.0 and not r["renamed"] and all(not n.startswith("SM_") for n in r["meshes"]), r["scale_factor"])
+    check("H4 collection argument names the collection", run("ingest_asset.py", {"path": os.path.join(d, "model_glb.glb"), "collection": "MyAsset"})["collection"].startswith("MyAsset"))
+
+
+# ---------------------------------------------------------------- round 5 H: review findings
+def test_round5_clash(check, out_dir):
+    """Partial face contact is touching, not a clash; real penetration keeps failing."""
+    audit = lambda **kw: run("clash_audit.py", {"objects": None, **kw})
+    # (label, A dims, A location, B dims, B location): every pair shares part of a face plane and nothing more
+    cases = (("offset on one face", (1, 1, 1), (0, 0, 0), (1, 1, 1), (1, 0.25, 0.25)),
+             ("diagonal offset on one face", (1, 1, 1), (0, 0, 0), (1, 1, 1), (0.3, 0.2, 1.0)),
+             ("small cube on a big plate", (2, 2, 0.4), (0, 0, 0), (0.4, 0.4, 0.4), (0.3, -0.2, 0.4)),
+             ("offset on the -x face, shifted in z", (1, 1, 1), (0, 0, 0), (1, 1, 1), (-1.0, -0.4, 0.1)))
+    for label, da, la, db, lb in cases:
+        reset_scene()
+        box("A", da, la)
+        box("B", db, lb)
+        r = audit(objects=["A", "B"])
+        check(f"H1r5 partial face contact ({label}) is touching, not a clash",
+              not r["clashes"] and not r["contained"] and r["verdict"] == "PASS" and len(r["touching"]) == 1,
+              {k: r[k] for k in ("verdict", "clashes", "contained", "touching")})
+        check(f"H1r5 partial face contact ({label}) keeps the pair joined", len(r["groups"]) == 1, r["groups"])
+    # penetration with the same offsets still fails, with a sensible depth
+    for label, loc_b, depth in (("0.1 into the x face", (0.9, 0.25, 0.25), 0.1), ("0.2 into the z face", (0.3, 0.2, 0.8), 0.2)):
+        reset_scene()
+        box("A", (1, 1, 1))
+        box("B", (1, 1, 1), loc_b)
+        r = audit(objects=["A", "B"])
+        d = r["clashes"][0]["depth_m"] if r["clashes"] else None
+        check(f"H1r5 offset penetration ({label}) still fails", r["verdict"] == "FAIL" and len(r["clashes"]) == 1
+              and d is not None and abs(d - depth) <= 0.2 * depth, (r["verdict"], r["clashes"]))
+
+
+def test_round5_silhouette(check, out_dir, measured):
+    """A reference rendered with a non-square pixel aspect is scored with the same projection."""
+    d = os.path.join(out_dir, "h5sil")
+    os.makedirs(d, exist_ok=True)
+    reset_scene()
+    mesh_obj("Chair", boxes(((1.0, 1.0, 0.2), (0, 0, 0)), ((0.2, 1.0, 1.0), (-0.4, 0, 0.6)),
+                            ((0.3, 0.3, 0.7), (0.35, 0.3, -0.45))), rot=(0, 0, math.radians(35)))
+    cam = camera("CamP", (2.6, -3.0, 1.9), look_at=(0, 0, 0.2), lens=28)
+    sc = bpy.context.scene
+    try:
+        for ax, ay in ((2.0, 1.0), (1.0, 2.0), (1.0, 1.0)):
+            sc.render.pixel_aspect_x, sc.render.pixel_aspect_y = ax, ay
+            ref = render(os.path.join(d, f"aspect_{int(ax)}_{int(ay)}.png"), cam)
+            v = run("silhouette_score.py", {"objects": ["Chair"], "views": [{"camera": "CamP", "reference": ref}]})["views"][0]
+            measured[f"pixel_aspect_{int(ax)}to{int(ay)}_iou"] = v["iou"]
+            check(f"H2r5 pixel aspect {int(ax)}:{int(ay)} render scores IoU > 0.98", v["iou"] > 0.98, v)
+            if (ax, ay) != (1.0, 1.0):  # the square-pixel projection must be clearly worse, so the test tells them apart
+                sc.render.pixel_aspect_x, sc.render.pixel_aspect_y = 1.0, 1.0
+                wrong = run("silhouette_score.py", {"objects": ["Chair"], "views": [{"camera": "CamP", "reference": ref}]})["views"][0]
+                measured[f"pixel_aspect_{int(ax)}to{int(ay)}_iou_if_ignored"] = wrong["iou"]
+                check(f"H2r5 pixel aspect {int(ax)}:{int(ay)}: a square-pixel scene scores clearly lower (test is discriminating)",
+                      wrong["iou"] < v["iou"] - 0.05, (wrong["iou"], v["iou"]))
+    finally:
+        sc.render.pixel_aspect_x = sc.render.pixel_aspect_y = 1.0
+    check("H2r5 no images leaked", not leaked_images(), leaked_images())
+
+
+def eval_world(obj):
+    dg = bpy.context.evaluated_depsgraph_get()
+    ev = obj.evaluated_get(dg)
+    me = ev.to_mesh()
+    try:
+        co = np.array([tuple(ev.matrix_world @ v.co) for v in me.vertices])
+    finally:
+        ev.to_mesh_clear()
+    return co
+
+
+def test_round5_ingest(check, out_dir, measured):
+    d = os.path.join(out_dir, "h5ing")
+    os.makedirs(d, exist_ok=True)
+    target = 1.8
+    out = {}
+
+    # ---- shape keys: a real exported GLB with a morph target
+    reset_scene()
+    body, head = build_source()
+    body.shape_key_add(name="Basis", from_mix=False)
+    key = body.shape_key_add(name="Morph", from_mix=False)
+    for i, v in enumerate(body.data.vertices):
+        if v.co.z > 0:
+            key.data[i].co.x += 40.0
+            key.data[i].co.z += 15.0
+    key.value = 0.0
+    bpy.context.view_layer.update()
+    state0 = np.concatenate([eval_world(body), eval_world(head)])
+    key.value = 1.0
+    bpy.context.view_layer.update()
+    state1 = np.concatenate([eval_world(body), eval_world(head)])
+    key.value = 0.0
+    bpy.context.view_layer.update()
+    height = state0[:, 2].max() - state0[:, 2].min()
+    s = target / height
+    centre = np.array([(state0[:, 0].max() + state0[:, 0].min()) / 2, (state0[:, 1].max() + state0[:, 1].min()) / 2, state0[:, 2].min()])
+    exp0, exp1 = (state0 - centre) * s, (state1 - centre) * s
+    check("H4r5 fixture: the morph really moves the mesh", hausdorff(state0, state1) > 10.0, hausdorff(state0, state1))
+    path = os.path.join(d, "morph.glb")
+    export_src("glb", path)  # selects Body and Head
+    check("H4r5 fixture: exported GLB carries a morph target", b'"targets"' in open(path, "rb").read(), None)
+    reset_scene()
+    r = run("ingest_asset.py", {"path": path, "target_size_m": target})
+    imp = next(bpy.data.objects[n] for n in r["meshes"] if "Body" in n)
+    imp_head = next(bpy.data.objects[n] for n in r["meshes"] if "Head" in n)
+    sk = imp.data.shape_keys
+    check("H4r5 imported body kept its shape key", sk is not None and len(sk.key_blocks) == 2,
+          None if sk is None else [k.name for k in sk.key_blocks])
+    if sk is not None and len(sk.key_blocks) == 2:
+        kb = sk.key_blocks[1]
+        got = {}
+        for val, expected in ((0.0, exp0), (1.0, exp1)):
+            kb.value = val
+            bpy.context.view_layer.update()
+            actual = np.concatenate([eval_world(imp), eval_world(imp_head)])
+            hd = hausdorff(expected, actual)
+            got[str(val)] = round(hd, 6)
+            check(f"H4r5 shape key at {val:g}: evaluated shape matches the normalized source (Hausdorff < 0.2% of height)",
+                  hd < 0.002 * target, hd)
+            if val == 0.0:
+                z = actual[:, 2]
+                check("H4r5 shape key at 0: height equals the target and the base sits on the origin plane",
+                      abs((z.max() - z.min()) - target) < 1e-3 * target and abs(z.min()) < 2e-3, (z.max() - z.min(), z.min()))
+        out["shape_key_hausdorff_m"] = got
+        kb.value = 0.0
+
+    # ---- armature-driven asset: either normalized correctly or refused clearly
+    reset_scene()
+    arm_data = bpy.data.armatures.new("Rig")
+    rig = bpy.data.objects.new("Rig", arm_data)
+    bpy.context.scene.collection.objects.link(rig)
+    bpy.context.view_layer.objects.active = rig
+    rig.select_set(True)
+    bpy.ops.object.mode_set(mode="EDIT")
+    lo_b = arm_data.edit_bones.new("Lower")
+    lo_b.head, lo_b.tail = (0, 0, 0), (0, 0, 50)
+    up_b = arm_data.edit_bones.new("Upper")
+    up_b.head, up_b.tail, up_b.parent, up_b.use_connect = (0, 0, 50), (0, 0, 100), lo_b, True
+    bpy.ops.object.mode_set(mode="OBJECT")
+
+    def skin(bm):
+        bmesh.ops.create_cube(bm, size=1.0, matrix=Matrix.Translation((0, 0, 50)) @ Matrix.Diagonal((30, 30, 100, 1.0)))
+        bmesh.ops.subdivide_edges(bm, edges=bm.edges[:], cuts=7, use_grid_fill=True)
+
+    skinned = mesh_obj("Skin", skin)
+    skinned.parent = rig
+    skinned.vertex_groups.new(name="Lower")
+    skinned.vertex_groups.new(name="Upper")
+    for v in skinned.data.vertices:
+        w = min(1.0, max(0.0, (v.co.z - 35.0) / 30.0))  # smooth blend across the joint
+        skinned.vertex_groups["Lower"].add([v.index], 1.0 - w, "REPLACE")
+        skinned.vertex_groups["Upper"].add([v.index], w, "REPLACE")
+    skinned.modifiers.new("Armature", "ARMATURE").object = rig
+    rig.location = (10, -20, 0)
+    bpy.context.view_layer.update()
+    pb = rig.pose.bones["Upper"]
+    pb.rotation_mode = "QUATERNION"
+    pb.rotation_quaternion = Matrix.Rotation(math.radians(50), 3, "Y").to_quaternion()
+    pb.keyframe_insert("rotation_quaternion", frame=1)
+    bpy.context.scene.frame_set(1)
+    bpy.context.view_layer.update()
+    src = eval_world(skinned)
+    check("H4r5 fixture: the pose bends the skin", src[:, 0].max() - src[:, 0].min() > 40.0, src[:, 0].max() - src[:, 0].min())
+    height = src[:, 2].max() - src[:, 2].min()
+    s = target / height
+    centre = np.array([(src[:, 0].max() + src[:, 0].min()) / 2, (src[:, 1].max() + src[:, 1].min()) / 2, src[:, 2].min()])
+    expected = (src - centre) * s
+    arm_path = os.path.join(d, "rig.glb")
+    bpy.ops.object.select_all(action="DESELECT")
+    rig.select_set(True)
+    skinned.select_set(True)
+    bpy.context.view_layer.objects.active = rig
+    bpy.ops.export_scene.gltf(filepath=arm_path, export_format="GLB", use_selection=True, export_animations=True,
+                              export_skins=True)
+    reset_scene()
+    box("Existing", (1, 1, 1))
+    names, cols = set(bpy.data.objects.keys()), set(bpy.data.collections.keys())
+    all_before = {a: set(getattr(bpy.data, a).keys()) for a in ("meshes", "armatures", "actions", "materials")}
+    got = []
+    msg = raises(lambda: got.append(run("ingest_asset.py", {"path": arm_path, "target_size_m": target})), (ValueError,))
+    if msg is not None:
+        check("H4r5 armature asset refused: the message says why", "armature" in msg.lower() or "skin" in msg.lower(), msg)
+        check("H4r5 armature asset refused: nothing left behind",
+              set(bpy.data.objects.keys()) == names and set(bpy.data.collections.keys()) == cols
+              and all(set(getattr(bpy.data, a).keys()) == v for a, v in all_before.items()),
+              (set(bpy.data.objects.keys()) - names, {a: set(getattr(bpy.data, a).keys()) - v for a, v in all_before.items()}))
+        out["armature"] = "refused: " + msg[:120]
+    else:
+        r = got[0]
+        bpy.context.scene.frame_set(1)
+        bpy.context.view_layer.update()
+        actual = np.concatenate([eval_world(bpy.data.objects[n]) for n in r["meshes"]])
+        hd = hausdorff(expected, actual)
+        z = actual[:, 2]
+        out["armature"] = {"hausdorff_m": round(hd, 6), "height_m": round(float(z.max() - z.min()), 5)}
+        check("H4r5 armature asset normalized: posed evaluated shape matches the normalized source", hd < 0.003 * target,
+              out["armature"])
+        check("H4r5 armature asset normalized: height is the target and the base is on the origin plane",
+              abs((z.max() - z.min()) - target) < 2e-3 * target and abs(z.min()) < 5e-3, out["armature"])
+    measured["ingest_round5"] = out
+
+
+def test_round9_containment(check, out_dir):
+    """A solid that touches the outer wall at its vertices is still inside it: the verdict follows the volume, not
+    the vertices. Controls: a cube strictly inside, external face contact and side-by-side objects keep their results."""
+    audit = lambda **kw: run("clash_audit.py", {"objects": None, **kw})
+    shapes = (("slab spanning wall to wall in x and y", (1, 1, 0.5), (0, 0, 0)),
+              ("rod spanning wall to wall in x", (1, 0.1, 0.1), (0, 0, 0)),
+              ("half box sharing five faces", (1, 1, 0.5), (0, 0, -0.25)),
+              ("slab 1 mm off the walls at 0.499", (0.998, 0.998, 0.2), (0, 0, 0)),
+              ("box 1 mm off every wall", (0.998, 0.998, 0.998), (0, 0, 0)))
+    for label, dims, loc in shapes:
+        reset_scene()
+        box("Outer", (1, 1, 1))
+        box("Inner", dims, loc)
+        r = audit(objects=["Outer", "Inner"])
+        found = bool(r["clashes"]) or any(c["inner"] == "Inner" and c["outer"] == "Outer" for c in r["contained"])
+        check(f"H1r9 {label}: fails as a clash or contained", r["verdict"] == "FAIL" and found,
+              {k: r[k] for k in ("verdict", "clashes", "contained", "touching")})
+    # the strictly inside cube keeps its verdict and its depth
+    reset_scene()
+    box("Outer", (1, 1, 1))
+    box("Inner", (0.5, 0.5, 0.5))
+    r = audit(objects=["Outer", "Inner"])
+    check("H1r9 control: cube strictly inside is contained with depth 0.25",
+          r["verdict"] == "FAIL" and not r["clashes"] and len(r["contained"]) == 1
+          and abs(r["contained"][0]["depth_m"] - 0.25) < 0.01, {k: r[k] for k in ("verdict", "clashes", "contained")})
+    # external face contact and a gap stay passes; so does a layer thinner than min_depth_m lying on the wall
+    for label, loc in (("face contact", (1, 0, 0)), ("side by side with a gap", (1.5, 0, 0))):
+        reset_scene()
+        box("Outer", (1, 1, 1))
+        box("Inner", (1, 1, 1), loc)
+        r = audit(objects=["Outer", "Inner"], require_connected=False)
+        check(f"H1r9 control: {label} passes", r["verdict"] == "PASS" and not r["clashes"] and not r["contained"],
+              {k: r[k] for k in ("verdict", "clashes", "contained")})
+    reset_scene()
+    box("Outer", (1, 1, 1))
+    box("Inner", (1, 1, 0.0005), (0, 0, 0.49975))
+    r = audit(objects=["Outer", "Inner"])
+    check("H1r9 control: a layer thinner than min_depth_m lying on the wall is touching",
+          r["verdict"] == "PASS" and not r["contained"], {k: r[k] for k in ("verdict", "clashes", "contained", "touching")})
+
+
+def _world_state(sc):
+    w = sc.world
+    out = {"worlds": sorted(x.name for x in bpy.data.worlds), "active": w.name if w else None,
+           "frames": (sc.frame_start, sc.frame_end, sc.frame_current), "fps": (sc.render.fps, sc.render.fps_base)}
+    if w and w.node_tree:
+        nt = w.node_tree
+        out["nodes"] = sorted((n.name, n.bl_idname) for n in nt.nodes)
+        out["links"] = sorted((l.from_node.name, l.from_socket.identifier, l.to_node.name, l.to_socket.identifier)
+                              for l in nt.links)
+        out["values"] = sorted((n.name, i.identifier, round(float(i.default_value), 5))
+                               for n in nt.nodes for i in n.inputs if hasattr(i, "default_value")
+                               and isinstance(i.default_value, (int, float)))
+        out["use_nodes"] = w.use_nodes
+    return out
+
+
+def _make_node_world(name, strength, with_env):
+    w = bpy.data.worlds.new(name)
+    w.use_nodes = True
+    nt = w.node_tree
+    bg = next(n for n in nt.nodes if n.bl_idname == "ShaderNodeBackground")
+    bg.inputs["Strength"].default_value = strength
+    if with_env:
+        img = bpy.data.images.new(name + "_env", 8, 4)
+        tc = nt.nodes.new("ShaderNodeTexCoord")
+        mp = nt.nodes.new("ShaderNodeMapping")
+        env = nt.nodes.new("ShaderNodeTexEnvironment")
+        env.image = img
+        nt.links.new(tc.outputs["Generated"], mp.inputs["Vector"])
+        nt.links.new(mp.outputs["Vector"], env.inputs["Vector"])
+        nt.links.new(env.outputs["Color"], bg.inputs["Color"])
+    return w
+
+
+def test_round9_ingest_scene_state(check, out_dir, measured):
+    """Ingesting adds the imported objects only: the scene's world, frame range, fps and current frame stay as they
+    were, for every format and also when the import fails after the importer ran."""
+    d = os.path.join(out_dir, "h9ing")
+    os.makedirs(d, exist_ok=True)
+    out = {}
+    paths, empties = {}, {}
+    for kind, ext in (("glb", ".glb"), ("gltf", ".gltf"), ("fbx", ".fbx"), ("obj", ".obj"), ("usd", ".usd")):
+        # source scene: node world with an environment texture, strength 5, animation on frames 10-20
+        reset_scene()
+        sc = bpy.context.scene
+        sc.world = _make_node_world("SrcWorld", 5.0, True)
+        sc.frame_start, sc.frame_end, sc.render.fps = 10, 20, 24
+        body, head = build_source()
+        for fr, x in ((10, 0.0), (20, 50.0)):
+            body.location.x = x
+            body.keyframe_insert("location", frame=fr)
+        sc.frame_set(10)
+        paths[kind] = os.path.join(d, "anim_" + kind + ext)
+        try:
+            export_src(kind, paths[kind])
+        except Exception:
+            check(f"H9 {kind}: fixture exported", False, tb())
+            paths[kind] = None
+            continue
+        if kind in ("glb", "fbx", "usd"):  # an animated file with no mesh: the import runs, then the script refuses it
+            reset_scene()
+            sc = bpy.context.scene
+            sc.frame_start, sc.frame_end = 10, 20
+            e = bpy.data.objects.new("Anim_Empty", None)
+            sc.collection.objects.link(e)
+            for fr, x in ((10, 0.0), (20, 2.0)):
+                e.location.x = x
+                e.keyframe_insert("location", frame=fr)
+            bpy.ops.object.select_all(action="DESELECT")
+            e.select_set(True)
+            empties[kind] = os.path.join(d, "empty_" + kind + ext)
+            try:
+                if kind == "glb":
+                    bpy.ops.export_scene.gltf(filepath=empties[kind], export_format="GLB", use_selection=True)
+                elif kind == "fbx":
+                    bpy.ops.export_scene.fbx(filepath=empties[kind], use_selection=True)
+                else:
+                    bpy.ops.wm.usd_export(filepath=empties[kind], selected_objects_only=True)
+            except Exception:
+                empties.pop(kind, None)
+
+    def target_scene(with_world):
+        reset_scene()
+        sc = bpy.context.scene
+        sc.frame_start, sc.frame_end, sc.frame_current = 1, 250, 7
+        sc.render.fps, sc.render.fps_base = 30, 1.0
+        if with_world:
+            sc.world = _make_node_world("UserWorld", 1.0, False)
+        box("Existing", (1, 1, 1), (3, 3, 0.5))
+        bpy.context.view_layer.update()
+        return sc
+
+    for kind, path in paths.items():
+        if not path:
+            continue
+        for with_world in (True, False):
+            tag = f"H9 {kind} ({'with' if with_world else 'without'} a world)"
+            sc = target_scene(with_world)
+            before = _world_state(sc)
+            try:
+                run("ingest_asset.py", {"path": path})
+            except Exception:
+                check(f"{tag}: ingest ran", False, tb())
+                continue
+            after = _world_state(sc)
+            check(f"{tag}: world, frame range, fps and current frame unchanged", after == before,
+                  {"before": before, "after": after})
+            out[f"{kind}_{'world' if with_world else 'noworld'}"] = {"frames": after["frames"], "ok": after == before}
+        # failure after the importer ran: also unchanged
+        if kind in empties:
+            sc = target_scene(True)
+            before = _world_state(sc)
+            msg = raises(lambda: run("ingest_asset.py", {"path": empties[kind]}))
+            after = _world_state(sc)
+            check(f"H9 {kind} failed import (no mesh): refused", msg is not None, msg)
+            check(f"H9 {kind} failed import: world, frame range, fps and current frame unchanged", after == before,
+                  {"before": before, "after": after})
+    # a failed glTF (buffer missing) leaves the scene alone too
+    import shutil
+    if paths.get("gltf"):
+        lone = os.path.join(d, "lone9")
+        os.makedirs(lone, exist_ok=True)
+        shutil.copy(paths["gltf"], os.path.join(lone, "anim_gltf.gltf"))
+        sc = target_scene(True)
+        before = _world_state(sc)
+        msg = raises(lambda: run("ingest_asset.py", {"path": os.path.join(lone, "anim_gltf.gltf")}), (ValueError, RuntimeError))
+        after = _world_state(sc)
+        check("H9 gltf without its .bin: refused, scene state unchanged", msg is not None and after == before,
+              {"msg": msg, "before": before, "after": after})
+    measured["ingest_scene_state"] = out
+
+
+def run_all(out_dir):
+    results, measured = [], {}
+
+    def check(name, ok, detail=""):
+        results.append({"name": name, "ok": bool(ok), "detail": str(detail)[:400]})
+
+    os.makedirs(out_dir, exist_ok=True)
+    for label, fn, wants_measured in (("clash_audit", test_clash, False), ("silhouette_score", test_silhouette, True),
+                                      ("fit_search", test_fit, True), ("fit_search integer", test_fit_integer, True), ("fit_search converged", test_fit_budget_converged, True), ("ingest_asset", test_ingest, True),
+                                      ("round5 clash_audit", test_round5_clash, False),
+                                      ("round5 silhouette_score", test_round5_silhouette, True),
+                                      ("round5 ingest_asset", test_round5_ingest, True),
+                                      ("round9 clash_audit", test_round9_containment, False),
+                                      ("round9 ingest_asset", test_round9_ingest_scene_state, True)):
+        try:
+            fn(check, out_dir, measured) if wants_measured else fn(check, out_dir)
+        except Exception:
+            check(f"{label} section crashed", False, tb())
+    return results, measured
+
+
+def main(out_dir="/tmp/parity_tests"):
+    results, measured = [], {}
+    try:
+        results, measured = run_all(out_dir)
+    except Exception:
+        results = [{"name": "harness", "ok": False, "detail": tb()}]
+    failures = [r for r in results if not r["ok"]]
+    report = {"passed": len(results) - len(failures), "total": len(results), "failed": len(failures), "failures": failures,
+              "measured": measured, "results": results}
+    os.makedirs(out_dir, exist_ok=True)
+    with open(os.path.join(out_dir, "parity_tests_report.json"), "w", encoding="utf-8") as fh:
+        json.dump(report, fh, indent=2)
+    return report
+
+
+ARGS = globals().get("ARGS") or _cli_args()
+result = main(**ARGS)
+if bpy.app.background and __name__ == "__main__":
+    print(json.dumps({k: result[k] for k in ("passed", "total", "failures")}, indent=2))
+    sys.exit(0 if not result["failures"] else 1)

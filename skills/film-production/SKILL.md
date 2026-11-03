@@ -50,6 +50,18 @@ r = runpy.run_path("<skill_dir>/scripts/preview_frames.py", init_globals={"ARGS"
 
 Defaults: 480x270, EEVEE, 8 samples, first/middle/last frame. `r["contact_sheet"]["tiles"]` maps each tile to its shot and frame, row by row from the top-left. All render settings are restored afterwards.
 
+Check a rendered sequence for flicker (read-only; run it on the frames of one shot, in playing order):
+
+```python
+import runpy
+r = runpy.run_path("<skill_dir>/scripts/flicker_check.py", init_globals={"ARGS": {
+    "dir": "<project>/renders/S010", "max_motion_px": 8}})["result"]
+```
+
+Use it after a render that shows pops, shimmer or lighting jumps, and before you accept a shot. It matches each block against the previous and next frame within `max_motion_px`, so a pan is not mistaken for flicker. `r["verdict"]` is `flicker` (see `events`: frame, `local` or `global_exposure`, region box), `pass`, or `inconclusive`. Blocks it cannot follow (motion beyond the window, occlusion, periodic or gradient content whose rivals differ in brightness) are `not_measured` with counts by reason, never a pass: on `inconclusive`, raise `max_motion_px` or judge the shot by eye. Periodic patterns: the motion it finds may be off by a period, so trust the brightness result only when `not_measured.ambiguous` is 0 for that area.
+
+A hard cut, or frames it cannot measure, gives `inconclusive` and lists them in `unmeasured_frames`. A tile, band or whole frame that goes flat black or white for one frame while the frames either side have content there is reported as an event with its frame and region (`dropout_cells`), whatever share of the frame it covers; other content showing for one frame is not. Limits: a black frame in a very dark scene (neighbours with a mean near 0.01) passes unless you lower `dropout_gap`; a dropout under 16 px is not looked for; a flat black or white object that moves more than its own width per frame looks the same as one; a dropout beside another bad frame is left to `unmeasured_frames`. Look at the frames of any `inconclusive` shot.
+
 Build the edit and, when ready, render it:
 
 ```python

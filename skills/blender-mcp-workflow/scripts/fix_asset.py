@@ -79,7 +79,7 @@ def _apply(obj, apply):
             skipped.append({"name": c.name, "reason": "singular"})
         else:
             measured.append((c, c.matrix_world.copy()))
-    obj.data.transform(bake)
+    obj.data.transform(bake, shape_keys=True)  # shape keys live in the same frame as the base mesh: bake them together
     obj.matrix_basis = keep
     for c in object_kids:
         c.matrix_parent_inverse = new_world.inverted_safe() @ old_world @ c.matrix_parent_inverse

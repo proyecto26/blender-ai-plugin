@@ -48,6 +48,15 @@ Use `get_screenshot_of_area_as_image("VIEW_3D")` via MCP when connected.
 - `blender-mcp-workflow` skill → `references/naming-conventions.md`
 - `blender-mcp-workflow` skill → `references/polycount-budgets.md`
 
+## Scripted Checks
+
+For a multi-object asset or scene, run the `blender-mcp-workflow` skill's `clash_audit.py` script next to the checklists.
+It reports penetrating pairs with an estimated depth, objects hidden inside others, and floating parts, on the evaluated
+meshes (modifiers count; touching faces do not clash). Any clash, contained object or floating part is a defect: a clash
+or containment is a Major (Blocker when it breaks a mechanism or an export), a floating part is a Major unless the brief
+says it floats. A `not_measured` entry (an open mesh has no inside) is never a pass: close the mesh or say what was not
+checked. When a run folder exists, pass `evidence_path` inside it so the verdict is backed by the script's own result file.
+
 ## Defect Severity
 
 | Level | Meaning |

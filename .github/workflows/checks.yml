@@ -1,0 +1,35 @@
+name: checks
+
+# The two repo gates from AGENTS.md. The Blender suites need a Blender install and stay local.
+# check-manifests.sh refuses to skip a validator when CI is set, so both validators are installed here.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  repo-gates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Actions are pinned by full commit SHA (tag in the comment).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+      - name: Install the validators at pinned versions
+        run: |
+          python3 -m pip install jsonschema==4.26.0
+          npm install --global @anthropic-ai/claude-code@2.1.316
+      - name: Skills, links and script safety
+        run: python3 scripts/validate_skills.py
+      - name: Manifests, claude plugin validate and the Agent Plugins schema
+        run: bash scripts/check-manifests.sh
+      - name: Score-run tests (no Blender needed)
+        run: python3 tests/agent_runs/test_score_run.py

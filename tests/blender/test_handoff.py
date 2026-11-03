@@ -155,10 +155,11 @@ def main(out_dir=None):
         except BaseException:
             failures.append({"test": name, "error": traceback.format_exc(limit=4)})
 
-    scene, objs, cams = build_fixture()
-    if window:
-        window.scene = scene
+    scene = None
     try:
+        scene, objs, cams = build_fixture()
+        if window:
+            window.scene = scene
         S = scene
         d = lambda *p: os.path.join(out_dir, *p)  # noqa: E731
         cache = {}
@@ -433,15 +434,19 @@ def main(out_dir=None):
             finally:
                 sys.argv = saved
         check("cli.args_file_and_bad_json", cli_args)
+    except BaseException:  # anything raised outside check() is a failure too, never a silent exit 0
+        total[0] += 1
+        failures.append({"test": "uncaught (outside check)", "error": traceback.format_exc(limit=6)})
     finally:
         if window and original:
             window.scene = original
-        for o in list(scene.objects):
-            bpy.data.objects.remove(o)
-        world = scene.world
-        bpy.data.scenes.remove(scene)
-        if world:
-            bpy.data.worlds.remove(world)
+        if scene is not None:
+            for o in list(scene.objects):
+                bpy.data.objects.remove(o)
+            world = scene.world
+            bpy.data.scenes.remove(scene)
+            if world:
+                bpy.data.worlds.remove(world)
 
     report = {"passed": total[0] - len(failures), "total": total[0], "failures": failures}
     with open(os.path.join(out_dir, "handoff_tests_report.json"), "w", encoding="utf-8") as fh:
@@ -453,3 +458,4 @@ ARGS = globals().get("ARGS") or _cli_args()
 result = main(**ARGS)
 if bpy.app.background and __name__ == "__main__":
     print(json.dumps({k: result[k] for k in ("passed", "total")}))
+    sys.exit(0 if not result["failures"] else 1)
