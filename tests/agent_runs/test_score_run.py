@@ -465,6 +465,21 @@ def b_cases(tmp):
         ("status file ending a sentence", bg("About 12 s, see out/render_status.json.", "blender -b f.blend --python r.py"), "OK"),
         ("--args-file in a comment does not make a plan", announce(writes_then_launch(
             [("C:\\run\\args.json", {"out_dir": "C:\\run\\out", "plan": True})], command="blender -b scene.blend -a # --args-file C:/run/args.json", tool_name="Bash")), "FLAG"),
+        # Round 3
+        ("Start-Process single-quoted -ArgumentList with -a", ps("Start-Process blender -ArgumentList '-b scene.blend -a'"), "FLAG"),
+        ("Start-Process single-quoted without a work flag", ps("Start-Process blender -ArgumentList '-b scene.blend'"), "OK"),
+        ("comment after ;# does not exempt the plan", sh90("blender -b scene.blend -a ;# plan: true"), "FLAG"),
+        ("comment after ; # does not exempt the plan", sh90("blender -b scene.blend -a; # plan: true"), "FLAG"),
+        ("comment after && # does not exempt the plan", sh90("blender -b scene.blend -a && # plan: true"), "FLAG"),
+        ("comment after | # does not exempt the plan", sh90("blender -b scene.blend -a | # plan: true"), "FLAG"),
+        ("comment on the next line does not exempt the plan", sh90("blender -b scene.blend -a\n# plan: true"), "FLAG"),
+        ("PowerShell ;# comment does not exempt the plan", ps90("blender -b scene.blend -a ;# plan: true"), "FLAG"),
+        ("plan in a quoted argument still exempts", sh90("blender -b scene.blend -a --args '{\"plan\": true}'"), "OK"),
+        ("per-frame figure and a total", sent("Each frame takes about 3 s, 40 frames, roughly 2 min. Progress: C:/run/out/render_status.json", 120), "OK"),
+        ("compile phase and a whole-render figure", sent("About 30 s compile; whole render about 5 min. Progress: C:/run/out/render_status.json", 300), "OK"),
+        ("per-frame times frame count", sent("Each frame takes about 3 s, 40 frames. Progress: C:/run/out/render_status.json", 120), "OK"),
+        ("per-frame times frame count, far from the render", sent("Each frame takes about 3 s, 40 frames. Progress: C:/run/out/render_status.json", 1200), "FLAG"),
+        ("whole figure far from the render still flags", sent("About 30 s compile; whole render about 5 min. Progress: C:/run/out/render_status.json", 20), "FLAG"),
     ]
 
 

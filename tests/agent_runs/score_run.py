@@ -56,7 +56,7 @@ SHORT_CLUSTER = r"-([bafP]+)\d*"
 DRIVE_PATH = r"(?:(?<![\w/.:\-])|(?<=file:///))[A-Za-z]:[\\/]"
 # The status file with a directory in front of it (`out/render_status.json`), not a slash elsewhere in the message.
 STATUS_PATH = r"[^\s\"'<>|*?]*[\\/]render_status\.json(?![\w\-]|\.\w)"
-TOKEN = r"\"([^\"]*)\"|'([^']*)'|([^\s,\"']+)"
+TOKEN = r"\"([^\"]*)\"|'([^']*)'|([;|]+|[^\s,\"';|]+)"
 PIPE_END = {"&&", "||", ";", "|"}
 PLAN_ON = r"[\"']?plan[\"']?\s*[:=]\s*[\"']?(?:true|\$true)\b"
 DURATION = (r"(\d+(?:[.,]\d+)?)\s*(segundos?|seconds?|secs?|minutos?|minutes?|mins?|horas?|hours?|hrs?|s|h)\b")
@@ -286,6 +286,11 @@ def seconds_in(text):
 
 TOTAL_WORD = r"\b(?:total\w*|en total|overall|in all|altogether|en conjunto)\b[^\d]{0,12}$"
 TOTAL_AFTER = r"\s*(?:\(|-)?\s*(?:in\s+)?(?:total|overall|in all|altogether|en total|en conjunto)\b"
+UNITS = r"(?:frame|step|sample|tile|image|fotograma|paso|muestra)s?"
+PER_AFTER = r"\s*(?:\b(?:per|a|each|por|cada)\b|/)\s*" + UNITS + r"\b"
+PER_BEFORE = r"\b(?:each|every|per|cada)\s+" + UNITS + r"\b[^.;\d]*$"
+PHASE_AFTER = r"\s*(?:of\s+)?(?:compil\w*|start-?up|load\w*|set-?up|warm-?up|shader\w*|kernel\w*)"
+WHOLE_BEFORE = r"\b(?:whole|entire|full|overall|in all|altogether|roughly|completo|toda|todo|en conjunto)\b[^\d.;]*$"
 PART_JOIN = r"[\s,+]*(?:\b(?:and|y|e|plus)\b)?[\s,+]*"
 
 
@@ -306,7 +311,20 @@ def claimed_seconds(text):
         return None
     stated = [g for g in groups if re.search(TOTAL_WORD, text[max(0, g[0] - 16):g[0]], re.I)
               or re.match(TOTAL_AFTER, text[g[1]:g[1] + 20], re.I)]
-    return (stated[-1] if stated else groups[0])[2]
+    if stated:
+        return stated[-1][2]
+    # No stated total. A per-frame / per-step figure or a setup phase (`30 s compile`) is not the whole job.
+    per_unit = [g for g in groups if re.match(PER_AFTER, text[g[1]:g[1] + 25], re.I)
+                or re.search(PER_BEFORE, text[max(0, g[0] - 45):g[0]], re.I)]
+    parts = [g for g in groups if re.match(PHASE_AFTER, text[g[1]:g[1] + 20], re.I)]
+    whole = [g for g in groups if g not in per_unit and g not in parts]
+    marked = [g for g in whole if re.search(WHOLE_BEFORE, text[max(0, g[0] - 25):g[0]], re.I)]
+    if marked:
+        return marked[-1][2]
+    frames = re.search(r"(\d+)\s*(?:frames?|fotogramas?)\b", text, re.I)
+    if per_unit and frames:
+        return per_unit[0][2] * int(frames.group(1))
+    return (whole or groups)[0][2]
 
 
 # Commands that print or inspect their words and never run them.
@@ -340,7 +358,7 @@ def blender_segments(command):
         elif current is not None:
             if tok == "--" or (bare and tok in PIPE_END):
                 current = None
-            elif quoted and tok.lstrip().startswith("-") and re.search(r"\s", tok) and prev not in VALUE_FLAGS:
+            elif (quoted or single) and tok.lstrip().startswith("-") and re.search(r"\s", tok) and prev not in VALUE_FLAGS:
                 current.extend(tok.split())  # -ArgumentList "-b scene.blend -a": one string holding several flags
             else:
                 current.append(tok)
@@ -490,7 +508,7 @@ def args_file_text(call, run, ref, base):
 
 
 def strip_comment(command):
-    """The command without shell comments: a `#` that starts a word outside quotes, to the end of its line."""
+    """The command without shell comments: a `#` that starts a word (after space, `;`, `|`, `&`) outside quotes, to the end of its line."""
     out = []
     for line in command.split("\n"):
         quote, i = None, 0
@@ -503,7 +521,7 @@ def strip_comment(command):
                     quote = None
             elif ch in "\"'":
                 quote = ch
-            elif ch == "#" and (i == 0 or line[i - 1].isspace()):
+            elif ch == "#" and (i == 0 or line[i - 1].isspace() or line[i - 1] in ";|&("):
                 line = line[:i]
                 break
             i += 1
