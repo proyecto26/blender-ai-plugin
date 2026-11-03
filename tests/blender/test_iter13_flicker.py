@@ -401,6 +401,35 @@ def run_all(out_dir, check):
               r["verdict"] == "flicker" and [e["frame"] for e in ev] == [4]
               and max(abs(a - b) for a, b in zip(ev[0]["region_px"], [c * scale for c in tile[1]])) <= 16 * scale, summary(r))
 
+    # Round 10 (these fail on b5650fe): the filter above must establish that the dark group MOVED. A one-frame black or white
+    # tile beside a static area of the same value in every frame, within the search window, is a real dropout.
+    def static_seq(label, v, size, offset, kw_tile_x):
+        f0 = noise(360, 640, 3)
+        frames_ = [f0.copy() for _ in range(9)]
+        for f in frames_:
+            f[150:150 + size, 300:300 + size] = v
+        frames_[4][150:150 + size, kw_tile_x:kw_tile_x + size] = v
+        return seq(os.path.join(base, label), frames_)
+
+    for v, name in ((0.0, "black"), (1.0, "white")):
+        r = run({"paths": static_seq(f"static32_{name}", v, 32, 40, 340), "max_motion_px": 48})
+        check(f"a one-frame {name} 32 px tile 8 px from a static {name} 32 px square (max_motion_px 48, in every frame): found at frame 4 "
+              "(missed on b5650fe)", r["verdict"] == "flicker" and [e["frame"] for e in r["events"]] == [4], summary(r))
+        r = run({"paths": static_seq(f"static16_{name}", v, 16, 24, 324), "block": 8})
+        check(f"a one-frame {name} 16 px tile 24 px from a static {name} 16 px square (block 8): found at frame 4 "
+              "(missed on b5650fe)", r["verdict"] == "flicker" and [e["frame"] for e in r["events"]] == [4], summary(r))
+    for label, tile_box in (("touch", (190, 150, 222, 182)), ("apart", (208, 150, 240, 182))):
+        frames_ = []
+        base_tex = noise(360, 640, 3)
+        for t in range(9):
+            f = base_tex.copy()
+            f[150:210, 100 + 15 * t:124 + 15 * t] = 0.004
+            frames_.append(f)
+        frames_[4][tile_box[1]:tile_box[3], tile_box[0]:tile_box[2]] = 0.0
+        r = run({"paths": seq(os.path.join(base, f"adj_{label}"), frames_)})
+        check(f"a one-frame black tile {label} the sliding shape (within 24 px): found at frame 4 (the `touch` one missed on b5650fe)",
+              r["verdict"] == "flicker" and [e["frame"] for e in r["events"]] == [4], summary(r))
+
     check("no images leaked", len([i for i in bpy.data.images if i.name.startswith("tmp_iter13")]) == 0)
 
 

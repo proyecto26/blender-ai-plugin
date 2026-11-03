@@ -419,14 +419,18 @@ def _dropouts(frames, t, cell, R, level, flat_dev, gap, step=1):
 
 
 def _moving_flat(frames, t, drops, cell, R, p, gap):
-    """Drop the dropout groups that are a flat shape which is there in a neighbour too, only shifted. A group is a connected
-    set (8 neighbours) of the cells `_dropouts` found in frame t; its flat value v is read from frame t. For each neighbour u
-    (t-1, t+1) the pixels of u within gap / 2 of v are marked (averaged over p x p, p being the scale used for speed) and the
-    group's footprint is slid over that mask by every shift up to R px (the whole `max_motion_px` window, by an FFT
-    correlation on the cropped area: one pair of FFTs per group and neighbour). A group whose footprint lands at least 85% on
-    such pixels at some shift is the same shape moving (a near-black shadow sliding over a floor, a flat object), not a
-    defect that exists in one frame only, and is dropped. A real dropout has content, not its flat value, at the same place in
-    both neighbours, and a dark area as big as its footprint within the window is rare."""
+    """Drop the dropout groups that are a flat shape which moved. A group is a connected set (8 neighbours) of the cells
+    `_dropouts` found in frame t; its flat value v is read from frame t. For each neighbour u (t-1, t+1) the pixels of u within
+    gap / 2 of v are marked (averaged over p x p, p being the scale used for speed) and the group's footprint is slid over that
+    mask by every shift s up to R px (the whole `max_motion_px` window, by FFT correlation on the cropped area). A shift counts
+    as "the shape came from there" only when (1) at least 85% of the footprint shifted by s is flat at v in u, and (2) the
+    shape has left that place: outside the footprint itself, at most half of the place is flat at t (a static flat area is flat
+    in every frame and fails this, and so does a flat area the tile merely lies beside). The group is dropped as a moving
+    shape when both neighbours hold it that way with shifts that cancel (s to t-1 is minus s to t+1, within max(2 p, half of
+    |s|): constant velocity), or when only one does and the mirrored place in the other neighbour is not wholly inside the
+    frame (the shape entered or left it). Measured miss: a flat shape that is absent for one frame and shows up as a tile
+    at the midpoint of its own positions in t-1 and t+1 (e.g. a 32 x 64 black slab at x=145 and x=175 and a black tile at
+    x=160 in between) is that same moving shape and is not reported."""
     if not drops:
         return drops
     H, W = frames[t].shape
@@ -459,21 +463,47 @@ def _moving_flat(frames, t, drops, cell, R, p, gap):
             g[Rp + (cy - y0) * c_p:Rp + (cy - y0 + 1) * c_p, Rp + (cx - x0) * c_p:Rp + (cx - x0 + 1) * c_p] = 1.0
         n_cells = float(g.sum())
         fg = np.conj(np.fft.rfft2(g))
-        moving = False
-        for u in (t - 1, t + 1):
-            fy0, fx0 = y0 * cell - pad, x0 * cell - pad
-            sy0, sx0 = max(fy0, 0), max(fx0, 0)
-            sy1, sx1 = min(fy0 + hh, H), min(fx0 + ww, W)
-            if sy1 <= sy0 or sx1 <= sx0:
-                continue
+        sh = np.arange(-Rp, Rp + 1)
+        ix = np.ix_(sh % g.shape[0], sh % g.shape[1])
+        fy0, fx0 = y0 * cell - pad, x0 * cell - pad
+        sy0, sx0 = max(fy0, 0), max(fx0, 0)
+        sy1, sx1 = min(fy0 + hh, H), min(fx0 + ww, W)
+        if sy1 <= sy0 or sx1 <= sx0:
+            keep += [cells[c] for c in comp]
+            continue
+
+        def dark_corr(u):
             M = np.zeros((hh, ww), dtype=np.float32)
             M[sy0 - fy0:sy1 - fy0, sx0 - fx0:sx1 - fx0] = np.abs(frames[u][sy0:sy1, sx0:sx1] - v) <= 0.5 * gap
             D = M.reshape(hh // p, p, ww // p, p).mean(axis=(1, 3))
-            corr = np.fft.irfft2(fg * np.fft.rfft2(D), s=g.shape)
-            sh = np.arange(-Rp, Rp + 1)
-            if corr[np.ix_(sh % g.shape[0], sh % g.shape[1])].max() >= 0.85 * n_cells:
-                moving = True
-                break
+            return np.fft.irfft2(fg * np.fft.rfft2(D), s=g.shape)[ix]
+
+        own = np.fft.irfft2(fg * np.fft.rfft2(g), s=g.shape)[ix]  # footprint cells that overlap the footprint shifted by s
+        at_t = dark_corr(t)
+        rel = np.maximum(n_cells - own, 1e-6)
+        # a place the footprint's flat value fills in u at shift s counts as "the shape came from there" only when the shape
+        # has left it: outside the footprint, that place is mostly not flat at t (a static flat area is flat in every frame)
+        left = (at_t - own) <= 0.5 * rel
+        left[own >= n_cells - 1e-6] = False  # shift 0: the footprint itself
+        found = {}
+        for u in (t - 1, t + 1):
+            hit = (dark_corr(u) >= 0.85 * n_cells) & left
+            if hit.any():
+                found[u] = np.argwhere(hit) - Rp  # (dy, dx) in p-px units
+        moving = False
+        if len(found) == 2:
+            # constant velocity: the shift to t-1 is minus the shift to t+1
+            for a_ in found[t - 1]:
+                tol = max(2.0, 0.5 * float(np.hypot(*a_)))
+                if (np.hypot(*(found[t + 1] + a_).T) <= tol).any():
+                    moving = True
+                    break
+        elif found:
+            # only one neighbour holds it: that is a moving shape only when it entered or left the frame, i.e. where the
+            # other neighbour would hold it (the mirrored shift) is not wholly inside the frame
+            (u1, sh1), = found.items()
+            moving = any(not (0 <= y0 * cell - dy * p and y1 * cell - dy * p <= H and 0 <= x0 * cell - dx * p
+                              and x1 * cell - dx * p <= W) for dy, dx in sh1)
         if not moving:
             keep += [cells[c] for c in comp]
     return keep
