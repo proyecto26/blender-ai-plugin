@@ -58,25 +58,30 @@ class Recorder:
             self.results.append({"name": f"{name}: crashed", "ok": False, "detail": traceback.format_exc()[-700:]})
 
 
-def eval_chain(sock, rgb):
-    """Value of a socket: follow the links back from `sock` to a texture node whose pixels are `rgb`."""
+def eval_chain(sock, rgb, want_image=None):
+    """Value of a socket: follow the links back from `sock` to a texture node whose pixels are `rgb`. With `want_image`
+    (a file name fragment) the texture node must show that image and be read through its Color socket."""
     link = sock.links[0]
     node, out = link.from_node, link.from_socket
     if node.bl_idname == "ShaderNodeTexImage":
+        if want_image is not None:
+            name = os.path.basename(node.image.filepath or node.image.name).lower() if node.image else ""
+            assert want_image.lower() in name, f"terminal image is {name!r}, expected the normal map {want_image!r}"
+            assert out.name == "Color", f"image read through the {out.name!r} socket, expected Color"
         return rgb
     if node.bl_idname == "ShaderNodeSeparateColor":
-        return eval_chain(node.inputs["Color"], rgb)[("Red", "Green", "Blue").index(out.name)]
+        return eval_chain(node.inputs["Color"], rgb, want_image)[("Red", "Green", "Blue").index(out.name)]
     if node.bl_idname == "ShaderNodeCombineColor":
-        return tuple(eval_chain(node.inputs[c], rgb) for c in ("Red", "Green", "Blue"))
+        return tuple(eval_chain(node.inputs[c], rgb, want_image) for c in ("Red", "Green", "Blue"))
     if node.bl_idname == "ShaderNodeMath" and node.operation == "SUBTRACT":
-        a, b = (i.default_value if not i.links else eval_chain(i, rgb) for i in node.inputs[:2])
+        a, b = (i.default_value if not i.links else eval_chain(i, rgb, want_image) for i in node.inputs[:2])
         return a - b
     raise AssertionError(node.bl_idname)
 
 
 def normal_color_in(nt, rgb):
     nm = next(n for n in nt.nodes if n.bl_idname == "ShaderNodeNormalMap")
-    return tuple(round(c, 4) for c in eval_chain(nm.inputs["Color"], rgb))
+    return tuple(round(c, 4) for c in eval_chain(nm.inputs["Color"], rgb, "normal"))
 
 
 def save_map(path, value, size=8):
@@ -106,7 +111,28 @@ def mesh_obj(scene, name, mesh=None):
 
 # ---------------------------------------------------------------- D1
 
+def check_eval_chain_strict(rec):
+    """The evaluator must reject a flip fed from Base Color, or read through the Alpha socket."""
+    mat = bpy.data.materials.new("I13_EVAL_SELF")
+    mat.use_nodes = True
+    nt = mat.node_tree
+    for img_name, sock, ok in (("Crate_BaseColor.png", "Color", False), ("Crate_Normal.png", "Alpha", False),
+                               ("Crate_Normal.png", "Color", True)):
+        tex = nt.nodes.new("ShaderNodeTexImage")
+        tex.image = bpy.data.images.new(img_name, 2, 2)
+        nm = nt.nodes.new("ShaderNodeNormalMap")
+        nt.links.new(tex.outputs[sock], nm.inputs["Color"])
+        try:
+            eval_chain(nm.inputs["Color"], (0.1, 0.2, 0.3), "normal")
+            passed = True
+        except AssertionError:
+            passed = False
+        rec.check(f"D1 evaluator self-check: {img_name} via {sock}", passed == ok)
+    bpy.data.materials.remove(mat)
+
+
 def test_d1(rec, scene, out_dir):
+    check_eval_chain_strict(rec)
     dx = os.path.join(out_dir, "d1_dx")
     gl = os.path.join(out_dir, "d1_plain")
     os.makedirs(dx, exist_ok=True)
@@ -172,11 +198,21 @@ def test_d2(rec, scene, out_dir):
     msg = raises(lambda: run("procedural-modeling", "terrain_heightfield.py", {**base, "name": "I13_T_disp"}))
     rec.check("D2 Displace modifier refused", msg is not None and "DISPLACE" in msg and len(disp.data.vertices) == 0, msg)
 
-    for mtype in ("SUBSURF", "MULTIRES"):
+    for mtype in ("SUBSURF", "MULTIRES", "BEVEL", "DECIMATE", "REMESH", "SOLIDIFY"):
         sm = mesh_obj(scene, f"I13_T_{mtype}")
         sm.modifiers.new("M", mtype)
         msg = raises(lambda: run("procedural-modeling", "terrain_heightfield.py", {**base, "name": f"I13_T_{mtype}"}))
         rec.check(f"D2 {mtype} modifier refused, mesh untouched", msg is not None and mtype in msg and len(sm.data.vertices) == 0, msg)
+
+    off = mesh_obj(scene, "I13_T_off")
+    m = off.modifiers.new("B", "BEVEL")
+    m.show_viewport = m.show_render = False
+    r = run("procedural-modeling", "terrain_heightfield.py", {**base, "name": "I13_T_off"})
+    rec.check("D2 a disabled Bevel is ignored", r["vertices"] == 25, r)
+    neutral = mesh_obj(scene, "I13_T_neutral")
+    neutral.modifiers.new("W", "WEIGHTED_NORMAL")
+    r = run("procedural-modeling", "terrain_heightfield.py", {**base, "name": "I13_T_neutral"})
+    rec.check("D2 a geometry-neutral modifier is allowed", r["vertices"] == 25, r)
 
     rb = mesh_obj(scene, "I13_T_rb")
     rb.data.from_pydata([(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)], [], [(0, 1, 2, 3)])
