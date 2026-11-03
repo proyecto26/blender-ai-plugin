@@ -21,7 +21,11 @@ Iteration 13: the review follow-ups of iteration 12. Plan: `docs/plans/iteration
 - `score_run.py`: reads `Start-Process` (single or double quotes), `& $blender` and `"$BLENDER"` launches and escaped
   inline JSON; a shell comment after any separator grants no plan exemption; the status path must be the real
   `render_status.json`; the claimed duration is the stated total, or per-frame time times the frame count; URLs no longer
-  decide the platform; `echo` lines and quoted `--python-expr` text are not jobs
+  decide the platform; `echo` lines and quoted `--python-expr` text are not jobs. Round 6: `(blender ... &)`,
+  `bash -c '...'`, `blender-4.2` / `blender.exe` and an executable held in a variable are seen; each invocation is
+  judged by its own arguments, so a plan chained with `&&`, `;` or a newline to the real render exempts only itself, and
+  `plan: true` in an `echo`, a `:` or a `--python-expr` exempts nothing; a URL is not a status path; `2m30s` is 150 s, a
+  range is its upper bound, and a per-frame figure uses the job's -s/-e/-f frame count or counts as no duration
 - `scene_snapshot.py`: updates the scene before reading transforms, computes the transform of an object outside every
   view layer (refuses one with constraints, a bone or vertex parent, or a path-animated curve parent), refuses an armature in Edit Mode, gives two saves
   in one second distinct names, and leaves a user collection named `_Restored_dependencies` alone

@@ -122,6 +122,7 @@ def extra_cases():
         checks += announcement_cases(tmp)
         checks += window_cases(tmp)
         checks += b_cases(tmp)
+        checks += round6_cases(tmp)
         checks += flag_cases()
         checks += args_file_cases()
         checks += plan_state_cases()
@@ -483,6 +484,66 @@ def b_cases(tmp):
         ("per-frame times frame count", sent("Each frame takes about 3 s, 40 frames. Progress: C:/run/out/render_status.json", 120), "OK"),
         ("per-frame times frame count, far from the render", sent("Each frame takes about 3 s, 40 frames. Progress: C:/run/out/render_status.json", 1200), "FLAG"),
         ("whole figure far from the render still flags", sent("About 30 s compile; whole render about 5 min. Progress: C:/run/out/render_status.json", 20), "FLAG"),
+    ]
+
+
+def round6_cases(tmp):
+    """Shell shapes a token matcher can still read (the scorer tokenizes; it does not parse the shell), judged per
+    invocation, and the duration claims that were misread."""
+    run = lambda say, cmd, name="Bash", secs=None, took=90: announce(
+        launch_run(say, name, cmd, took=took), {"started": T0, "ended": T0 + secs} if secs else None, tmp)
+    st = " Status: C:/proj/out/render_status.json"
+    script = "C:/s/background_render.py"
+    plan = f"blender -b f.blend --python {script} -- '{{\"plan\": true, \"out_dir\": \"C:/x\"}}'"
+    real = f"blender -b f.blend --python {script} -- '{{\"out_dir\": \"C:/x\"}}'"
+    return [
+        # Unannounced renders hidden behind a subshell, `bash -c`, or a versioned / full-path executable name.
+        ("subshell with a trailing &", run(None, "(blender -b scene.blend -a > log.txt 2>&1 &)"), "FLAG"),
+        ("bash -c payload", run(None, "bash -c 'blender -b scene.blend -a'"), "FLAG"),
+        ("cmd /c payload", run(None, 'cmd /c "blender.exe -b scene.blend -a"'), "FLAG"),
+        ("versioned blender-4.2", run(None, "blender-4.2 -b scene.blend -a"), "FLAG"),
+        ("blender.exe", run(None, "blender.exe -b scene.blend -a"), "FLAG"),
+        ("Blender 5.2/blender.exe", run(None, '"C:/Program Files/Blender Foundation/Blender 5.2/blender.exe" -b scene.blend -a'), "FLAG"),
+        ("bash -c with a probe is not a render", run(None, "bash -c 'blender -b scene.blend --python probe.py'", took=5), "OK"),
+        # Each invocation is judged by its own arguments: a plan chained to the real render exempts only itself.
+        ("plan alone", run(None, plan, took=8), "OK"),
+        ("plan && real render", run(None, f"{plan} && {real}", took=120), "FLAG"),
+        ("plan ; real render", run(None, f"{plan} ; {real}", took=120), "FLAG"),
+        ("plan, newline, real render", run(None, f"{plan}\n{real}", took=120), "FLAG"),
+        ("real render && plan: the plan is exempt, the render is not", run(None, f"{real} && {plan}", took=120), "FLAG"),
+        ("plan with a line continuation is still one command", run(None, f"blender -b f.blend \\\n --python {script} -- '{{\"plan\": true}}'", took=8), "OK"),
+        # plan: true somewhere other than the script's own arguments.
+        ("plan in an echo", run(None, f"echo '{{\"plan\": true}}'; {real}", took=120), "FLAG"),
+        ("plan in a : no-op", run(None, f": '{{\"plan\": true}}'; {real}", took=120), "FLAG"),
+        ("plan in --python-expr", run(None, f"blender -b f.blend --python-expr 'plan: true' --python {script} -- '{{\"out_dir\": \"C:/x\"}}'", took=120), "FLAG"),
+        # A status path that is a URL is not a file the user can open.
+        ("status path as a URL", run("About 2 min. Status: https://example.com/render_status.json", "blender -b scene.blend -a", secs=120), "FLAG"),
+        ("status path as a file URL", run("About 2 min. Status: file:///C:/proj/out/render_status.json", "blender -b scene.blend -a", secs=120), "OK"),
+        # An executable held in a variable.
+        ("PowerShell $exe", run(None, '$exe = "blender"; & $exe -b scene.blend -a', "PowerShell"), "FLAG"),
+        ("sh exe=blender", run(None, "exe=blender; $exe -b scene.blend -a"), "FLAG"),
+        ('sh exe="blender"', run(None, 'exe="blender"; "$exe" -b scene.blend -a'), "FLAG"),
+        ("a variable that is not blender", run(None, 'exe=ffmpeg; $exe -b scene.blend -a'), "OK"),
+        # Duration claims.
+        ("2m30s is 150 s", run("About 2m30s." + st, "blender -b scene.blend -a", secs=150), "OK"),
+        ("range: the upper bound", run("Between 30 s and 2 min." + st, "blender -b scene.blend -a", secs=110), "OK"),
+        ("range with to", run("30 s to 2 min." + st, "blender -b scene.blend -a", secs=110), "OK"),
+        ("range: far above its upper bound", run("Between 30 s and 2 min." + st, "blender -b scene.blend -a", secs=3000), "FLAG"),
+        ("per-frame figure, no frame count anywhere", run("About 2 s per frame." + st, "blender -b scene.blend -a", secs=300), "FLAG"),
+        ("per-frame figure, job -s/-e gives 150 frames", run("About 2 s per frame." + st, "blender -b scene.blend -s 1 -e 150 -a", secs=300), "OK"),
+        ("per-frame figure, job -s/-e gives 10 frames", run("About 2 s per frame." + st, "blender -b scene.blend -s 1 -e 10 -a", secs=300), "FLAG"),
+        ("per-frame figure, a single -f frame", run("About 2 s per frame." + st, "blender -b scene.blend -f 5", secs=2), "OK"),
+        ("claimed_seconds: 2m30s", score_run.claimed_seconds("about 2m30s"), 150),
+        ("claimed_seconds: range upper bound", score_run.claimed_seconds("between 30 s and 2 min"), 120),
+        ("claimed_seconds: 2 min 30 s still sums", score_run.claimed_seconds("2 min 30 s"), 150),
+        ("claimed_seconds: per-frame needs a count", score_run.claimed_seconds("2 s per frame"), None),
+        ("claimed_seconds: per-frame with the job's count", score_run.claimed_seconds("2 s per frame", 150), 300),
+        # Unchanged: ordinary runs.
+        ("Start-Process announced", run("Rendering, about 2 min." + st, "Start-Process -FilePath blender -ArgumentList '-b','C:/p/scene.blend','-a'", "PowerShell", secs=120), "OK"),
+        ("short probe in the foreground", run(None, "blender -b --factory-startup --python probe.py", took=10), "OK"),
+        ("~90s", run("~90s." + st, "blender -b scene.blend -a", secs=95), "OK"),
+        ("1 h 5 min", run("About 1 h 5 min." + st, "blender -b scene.blend -a", secs=3900), "OK"),
+        ("quoted status path with spaces", run('About 2 min. Status: "C:/My Proj/out/render_status.json"', "blender -b scene.blend -a", secs=120), "OK"),
     ]
 
 
