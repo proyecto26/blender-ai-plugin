@@ -31,7 +31,7 @@ Iteration 13: the review follow-ups of iteration 12. Plan: `docs/plans/iteration
 - `ingest_asset.py` refuses while an object is in Edit Mode
 - `import_painter_textures.py`: the normal convention is read from the file name when not given (DirectX flips green; a
   name with no token is OpenGL, with a warning); shared mesh data with only some objects listed is refused
-- `terrain_heightfield.py` `replace` refuses a rigid body and deforming or subdividing modifiers
+- `terrain_heightfield.py` `replace` refuses a rigid body and any enabled (viewport or render) modifier outside a short geometry-neutral allow list (Bevel alone took a 1089-vertex grid to 1601); disabled modifiers are ignored
 - `surface_tools.py`: a two-point seam reports G1 with G2 not measured
 - `ps1_look.py` copies a compositor group shared with another scene before changing it
 - Docs: mocap tolerance per interpolation (Bezier 0.0158 m), scatter cap stated as soft, shape keys per mesh operation,
