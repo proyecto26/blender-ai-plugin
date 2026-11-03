@@ -32,6 +32,7 @@ import re
 import sys
 
 import bpy
+import numpy as np
 
 SUFFIX_RE = re.compile(r"\.\d{3,}$")
 
@@ -85,17 +86,21 @@ def _describe(obj, depsgraph, imported=False):
     """`imported`: the object came from the USD import, which may add its own .001 to a name that already existed.
     Names of the originals are kept whole (Material.001 is a real name; USD writes it as Material_001)."""
     verts = faces = None
-    slots = obj.material_slots
+    names = [s.material.name for s in obj.material_slots if s.material]
     if obj.type == "MESH":
         ev = obj.evaluated_get(depsgraph)
-        slots = ev.material_slots  # the exporter writes the evaluated materials (e.g. Geometry Nodes Set Material)
         me = ev.to_mesh()
         try:
             verts, faces = len(me.vertices), len(me.polygons)
+            # the materials the evaluated faces use: a Set Material node replaces a slot's material, and a slot that
+            # no face uses is not written by the exporter, so the slot list alone gives false differences
+            idx = np.empty(len(me.polygons), dtype=np.int32)
+            me.polygons.foreach_get("material_index", idx)
+            mats = list(me.materials)
+            names = [mats[i].name for i in sorted(set(idx.tolist())) if 0 <= i < len(mats) and mats[i]]
         finally:
             ev.to_mesh_clear()
-    mats = sorted({_clean_key(SUFFIX_RE.sub("", s.material.name) if imported else s.material.name)
-                   for s in slots if s.material})
+    mats = sorted({_clean_key(SUFFIX_RE.sub("", n) if imported else n) for n in names})
     return {"type": obj.type, "verts": verts, "faces": faces, "materials": mats,
             "matrix": [list(row) for row in obj.matrix_world]}
 
@@ -128,19 +133,22 @@ def main(out_path, objects=None, tol=1e-4, keep=False, subdivision="TESSELLATE")
         before = {(o.type, _clean_key(o.name)): _describe(o, dg) for o in targets}
 
     snap = {coll: {i.name for i in getattr(bpy.data, coll)}
-            for coll in ("objects", "meshes", "materials", "images", "collections", "cameras", "lights", "node_groups", "worlds")}
+            for coll in ("objects", "meshes", "materials", "images", "collections", "cameras", "lights", "node_groups", "worlds",
+                 "armatures", "actions")}
     scene = bpy.context.scene
     world, rd = scene.world, scene.render
     timing = (scene.frame_start, scene.frame_end, scene.frame_step, scene.frame_current, rd.fps, rd.fps_base)
     view_layer = bpy.context.view_layer
     prev_sel = list(bpy.context.selected_objects)
     prev_active = view_layer.objects.active
-    for o in prev_sel:
-        o.select_set(False)
-    for o in targets:
-        o.select_set(True)
-    view_layer.objects.active = targets[0]
     try:
+        # inside the try: an object that cannot be selected (its collection is excluded) refuses the run, and the
+        # selection and active object the user had are put back below
+        for o in prev_sel:
+            o.select_set(False)
+        for o in targets:
+            o.select_set(True)
+        view_layer.objects.active = targets[0]
         with bpy.context.temp_override(active_object=targets[0], selected_objects=targets,
                                        selected_editable_objects=targets):
             bpy.ops.wm.usd_export(filepath=out_path, selected_objects_only=True, export_materials=True,
@@ -155,7 +163,10 @@ def main(out_path, objects=None, tol=1e-4, keep=False, subdivision="TESSELLATE")
         if scene.world is not world:
             scene.world = world
         for o in targets:
-            o.select_set(False)
+            try:
+                o.select_set(False)
+            except RuntimeError:
+                pass  # not in this view layer: it was never selected
         for o in prev_sel:
             if o.name in bpy.data.objects:
                 o.select_set(True)
@@ -205,7 +216,7 @@ def main(out_path, objects=None, tol=1e-4, keep=False, subdivision="TESSELLATE")
         for o in new["objects"]:
             bpy.data.objects.remove(o, do_unlink=True)
             removed += 1
-        for coll in ("meshes", "materials", "images", "cameras", "lights", "node_groups", "collections", "worlds"):
+        for coll in ("meshes", "armatures", "actions", "materials", "images", "cameras", "lights", "node_groups", "collections", "worlds"):
             for item in new[coll]:
                 try:
                     getattr(bpy.data, coll).remove(item)
