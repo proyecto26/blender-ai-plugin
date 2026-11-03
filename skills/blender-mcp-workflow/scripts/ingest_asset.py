@@ -22,6 +22,9 @@ libraries are never touched. The scene itself is left as it was: the USD importe
 range or build a world material, and whatever an importer still changes (the FBX importer sets the scene fps from the
 file) is put back, also after a failure, and listed in `notes` (`scene_timing_restored`, `scene_world_restored`).
 
+An object in Edit Mode (any object in the file) makes the run refuse before it imports anything: it never switches
+the mode itself.
+
 ARGS:
     path            (str, required) local file
     collection      (str|None) new collection name; default "Ingest_<file name>" (Blender adds a suffix if taken)
@@ -211,6 +214,13 @@ def main(path=None, collection=None, target_size_m=None, size_axis="z", up_axis_
         raise ValueError("target_size_m must be > 0")
     validate_path = _sibling(scripts_dir, "validate_asset.py")
     fix_path = _sibling(scripts_dir, "fix_asset.py")
+
+    # an importer can leave Edit Mode on its own (flushing or dropping uncommitted edits): refuse instead of switching
+    editing = sorted(o.name for o in bpy.data.objects
+                     if o.mode == "EDIT" or (o.type != "EMPTY" and getattr(o.data, "is_editmode", False)))
+    if editing:
+        raise ValueError(f"{editing} are in Edit Mode: importing could drop or flush their uncommitted edits. "
+                         "Leave Edit Mode (Tab) and run again; nothing was imported")
 
     scene = bpy.context.scene
     view_layer = bpy.context.view_layer

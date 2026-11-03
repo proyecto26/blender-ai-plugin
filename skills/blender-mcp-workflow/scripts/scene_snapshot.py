@@ -20,8 +20,10 @@ ARGS:
 save:    writes <dir>/<name>.blend (the scene's objects and the data they use, via bpy.data.libraries.write, a
          data-level write that does not go through File > Save) and <dir>/<name>.json (manifest: per object
          type, parent, collections, world matrix, mesh hash); relative external paths ('//textures/a.png') are re-based so
-         they still resolve to the same files from the snapshot folder. Refuses an existing name, and refuses while a mesh is in Edit Mode (the file would hold its
-         stale pre-edit mesh). Nothing in the open
+         they still resolve to the same files from the snapshot folder. Refuses an existing name, and refuses while any object (a mesh, or an armature whose edit bones differ from the saved bones) is in
+         Edit Mode (the file would hold its stale pre-edit data). A default name is made unique within the same second
+         (`_2`, `_3`...) and `list`/"latest" keep save order through a counter in the manifest. The depsgraph is updated
+         before transforms are read. Nothing in the open
          session changes: file path, dirty flag, objects and selection are the same afterwards.
 list:    snapshots in <dir>, oldest first (name, created, object count, size). Read-only.
 diff:    added / removed / changed objects between two manifests: changed lists the largest transform delta,
@@ -46,6 +48,7 @@ import numpy as np
 
 RESTORED = "_Restored"
 RESTORED_DEPS = "_Restored_dependencies"
+DEPS_MARK = "restored_dependencies_by_scene_snapshot"
 NAME_RE = re.compile(r"^[A-Za-z0-9_.\-]+$")
 
 
@@ -126,6 +129,8 @@ def _mesh_hash(obj):
 
 def _manifest(name):
     scene = bpy.context.scene
+    for vl in scene.view_layers:  # matrix_world is stale after a property change until the depsgraph has run
+        vl.update()
     objs = {}
     for o in scene.objects:
         entry = {"type": o.type, "parent": o.parent.name if o.parent else None,
@@ -167,16 +172,20 @@ def _list(d):
                 blend = os.path.join(d, m["name"] + ".blend")
                 if m.get("version") == 1 and os.path.exists(blend):
                     rows.append({"name": m["name"], "created": m["created"], "objects": len(m["objects"]),
-                                 "bytes": os.path.getsize(blend), "path": blend})
+                                 "bytes": os.path.getsize(blend), "path": blend, "seq": int(m.get("seq", 0))})
             except (OSError, ValueError, KeyError):
                 continue
-    rows.sort(key=lambda r: (r["created"], r["name"]))
+    rows.sort(key=lambda r: (r["created"], r["seq"], r["name"]))
     return rows
 
 
 def _save(d, name):
     if name is None:
-        name = "snap_" + time.strftime("%Y%m%d_%H%M%S")
+        base = "snap_" + time.strftime("%Y%m%d_%H%M%S")
+        name, n = base, 1
+        while os.path.exists(os.path.join(d, name + ".blend")) or os.path.exists(_manifest_path(d, name)):
+            n += 1  # a second default-named save in the same second
+            name = f"{base}_{n}"
     _check_name(name)
     blend, js = os.path.join(d, name + ".blend"), _manifest_path(d, name)
     if os.path.exists(blend) or os.path.exists(js):
@@ -184,11 +193,15 @@ def _save(d, name):
     objs = list(bpy.context.scene.objects)
     if not objs:
         raise ValueError("the scene has no objects to snapshot")
-    editing = sorted(o.name for o in objs if o.type == "MESH" and o.data.is_editmode)
-    if editing:  # the .blend would hold the stale pre-edit mesh while the manifest hashes the edit mesh
-        raise ValueError(f"cannot save a snapshot while {editing} are in Edit Mode: their edits are not in the saved mesh. "
+    # the .blend would hold the stale pre-edit data (mesh, or armature edit bones, which differ from the object's and
+    # pose bones) while the manifest describes the live state. Refused, never silently read from the evaluated state.
+    editing = sorted(o.name for o in objs if o.mode == "EDIT" or (o.type != "EMPTY" and getattr(o.data, "is_editmode", False)))
+    if editing:
+        raise ValueError(f"cannot save a snapshot while {editing} are in Edit Mode: their edits are not in the saved data. "
                          "Leave Edit Mode (Tab) and save again")
     manifest = _manifest(name)
+    # saves in the same second tie on `created`; the counter keeps their order (older snapshots count as 0)
+    manifest["seq"] = max([r["seq"] for r in _list(d)] + [0]) + 1
     os.makedirs(d, exist_ok=True)
     # RELATIVE re-bases '//' paths onto the snapshot folder; the default NONE leaves them pointing under it
     bpy.data.libraries.write(blend, set(objs), compress=True, path_remap='RELATIVE')
@@ -262,10 +275,12 @@ def _restore(d, name, objects):
             # collection that is excluded from the view layer (so it shows nothing). Instance sources already live in
             # their own collection and keep it.
             if deps_coll is None:
-                deps_coll = bpy.data.collections.get(RESTORED_DEPS)
+                # only a collection this script made (marked) is reused and hidden: a user collection that happens
+                # to carry the name is left alone, and the new one gets Blender's ".001" name
+                deps_coll = next((c for c in coll.children if c.get(DEPS_MARK)), None)
                 if deps_coll is None:
                     deps_coll = bpy.data.collections.new(RESTORED_DEPS)
-                if deps_coll.name not in coll.children:
+                    deps_coll[DEPS_MARK] = True
                     coll.children.link(deps_coll)
             deps_coll.objects.link(o)
     if deps_coll is not None:

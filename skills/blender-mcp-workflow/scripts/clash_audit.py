@@ -96,12 +96,13 @@ class Rec:
             ne, nl = len(me.edges), len(me.loops)
             le = np.empty(nl, dtype=np.int32)
             me.loops.foreach_get("edge_index", le)
-            used = np.bincount(le, minlength=ne)
-            used = used[used > 0]
+            count = np.bincount(le, minlength=ne)
+            used = count[count > 0]
             self.closed = bool(nt > 0 and np.all(used == 2))
             ed = np.empty(ne * 2, dtype=np.int32)
             me.edges.foreach_get("vertices", ed)
             self.edges = ed.reshape(ne, 2)
+            self.boundary = self.edges[count == 1]  # border edges of an open surface (one face on them)
         finally:
             ev.to_mesh_clear()
         self.ok = len(self.tris) > 0
@@ -229,6 +230,16 @@ def _on_surface_fraction(src, dst, tol, cap, rng):
     return n / len(pts)
 
 
+def _border_distance(rec, p):
+    """Distance from point p to the nearest border edge of the open mesh `rec` (inf when it has none)."""
+    if len(rec.boundary) == 0:
+        return float("inf")
+    a, b = rec.verts[rec.boundary[:, 0]], rec.verts[rec.boundary[:, 1]]
+    ab = b - a
+    t = np.clip(np.einsum("ij,ij->i", p - a, ab) / np.maximum(np.einsum("ij,ij->i", ab, ab), 1e-30), 0.0, 1.0)
+    return float(np.linalg.norm(a + ab * t[:, None] - p, axis=1).min())
+
+
 def _pierces(src, dst, eps):
     """True when an edge of `src` passes through the surface of `dst` (not just ending on it).
 
@@ -253,7 +264,17 @@ def _pierces(src, dst, eps):
             s = t + hit[3]
             if eps < s < length - eps:
                 if not dst.closed:
-                    return True  # an open surface has no inside to test: any mid-edge crossing counts
+                    # an open surface has no inside to test, so the edge must go through the face itself: from one
+                    # side to the other, and not at the face's border (an edge meeting a border only touches it)
+                    n = np.array(hit[1], dtype=np.float64)
+                    loc = np.array(hit[0], dtype=np.float64)
+                    sa, sb = float((a - loc) @ n), float((b - loc) @ n)
+                    if sa * sb < 0 and min(abs(sa), abs(sb)) > 10 * eps and _border_distance(dst, loc) > 10 * eps:
+                        return True
+                    t = s + 2 * eps
+                    if t >= length:
+                        break
+                    continue
                 cuts.append(s)
             t = s + 2 * eps
             if t >= length:
