@@ -10,7 +10,11 @@ ARGS:
     dir                 (str) a folder of frames, read in natural filename order (use one of paths / dir)
     block               (int)   block size in px (default 16)
     max_motion_px       (int)   search window: a block may move up to this many px in x and y between
-                        consecutive frames (default 8). Cost grows with its square.
+                        consecutive frames (default 24). Searched in two tiers: every shift up to 8 px at full
+                        resolution, and, for blocks nothing in that window explains (only when they are at least 3% of
+                        the blocks), the whole window coarse to fine (2x2 averaged copies, then +-1 px). A 1080p
+                        5-frame clean run takes the same time as with the old window of 8 (measured 9.4 s vs 9.6 s
+                        under load), a run where everything moves 14 px a frame about 1.85x.
     flicker_threshold   (float) a block flickers when its mean differs from the average of its motion-matched
                         previous and next blocks by more than this (default 0.03, on 0..1 encoded values)
     reject_ratio        (float) match rejection: the best match is rejected when its residual (mean absolute
@@ -18,8 +22,13 @@ ARGS:
                         block's own mean absolute deviation) (default 0.5)
     ambiguity_margin    (float) another candidate (more than 1 px from the best) within this residual of the
                         best counts as a rival (default 0.02)
-    global_fraction     (float) an event is "global_exposure" when at least this share of its measured blocks
-                        flicker (default 0.6)
+    global_fraction     (float) an event is "global_exposure" when its affected pixels (the UNION of flagged blocks and
+                        dropout cells, each pixel once) are at least this share of the pixels that were measured or
+                        flagged (default 0.6); a band over a third of a flat frame is "local"
+    neighbour_agreement (float) a block is a pulse, and only then an event, when its two matched neighbours differ from each
+                        other by at most this x its deviation (default 0.5). A step (the frame equals one neighbour, not
+                        the other: an object arriving or leaving, a light changing for good) is not; two steps of the same
+                        sign and size at the same block in consecutive frames are (a flicker lasting two frames)
     min_measured        (float) below this share of measured blocks, over the sequence or in any one evaluated frame,
                         the verdict is "inconclusive", never "pass" (default 0.5)
     dropout_level       (float) a dropout cell's mean is within this of 0 (black) or 1 (white) (default 0.015; the darkest
@@ -54,10 +63,35 @@ after subtracting each block's own mean (so a brightness change does not stop th
 is then taken between the block means at the matched places: a pan, however fast inside the window, gives 0, while
 a block that brightens or darkens only in frame t does not. Brightness is the Rec.709 luma of the encoded pixel values.
 
-Frame sizes that are not a multiple of `block`: the leftover bottom rows and right columns are analysed as thinner
-blocks (at least 4 px; a smaller remainder overlaps the main grid), so nothing is cropped away silently. Thin blocks match
-less reliably and are rejected into `not_measured` like any other. Event `blocks` are [x_px, y_px, deviation] (top-left
-corner of the block, in frame pixels).
+Frame sizes that are not a multiple of `block`: the leftover bottom rows and right columns (at least 4 px; a smaller
+remainder overlaps the main grid) are scored too, so nothing is cropped away silently. A thin block of the leftover size matches
+anything it is flat in and cannot see content entering the strip (it gave false events at the bottom edge of 640x360 frames,
+360 = 22 x 16 + 8), so the motion is taken from the full block that ends where the strip begins and the strip pixels are scored
+at that motion; the region of an event is the strip itself (a +0.15 defect in the 8 px bottom strip of a panning 320x184 frame
+is found, with the region [64,176,160,184] for a defect at [64,176,160,184]). An ambiguous match is not scored in a strip.
+Event `blocks` are [x_px, y_px, deviation] (top-left corner of the block, in frame pixels).
+
+What counts as an event (besides the dropout rule): a measured block whose mean differs from the matched neighbours by more
+than `flicker_threshold`, whose neighbours agree with each other (a pulse, above), and whose pixels agree (the interquartile
+mean of the per-pixel differences has the same sign and size: an object edge across a block changes the mean, not most pixels).
+Events from a frame in which fewer than `min_measured` of the blocks could be followed (a fast camera, lights moving, every
+surface changing shape) are not events: they are listed in `unconfirmed_events`, the frame is in `unmeasured_frames`, and the
+verdict is "inconclusive" (a global exposure pop and a dropout are judged by their own rules and stay events).
+
+Measured on 31 clean real renders (640x360, EEVEE and Cycles: balls, fans, spheres, rotating objects, cameras, moving lights)
+the verdict was flicker 14, pass 13, inconclusive 4 before this method and is flicker 0, pass 19, inconclusive 12 now; the 12
+are shots where camera, lights and objects move together, 11 to 55% of their blocks can be followed, so no verdict is given.
+On 15 more renders of flat black or white fast objects, a strobe and a light off for one frame: both of those stay `flicker`
+(global_exposure), 8 of the 13 others (propellers, black boxes) are still reported, see limit (c).
+Remaining limits, measured: (a) a flicker that lasts three frames or more is a hold, not a pulse, and is not found (two
+frames are); (b) an ambiguous block (smooth gradients, periodic patterns) is not scored: a +0.15 tile at [200,120,296,216]
+injected into frame 4 of real renders was found in 5 of 9 sequences that were not saturated (region error 8 px on four, 56 px on
+the fifth, where a shadow covers most of the tile) and missed where its blocks were ambiguous (a smooth floor: plain_ee_fan, 323
+of about 900 blocks), where a rotating object covers it (noise_ee_rot) or on a dark smooth background (blackbg_lit_ball); the
+verdict there is `pass` when more than half of the frame could be followed, so read `not_measured.ambiguous`; (c) a flat
+black or white object that is in the frame for one frame, or crosses a flat region faster than the window, has the shape of a
+defect and is reported (8 of the 13 flat-object renders above); (d) motion beyond `max_motion_px`, and shots where most of the
+picture changes shape, are not judged (`inconclusive`); (e) dropouts are searched within min(`max_motion_px`, 8) px.
 
 Not measured (the block is skipped and counted, never scored as a pass):
     high_residual  the best match is still poor: fast motion beyond the window, an object appearing, disappearing or
@@ -78,7 +112,7 @@ bad frames in a row; those frames are listed in `unmeasured_frames` and the verd
 or last frame cannot be judged (no second difference); the frame beside it is the one listed.
 
 Returns verdict ("flicker" | "pass" | "inconclusive"), events (frame, kind "local" | "global_exposure", signed
-deviation, region box in px, blocks), `unmeasured_frames` (frames with too few measured blocks that no event explains),
+deviation, region box in px, blocks), `unconfirmed_events` (blocks flagged in a frame where under `min_measured` of the blocks could be followed), `unmeasured_frames` (frames with too few measured blocks that no event explains),
 per-frame counts, and `not_measured` totals by reason. The first and last frame
 have no second difference and are not evaluated. Loads frames into temporary images and removes them.
 """
@@ -129,40 +163,118 @@ def _load_luma(path):
         bpy.data.images.remove(img)
 
 
-def _match(cur, ref, y0, x0, nby, nbx, bh, bw, R, margin, ratio, mean_tol):
-    """Per block (bh x bw, nby x nbx of them from (y0, x0)) of `cur`: matched block mean in `ref`, or a reject code.
-    Returns (mean[nby,nbx] with NaN when not measured, code[nby,nbx]: 0 ok, 1 high_residual, 2 ambiguous,
-    oy, ox [nby,nbx]: the matched offset of each block in `ref`, in pixels)."""
+_POOL = {}
+WIDE_MIN_SHARE = 0.03
+
+
+def _pooled(F, py, px, S):
+    """F cropped by (py, px) rows / columns at the top-left, then averaged over S x S (cached per array, crop and S)."""
+    key = (id(F), py, px, S)
+    if key not in _POOL:
+        G = F[py:, px:]
+        h, w = G.shape[0] // S * S, G.shape[1] // S * S
+        _POOL[key] = (F, G[:h, :w].reshape(h // S, S, w // S, S).mean(axis=(1, 3)))  # F kept so its id stays unique
+    return _POOL[key][1]
+
+
+def _gather(F, ys, xs, y0, x0, bh, bw, oy, ox, sub=None):
+    """Blocks of F: block (ys[i], xs[i]) of the grid at (y0, x0), moved by (oy[i], ox[i]) px -> [K, h, w]; `sub` =
+    (r0, r1, c0, c1) takes only that part of each block. Indices are clipped, so only call it for matches that were found
+    inside the frame."""
+    H, W = F.shape
+    r0, r1, c0, c1 = sub or (0, bh, 0, bw)
+    r = np.clip(y0 + ys[:, None] * bh + r0 + oy[:, None] + np.arange(r1 - r0)[None, :], 0, H - 1)
+    c = np.clip(x0 + xs[:, None] * bw + c0 + ox[:, None] + np.arange(c1 - c0)[None, :], 0, W - 1)
+    return F[r[:, :, None], c[:, None, :]]
+
+
+def _match_window(cur, ref, y0, x0, nby, nbx, bh, bw, R, margin, ratio, mean_tol, S=1):
+    """Per block (bh x bw, nby x nbx of them from (y0, x0)) of `cur`: its match in `ref` within +-R px, coarse to fine.
+    The search runs on 2x2-averaged copies (every candidate within R // 2 of those px; the mean of a block there is exactly
+    the mean of the full-resolution block at an even offset), then the best candidate is refined at full resolution
+    (+-1 px, never beyond R). With an odd block size or R < 2 the search is exhaustive at full resolution instead.
+    Returns (mean[nby,nbx] of the matched block, NaN when not measured; code[nby,nbx]: 0 ok, 1 high_residual,
+    2 ambiguous; oy, ox [nby,nbx]: the matched offset of each block in `ref`, in px)."""
     C = cur[y0:y0 + nby * bh, x0:x0 + nbx * bw].reshape(nby, bh, nbx, bw)
     cm = C.mean(axis=(1, 3))
     Cz = C - cm[:, None, :, None]
     dev = np.abs(Cz).mean(axis=(1, 3))
-    pad = np.pad(ref, R, mode="constant", constant_values=np.nan)
-    offs = [(dy, dx) for dy in range(-R, R + 1) for dx in range(-R, R + 1)]
+    ar = np.arange(nby)[:, None], np.arange(nbx)[None, :]
+    S = S if (S > 1 and bh % S == 0 and bw % S == 0 and R >= S) else 1
+    coarse = S > 1
+    if coarse:
+        py, px = y0 % S, x0 % S
+        cy0, cx0, kbh, kbw, Rk = (y0 - py) // S, (x0 - px) // S, bh // S, bw // S, R // S
+        src = _pooled(cur, py, px, S)[cy0:cy0 + nby * kbh, cx0:cx0 + nbx * kbw].reshape(nby, kbh, nbx, kbw)
+        srcref = _pooled(ref, py, px, S)
+        ky0, kx0 = cy0, cx0
+    else:
+        src, srcref, ky0, kx0, kbh, kbw, Rk = C, ref, y0, x0, bh, bw, R
+    km = src.mean(axis=(1, 3))
+    Kz = src - km[:, None, :, None]
+    pad = np.pad(srcref, Rk, mode="constant", constant_values=np.nan)
+    offs = [(dy, dx) for dy in range(-Rk, Rk + 1) for dx in range(-Rk, Rk + 1)]
     resid = np.full((len(offs), nby, nbx), np.inf, dtype=np.float32)
     means = np.full((len(offs), nby, nbx), np.nan, dtype=np.float32)
     for k, (dy, dx) in enumerate(offs):
-        P = pad[R + y0 + dy:R + y0 + dy + nby * bh, R + x0 + dx:R + x0 + dx + nbx * bw].reshape(nby, bh, nbx, bw)
+        P = pad[Rk + ky0 + dy:Rk + ky0 + dy + nby * kbh, Rk + kx0 + dx:Rk + kx0 + dx + nbx * kbw].reshape(nby, kbh, nbx, kbw)
         pm = P.mean(axis=(1, 3))  # NaN when any pixel is outside the frame
-        r = np.abs(Cz - (P - pm[:, None, :, None])).mean(axis=(1, 3))
-        ok = ~np.isnan(pm)
-        resid[k] = np.where(ok, r, np.inf)
+        r = np.abs(Kz - (P - pm[:, None, :, None])).mean(axis=(1, 3))
+        resid[k] = np.where(np.isnan(pm), np.inf, r)
         means[k] = pm
     best = resid.argmin(axis=0)
-    ar = np.arange(nby)[:, None], np.arange(nbx)[None, :]
     best_r = resid[best, ar[0], ar[1]]
     best_m = means[best, ar[0], ar[1]]
-    oy = np.array([o[0] for o in offs])[best]
-    ox = np.array([o[1] for o in offs])[best]
+    dys = np.array([o[0] for o in offs]) * S
+    dxs = np.array([o[1] for o in offs]) * S
+    oy, ox = dys[best], dxs[best]
+    near = resid <= best_r[None] + margin  # candidates that fit about as well as the best (never an outside one: inf)
+    rival = np.zeros((nby, nbx), dtype=bool)
+    for k in range(len(offs)):
+        far = (np.abs(dys[k] - oy) > 1) | (np.abs(dxs[k] - ox) > 1)
+        rival |= far & near[k] & (np.abs(means[k] - best_m) > mean_tol)
+    if coarse:  # refine at full resolution: +-S/2 px around the best coarse candidate (never beyond R)
+        rad = S // 2
+        pad1 = np.pad(ref, R + rad, mode="constant", constant_values=np.nan)
+        gy, gx = np.meshgrid(np.arange(nby), np.arange(nbx), indexing="ij")
+        Czt = Cz.transpose(0, 2, 1, 3)
+        fr_ = np.full((nby, nbx), np.inf, dtype=np.float32)
+        fy, fx, fm = oy.copy(), ox.copy(), best_m.copy()
+        for ddy in range(-rad, rad + 1):
+            for ddx in range(-rad, rad + 1):
+                ty, tx = np.clip(oy + ddy, -R, R), np.clip(ox + ddx, -R, R)
+                rr = R + rad + y0 + gy[:, :, None] * bh + ty[:, :, None] + np.arange(bh)[None, None, :]
+                cc = R + rad + x0 + gx[:, :, None] * bw + tx[:, :, None] + np.arange(bw)[None, None, :]
+                P = pad1[rr[:, :, :, None], cc[:, :, None, :]]  # [nby, nbx, bh, bw]
+                pm = P.mean(axis=(2, 3))
+                r = np.abs(Czt - (P - pm[:, :, None, None])).mean(axis=(2, 3))
+                r = np.where(np.isnan(pm), np.inf, r)
+                better = r < fr_
+                fr_ = np.where(better, r, fr_)
+                fy, fx, fm = np.where(better, ty, fy), np.where(better, tx, fx), np.where(better, pm, fm)
+        oy, ox, best_m, best_r = fy, fx, fm, fr_
     code = np.zeros((nby, nbx), dtype=np.int8)
-    code[best_r > np.maximum(0.01, ratio * dev)] = 1
-    # rivals: near-best residual, more than 1 px from the best, and a block mean that would change the answer
-    for k, (dy, dx) in enumerate(offs):
-        far = (np.abs(dy - oy) > 1) | (np.abs(dx - ox) > 1)
-        rival = far & (resid[k] <= best_r + margin) & (np.abs(means[k] - best_m) > mean_tol)
-        code[(code == 0) & rival] = 2
-    out = np.where(code == 0, best_m, np.nan)
-    return out, code, oy, ox
+    code[~np.isfinite(best_r) | (best_r > np.maximum(0.01, ratio * dev))] = 1
+    code[(code == 0) & rival] = 2
+    return np.where(code == 0, best_m, np.nan), code, oy, ox
+
+
+def _match(cur, ref, y0, x0, nby, nbx, bh, bw, R, margin, ratio, mean_tol):
+    """`_match_window` in two tiers: the exhaustive full-resolution window of 8 px (or R if smaller) first, and the wide window
+    (up to R, coarse to fine) only for the blocks that found no match in it, and only when they are at least
+    `WIDE_MIN_SHARE` of the blocks (a few unmatched blocks are an object edge or a frame border, not a fast camera, and the
+    wide search costs about as much as the first one). A wide window offers more look-alike candidates, so searching it
+    first would turn plain smooth content ambiguous; the blocks a small window cannot follow are the ones that need it."""
+    res = _match_window(cur, ref, y0, x0, nby, nbx, bh, bw, min(R, 8), margin, ratio, mean_tol)
+    if R > 8 and (res[1] == 1).mean() >= WIDE_MIN_SHARE:
+        wide = _match_window(cur, ref, y0, x0, nby, nbx, bh, bw, R, margin, ratio, mean_tol, S=2)
+        C = cur[y0:y0 + nby * bh, x0:x0 + nbx * bw].reshape(nby, bh, nbx, bw)
+        texture = np.abs(C - C.mean(axis=(1, 3))[:, None, :, None]).mean(axis=(1, 3))
+        # a nearly flat block fits any flat place in a wide window: it is only taken when it has more texture than the
+        # ambiguity margin, i.e. when "fits about as well" can tell places apart
+        take = (res[1] == 1) & (wide[1] != 1) & (texture >= margin)
+        res = tuple(np.where(take, w, r) for r, w in zip(res, wide))
+    return res
 
 
 def _grab(F, ys, xs, ky, kx, R, sub):
@@ -239,9 +351,9 @@ def _natural_files(d):
     return [os.path.join(d, f) for f in sorted(names, key=_natural)]
 
 
-def main(paths=None, dir=None, block=16, max_motion_px=8, flicker_threshold=0.03, reject_ratio=0.5,
+def main(paths=None, dir=None, block=16, max_motion_px=24, flicker_threshold=0.03, reject_ratio=0.5,
          ambiguity_margin=0.02, global_fraction=0.6, min_measured=0.5, dropout_level=0.015, dropout_flat_dev=0.01,
-         dropout_gap=0.02):
+         dropout_gap=0.02, neighbour_agreement=0.5):
     if bool(paths) == bool(dir):
         raise ValueError("pass exactly one of 'paths' or 'dir'")
     files = list(paths) if paths else _natural_files(dir)
@@ -258,38 +370,83 @@ def main(paths=None, dir=None, block=16, max_motion_px=8, flicker_threshold=0.03
     H, W = frames[0].shape
     if any(fr.shape != (H, W) for fr in frames):
         raise ValueError("all frames must have the same size")
-    nby, nbx = H // B, W // B
-    if nby < 1 or nbx < 1:
+    if H < B or W < B:
         raise ValueError(f"frames {W}x{H} are smaller than one {B}px block")
-    # full B x B blocks tile the frame from the top-left. A size that is not a multiple of B leaves a bottom strip and/or a
-    # right strip; they are analysed too, as thinner blocks (never below 4 px, so a 1-3 px remainder overlaps the main
-    # grid), because dropping them would let a flicker confined to the strip pass.
+    # The blocks tile the frame from the top-left. A size that is not a multiple of B leaves a bottom strip and/or a right
+    # strip (at least 4 px: a smaller remainder overlaps the main grid). A thin block of the leftover size matches anything
+    # it is flat in and cannot see content entering the strip, so its motion is taken from the full B x B block that ends
+    # where the strip begins (real context), and the strip pixels are then scored at that motion: the region reported is the
+    # strip itself, and a defect inside it is neither diluted nor taken for part of the match.
+    nby, nbx = H // B, W // B
     hs, ws = max(H - nby * B, 4) if H % B else 0, max(W - nbx * B, 4) if W % B else 0
-    regions = [(0, 0, nby, nbx, B, B)]  # y0, x0, rows of blocks, cols of blocks, block height, block width
+    regions = [(0, 0, nby, nbx, B, B, None)]  # y0, x0, rows of blocks, cols of blocks, block h, w, scored sub-rectangle
+    yb, xr = max(0, H - hs - B), max(0, W - ws - B)  # origin of the context block above / left of a strip
     if hs:
-        regions.append((H - hs, 0, 1, nbx, hs, B))
+        regions.append((yb, 0, 1, nbx, B, B, (H - hs - yb, H - yb, 0, B)))
     if ws:
-        regions.append((0, W - ws, nby, 1, B, ws))
+        regions.append((0, xr, nby, 1, B, B, (0, B, W - ws - xr, W - xr)))
     if hs and ws:
-        regions.append((H - hs, W - ws, 1, 1, hs, ws))
+        regions.append((yb, xr, 1, 1, B, B, (H - hs - yb, H - yb, W - ws - xr, W - xr)))
+    _POOL.clear()
 
     per_frame = {t: {"frame": t, "file": os.path.basename(files[t]), "measured": 0,
                      "not_measured": {"high_residual": 0, "ambiguous": 0}, "max_abs_dev": None}
                  for t in range(1, len(frames) - 1)}
     flagged_by_t = {t: [] for t in per_frame}  # (x0, y0, x1, y1, dev) of blocks over the threshold
+    step_by_t = {t: [] for t in per_frame}  # the same for blocks that equal one neighbour and differ from the other
     drops_by_t = {t: [] for t in per_frame}  # the same for dropout blocks (rejected by the match, neighbours agree)
     dev_at = {t: {} for t in per_frame}  # (x0, y0) of a block -> its signed deviation in frame t (measured blocks only)
     foot_at = {t: {} for t in per_frame}  # (x0, y0, neighbour frame) -> (x, y, w, h) of the matched footprint there
     totals = {"high_residual": 0, "ambiguous": 0}
+    meas_mask = {t: np.zeros((H, W), dtype=bool) for t in per_frame}  # pixels of measured blocks
     n_meas = n_all = 0
-    for (ry, rx, ny, nx, bh, bw) in regions:
+    for (ry, rx, ny, nx, bh, bw, sub) in regions:
+        r0, r1, c0, c1 = sub or (0, bh, 0, bw)
         for t in range(1, len(frames) - 1):
             mp, cp, pyo, pxo = _match(frames[t], frames[t - 1], ry, rx, ny, nx, bh, bw, R, ambiguity_margin, reject_ratio, thr / 2)
             mn, cn, nyo, nxo = _match(frames[t], frames[t + 1], ry, rx, ny, nx, bh, bw, R, ambiguity_margin, reject_ratio, thr / 2)
             code = np.maximum(cp, cn)
             tmean = frames[t][ry:ry + ny * bh, rx:rx + nx * bw].reshape(ny, bh, nx, bw).mean(axis=(1, 3))
+            if sub:  # score only the leftover pixels of an edge block, at the offsets the whole block matched at
+                gy, gx = np.nonzero(code == 0)
+                z = np.zeros(len(gy), dtype=int)
+                sm = np.full((ny, nx), np.nan)
+                spm, snm = sm.copy(), sm.copy()
+                if len(gy):
+                    sm[gy, gx] = _gather(frames[t], gy, gx, ry, rx, bh, bw, z, z, sub).mean(axis=(1, 2))
+                    spm[gy, gx] = _gather(frames[t - 1], gy, gx, ry, rx, bh, bw, pyo[gy, gx], pxo[gy, gx], sub).mean(axis=(1, 2))
+                    snm[gy, gx] = _gather(frames[t + 1], gy, gx, ry, rx, bh, bw, nyo[gy, gx], nxo[gy, gx], sub).mean(axis=(1, 2))
+                tmean, mp, mn = sm, spm, snm
             dev = tmean - 0.5 * (mp + mn)  # signed; NaN where not measured
             dev[code != 0] = np.nan
+            # Ambiguous blocks are not scored: a block no candidate match explains is not evidence of flicker.
+            # A flicker moves the whole block: the middle half of the per-pixel differences against the matched
+            # neighbours (interquartile mean) must show it too. An object edge crossing the block changes the mean but
+            # not most of the pixels.
+            cdev = dev.copy()
+            cy_, cx_ = np.nonzero(np.abs(cdev) > thr)
+            if len(cy_):
+                zz = np.zeros(len(cy_), dtype=int)
+                Cb = _gather(frames[t], cy_, cx_, ry, rx, bh, bw, zz, zz, sub)
+                Pb = _gather(frames[t - 1], cy_, cx_, ry, rx, bh, bw, pyo[cy_, cx_], pxo[cy_, cx_], sub)
+                Nb = _gather(frames[t + 1], cy_, cx_, ry, rx, bh, bw, nyo[cy_, cx_], nxo[cy_, cx_], sub)
+                d = np.sort((Cb - 0.5 * (Pb + Nb)).reshape(len(cy_), -1), axis=1)
+                q = d.shape[1] // 4
+                iqm = d[:, q:d.shape[1] - q].mean(axis=1)
+                robust = np.sign(iqm) == np.sign(cdev[cy_, cx_])
+                robust &= np.abs(iqm) > thr
+                cdev[cy_[~robust], cx_[~robust]] = np.nan
+            # A flicker is a pulse: the two neighbours agree with each other (the same content at the same brightness)
+            # and the frame differs from both. A step, where the frame equals one neighbour and not the other (the
+            # neighbours' means are more than `neighbour_agreement` x the deviation apart), is an object arriving or leaving
+            # or a light changing for good: it is not an event by itself. It is kept as a candidate, because a flicker
+            # that lasts two frames looks like two steps in a row at the same place (see below).
+            step = np.abs(mp - mn) > neighbour_agreement * np.abs(dev)
+            sdev = np.where(step, cdev, np.nan)
+            cdev = np.where(step, np.nan, cdev)
+            for y, x in zip(*np.nonzero(np.abs(sdev) > thr)):
+                step_by_t[t].append((rx + int(x) * bw + c0, ry + int(y) * bh + r0, rx + int(x) * bw + c1, ry + int(y) * bh + r1,
+                                     float(sdev[y, x])))
             hi, amb = int((code == 1).sum()), int((code == 2).sum())
             meas = int((code == 0).sum())
             totals["high_residual"] += hi
@@ -309,14 +466,27 @@ def main(paths=None, dir=None, block=16, max_motion_px=8, flicker_threshold=0.03
                 for u, oy_, ox_ in ((t - 1, pyo, pxo), (t + 1, nyo, nxo)):
                     foot_at[t][(rx + int(x) * bw, ry + int(y) * bh, u)] = (
                         rx + int(x) * bw + int(ox_[y, x]), ry + int(y) * bh + int(oy_[y, x]), bw, bh)
-            ys, xs = np.nonzero(np.abs(dev) > thr)  # NaN compares False
-            flagged_by_t[t] += [(rx + int(x) * bw, ry + int(y) * bh, rx + int(x) * bw + bw, ry + int(y) * bh + bh,
-                                 float(dev[y, x])) for y, x in zip(ys, xs)]
+            ys, xs = np.nonzero(np.abs(cdev) > thr)  # NaN compares False
+            flagged_by_t[t] += [(rx + int(x) * bw + c0, ry + int(y) * bh + r0, rx + int(x) * bw + c1, ry + int(y) * bh + r1,
+                                 float(cdev[y, x])) for y, x in zip(ys, xs)]
+            if sub:
+                for y, x in zip(*np.nonzero(code == 0)):
+                    meas_mask[t][ry + int(y) * bh + r0:ry + int(y) * bh + r1, rx + int(x) * bw + c0:rx + int(x) * bw + c1] = True
+            else:
+                meas_mask[t][ry:ry + ny * bh, rx:rx + nx * bw] |= np.repeat(np.repeat(code == 0, bh, axis=0), bw, axis=1)
+    # a flicker that lasts two frames: the same block is a step of the same sign and size in two consecutive frames
+    for t, steps in step_by_t.items():
+        for f in steps:
+            for u in (t - 1, t + 1):
+                if any(g[:2] == f[:2] and g[4] * f[4] > 0 and 0.5 <= abs(g[4]) / abs(f[4]) <= 2.0 for g in step_by_t.get(u, [])):
+                    flagged_by_t[t].append(f)
+                    break
     cell = max(4, B // 2)
     for t in per_frame:
-        drops_by_t[t] = _dropouts(frames, t, cell, R, dropout_level, dropout_flat_dev, dropout_gap)
+        drops_by_t[t] = _dropouts(frames, t, cell, min(R, 8), dropout_level, dropout_flat_dev, dropout_gap)
 
     events = []
+    unconfirmed = []
     for t, flagged in flagged_by_t.items():
         # a one-frame bump also shows at half size, opposite sign, in its neighbours, at the place the motion match
         # carries it to: drop a block whose deviation is smaller than that of a block overlapping the footprint it
@@ -343,11 +513,21 @@ def main(paths=None, dir=None, block=16, max_motion_px=8, flicker_threshold=0.03
         if not flagged:
             continue
         meas = per_frame[t]["measured"]
-        if drops:  # blocks and cells differ in size: judge the share by area
-            covered = sum((f[2] - f[0]) * (f[3] - f[1]) for f in flagged)
-            kind = "global_exposure" if covered >= global_fraction * H * W else "local"
-        else:
-            kind = "global_exposure" if len(flagged) >= global_fraction * meas else "local"
+        # kind: the share of pixels affected, as a UNION (a block and a dropout cell over the same pixels count once, and so
+        # do overlapping edge blocks), out of the pixels that were measured or flagged
+        hit = np.zeros((H, W), dtype=bool)
+        for f in flagged:
+            hit[f[1]:f[3], f[0]:f[2]] = True
+        kind = "global_exposure" if hit.sum() >= global_fraction * (hit | meas_mask[t]).sum() else "local"
+        pf = per_frame[t]
+        total_t = pf["measured"] + pf["not_measured"]["high_residual"] + pf["not_measured"]["ambiguous"]
+        if kind == "local" and not drops and total_t and pf["measured"] < min_measured * total_t:
+            # blocks from a frame where most of the picture could not be followed (a fast camera, lights moving, everything
+            # changing shape): the few that matched are as likely to be a chance match as a defect. Not an event; the frame
+            # is listed in unmeasured_frames and the verdict is inconclusive. A dropout (flat black / white region) is
+            # judged by its own rule and is not demoted.
+            unconfirmed.append({"frame": t, "file": os.path.basename(files[t]), "blocks": [[f[0], f[1], round(f[4], 5)] for f in flagged[:8]]})
+            continue
         events.append({"frame": t, "file": os.path.basename(files[t]), "kind": kind,
                        "mean_deviation": round(float(np.mean([f[4] for f in flagged])), 5),
                        "region_px": [min(f[0] for f in flagged), min(f[1] for f in flagged),
@@ -386,7 +566,7 @@ def main(paths=None, dir=None, block=16, max_motion_px=8, flicker_threshold=0.03
                          for t in unexplained]
     share = n_meas / n_all if n_all else 0.0
     verdict = "flicker" if events else ("pass" if share >= min_measured and not unmeasured_frames else "inconclusive")
-    return {"verdict": verdict, "events": events, "unmeasured_frames": unmeasured_frames,
+    return {"verdict": verdict, "events": events, "unconfirmed_events": unconfirmed, "unmeasured_frames": unmeasured_frames,
             "frames": len(frames), "evaluated_frames": len(per_frame),
             "block_px": B, "max_motion_px": R, "flicker_threshold": thr,
             "measured_blocks": n_meas, "total_blocks": n_all, "measured_share": round(share, 4),
