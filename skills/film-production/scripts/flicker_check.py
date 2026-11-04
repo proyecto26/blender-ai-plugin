@@ -69,12 +69,7 @@ black frame at the default `dropout_gap` (0.02); lower it to 0.005 to find it th
 renders; (2) a dropout smaller than two cells in each direction (16 px at 640x360, 32 at 1280x720) is not looked for; (3) a flat
 black or white object that moves fast (24 px at 30 px per frame, and about 148 px at about 90 px per frame, were measured) is the same
 shape as a dropout and is reported as one when it spans 2x2 cells (a shadow is not: the darkest flat cells in 31 clean renders, shadows included, are above 0.015
-unless the scene itself is black; a macOS Eevee run found the cube's shadow at 0.0036, flat, sliding 15 px a frame, reported as a
-dropout, and that case is now handled: a group of touching dropout cells whose footprint lands at least 85% on pixels of the same
-flat value (within `dropout_gap` / 2) in t-1 or t+1, at any shift up to the whole `max_motion_px` window, is the same shape moving
-and is not a dropout, except for the cells of the group that do not land on it (under 85% of the cell, at the best shift): those
-stay dropouts, so a tile attached to the moving shape is still found, and a lone unmatched cell is the shape's edge; it is an FFT correlation per group and neighbour, 10.7 s against 10.2 s for 10 frames of 1920x1080 with a
-300 x 500 px black tile; a flat shape that changes shape between frames, or moves farther than the window, is still reported);
+unless the scene itself is black);
 (4) the neighbours must be a steady shift of each other: a pan that accelerates, or a dropout beside another bad frame,
 is not confirmed and is left to `unmeasured_frames`; (5) a region that turns not black or white but another level (a
 gain pop on part of the frame) is found only when it is a block-wide jump, as before.
@@ -136,14 +131,17 @@ blocks in the leftover edge strip, is not reported: a lone ambiguous block over 
 the clean renders took (a 16 px square of +0.2 on a smooth floor is `pass`, a 32 px one is found, at 640x360; both sizes scale with the frame); (c) a flat black or white
 object that is in the frame for one frame, or crosses a flat region faster than the window, has the shape of a defect and is
 reported (8 of the 13 flat-object renders above; a ball or its shadow arriving over a smooth floor is the same shape: a clean
-`cy_ball_32dn` shot reports no event only because its ellipse is 2 blocks wide); (d) motion beyond `max_motion_px`
+`cy_ball_32dn` shot reports no event only because its ellipse is 2 blocks wide; a narrow near-black shadow sliding faster than
+the dropout search, 8 x scale px per frame, is too: a macOS Eevee cube moving 15 px per frame at 640x360, 45 at 1080p, with a
+shadow at luma 0.0036, gave a false `flicker` at both sizes; three filters for it each let a real one-frame tile next to a
+moving dark shape be dismissed, so none was kept); (d) motion beyond `max_motion_px`
 is not judged reliably: shots where most of the picture changes shape are `inconclusive` only while under half of the blocks are
 followed, and a smooth background now counts as followed, so an object that jumps farther than the window over it shows as
 a flat region and is reported. The window and the block scale with the frame, so motion that is the same in
 picture terms (a render upscaled 2x or 3x, motion doubled or tripled) stays inside it; a shot whose pixel motion is large
 for its size (a 1080p pan of 100 px a frame) still needs `max_motion_px` raised, and beyond the window (a 1080p pan of about 100 to 200 px a frame, 4 of 10 frames measured
 with a 105 px step) the result can be `flicker` rather than `inconclusive`: the share of textured blocks with a rejected match is no usable gate, since clean dark Cycles shots reach 0.67 of them;
-(e) dropouts are searched within min(`max_motion_px`, 8 x scale) px, but a flat shape that is in a neighbour anywhere in the full window is dropped afterwards (limit 3);(f) a black tile is found only where the original is
+(e) dropouts are searched within min(`max_motion_px`, 8 x scale) px; (f) a black tile is found only where the original is
 brighter than about 0.02 (the dropout rule): in four near-black shots (the tile region averages 0.01 to 0.04) its region
 came out 32 to 72 px short of the tile; (g) shots where camera, lights and objects all move under Cycles noise are the ones most
 likely to stay `inconclusive`: `noise_cy16_mixed` is `pass` here with 74% of its blocks measured (exactly or by range).
@@ -419,130 +417,6 @@ def _dropouts(frames, t, cell, R, level, flat_dev, gap, step=1):
             for i in np.nonzero(ok)[0]]
 
 
-FOOT_MATCH = 0.85  # share of the footprint that must land on the flat value in a neighbour (coarse test)
-CELL_MATCH = 0.85  # share of one cell that must land on it for the cell to count as the moving shape
-MIN_REST = 2  # unmatched cells in a 3x3 (self included) for an unmatched cell to stay a dropout
-
-
-def _moving_flat(frames, t, drops, cell, R, p, gap):
-    """Drop the dropout groups that are a flat shape which moved. A group is a connected set (8 neighbours) of the cells
-    `_dropouts` found in frame t; its flat value v is read from frame t. For each neighbour u (t-1, t+1) the pixels of u within
-    gap / 2 of v are marked (averaged over p x p, p being the scale used for speed) and the group's footprint is slid over that
-    mask by every shift s up to R px (the whole `max_motion_px` window, by FFT correlation on the cropped area). A shift counts
-    as "the shape came from there" only when (1) at least 85% of the footprint shifted by s is flat at v in u, and (2) the
-    shape has left that place: outside the footprint itself, at most half of the place is flat at t (a static flat area is flat
-    in every frame and fails this, and so does a flat area the tile merely lies beside). The group is dropped as a moving
-    shape when both neighbours hold it that way with shifts that cancel (s to t-1 is minus s to t+1, within max(2 p, half of
-    |s|): constant velocity), or when only one does and the mirrored place in the other neighbour is not wholly inside the
-    frame (the shape entered or left it). Measured miss: a flat shape that is absent for one frame and shows up as a tile
-    at the midpoint of its own positions in t-1 and t+1 (e.g. a 32 x 64 black slab at x=145 and x=175 and a black tile at
-    x=160 in between) is that same moving shape and is not reported. A dismissed group is split, not dropped whole: at the best
-    combination of shifts, the cells that do not land on the flat value (CELL_MATCH of the cell, in every neighbour used) are
-    kept as dropouts when they touch another unmatched cell (MIN_REST), so a tile attached to the moving shape (its footprint
-    still matches the shape at 86% or more) is found and the shape's own antialiased edge cells are not."""
-    if not drops:
-        return drops
-    H, W = frames[t].shape
-    cells = {(d[1] // cell, d[0] // cell): d for d in drops}
-    seen, keep = set(), []
-    Rp = max(1, R // p)
-    for start in cells:
-        if start in seen:
-            continue
-        comp, stack = [], [start]
-        seen.add(start)
-        while stack:
-            cy, cx = stack.pop()
-            comp.append((cy, cx))
-            for a in (-1, 0, 1):
-                for b in (-1, 0, 1):
-                    q = (cy + a, cx + b)
-                    if q in cells and q not in seen:
-                        seen.add(q)
-                        stack.append(q)
-        y0, y1 = min(c[0] for c in comp), max(c[0] for c in comp) + 1
-        x0, x1 = min(c[1] for c in comp), max(c[1] for c in comp) + 1
-        v = float(np.mean([frames[t][cy * cell:(cy + 1) * cell, cx * cell:(cx + 1) * cell].mean() for cy, cx in comp]))
-        c_p = max(1, cell // p)
-        pad = Rp * p
-        hh, ww = (y1 - y0) * cell + 2 * pad, (x1 - x0) * cell + 2 * pad
-        hh, ww = hh - hh % p, ww - ww % p
-        g = np.zeros((hh // p, ww // p), dtype=np.float32)
-        for cy, cx in comp:
-            g[Rp + (cy - y0) * c_p:Rp + (cy - y0 + 1) * c_p, Rp + (cx - x0) * c_p:Rp + (cx - x0 + 1) * c_p] = 1.0
-        n_cells = float(g.sum())
-        fg = np.conj(np.fft.rfft2(g))
-        sh = np.arange(-Rp, Rp + 1)
-        ix = np.ix_(sh % g.shape[0], sh % g.shape[1])
-        fy0, fx0 = y0 * cell - pad, x0 * cell - pad
-        sy0, sx0 = max(fy0, 0), max(fx0, 0)
-        sy1, sx1 = min(fy0 + hh, H), min(fx0 + ww, W)
-        if sy1 <= sy0 or sx1 <= sx0:
-            keep += [cells[c] for c in comp]
-            continue
-
-        Dmaps = {}
-
-        def dark_map(u):
-            if u not in Dmaps:
-                M = np.zeros((hh, ww), dtype=np.float32)
-                M[sy0 - fy0:sy1 - fy0, sx0 - fx0:sx1 - fx0] = np.abs(frames[u][sy0:sy1, sx0:sx1] - v) <= 0.5 * gap
-                Dmaps[u] = M.reshape(hh // p, p, ww // p, p).mean(axis=(1, 3))
-            return Dmaps[u]
-
-        def dark_corr(u):
-            return np.fft.irfft2(fg * np.fft.rfft2(dark_map(u)), s=g.shape)[ix]
-
-        own = np.fft.irfft2(fg * np.fft.rfft2(g), s=g.shape)[ix]  # footprint cells that overlap the footprint shifted by s
-        at_t = dark_corr(t)
-        rel = np.maximum(n_cells - own, 1e-6)
-        # a place the footprint's flat value fills in u at shift s counts as "the shape came from there" only when the shape
-        # has left it: outside the footprint, that place is mostly not flat at t (a static flat area is flat in every frame)
-        left = (at_t - own) <= 0.5 * rel
-        left[own >= n_cells - 1e-6] = False  # shift 0: the footprint itself
-        found = {}
-        for u in (t - 1, t + 1):
-            hit = (dark_corr(u) >= FOOT_MATCH * n_cells) & left
-            if hit.any():
-                found[u] = np.argwhere(hit) - Rp  # (dy, dx) in p-px units
-        combos = []  # each: the shifts ((u, (dy, dx)), ...) that carry the footprint to a flat place in every neighbour
-        if len(found) == 2:
-            # constant velocity: the shift to t-1 is minus the shift to t+1
-            for a_ in found[t - 1]:
-                tol = max(2.0, 0.5 * float(np.hypot(*a_)))
-                for b_ in found[t + 1]:
-                    if float(np.hypot(*(b_ + a_))) <= tol:
-                        combos.append(((t - 1, (int(a_[0]), int(a_[1]))), (t + 1, (int(b_[0]), int(b_[1])))))
-        elif found:
-            # only one neighbour holds it: that is a moving shape only when it entered or left the frame, i.e. where the
-            # other neighbour would hold it (the mirrored shift) is not wholly inside the frame
-            (u1, sh1), = found.items()
-            for dy, dx in sh1:
-                if not (0 <= y0 * cell - dy * p and y1 * cell - dy * p <= H and 0 <= x0 * cell - dx * p
-                        and x1 * cell - dx * p <= W):
-                    combos.append(((u1, (int(dy), int(dx))),))
-        if not combos:
-            keep += [cells[c] for c in comp]
-            continue
-
-        # the group moved, but a part of it may not have: the cells that do not land (CELL_MATCH) on the flat value in every
-        # neighbour at the shifts of the best-fitting combination are a dropout attached to the shape and stay; a single
-        # unmatched cell with no unmatched neighbour (the antialiased edge of the moving shape) is dropped
-        def matched(combo):
-            ok = {}
-            for cy, cx in comp:
-                r0, c0 = Rp + (cy - y0) * c_p, Rp + (cx - x0) * c_p
-                ok[(cy, cx)] = all(dark_map(u)[r0 + dy:r0 + dy + c_p, c0 + dx:c0 + dx + c_p].mean() >= CELL_MATCH
-                                   for u, (dy, dx) in combo)
-            return ok
-        best_ok = max((matched(cb) for cb in combos), key=lambda o: sum(o.values()))
-        rest = {c for c, m in best_ok.items() if not m}
-        for c in comp:
-            if c in rest and sum(1 for a in (-1, 0, 1) for b in (-1, 0, 1) if (c[0] + a, c[1] + b) in rest) >= MIN_REST:
-                keep.append(cells[c])
-    return keep
-
-
 def _supported(flagged):
     """The flagged blocks (x0, y0, x1, y1, dev, need) that sit in a group of touching blocks of the same sign at least as large
     as the biggest `need` in it. A block matched exactly needs 1; a block of the leftover edge strip needs 2; a block whose
@@ -768,8 +642,7 @@ def main(paths=None, dir=None, block=None, max_motion_px=None, scale=None, flick
                     break
     cell = max(4, B // 2)
     for t in per_frame:
-        drops_by_t[t] = _moving_flat(frames, t, _dropouts(frames, t, cell, min(R, 8 * us), dropout_level, dropout_flat_dev,
-                                                          dropout_gap, us), cell, R, us, dropout_gap)
+        drops_by_t[t] = _dropouts(frames, t, cell, min(R, 8 * us), dropout_level, dropout_flat_dev, dropout_gap, us)
 
     events = []
     unconfirmed = []
