@@ -8,6 +8,51 @@ Format: [Semantic Versioning](https://semver.org/) — `Major.Minor.Patch`
 
 ## [Unreleased]
 
+Iteration 13: the review follow-ups of iteration 12. Plan: `docs/plans/iteration-13-review-follow-ups.md`.
+
+### Changed
+- `flicker_check.py` on macOS (Blender 5.2.3, Apple M2 Max): 15 of 16 clean Eevee and Cycles sequences pass at 640x360
+  and 1920x1080, and 12 of 12 injected tiles and frames are found. The 16th, an Eevee cube with a narrow near-black
+  shadow sliding 15 px per frame, is a false `flicker`, now a stated limit.
+- `flicker_check.py`: no `flicker` and no `inconclusive` on 31 clean Eevee and Cycles renders (was 14 `flicker`), at
+  640x360 and upscaled to 1280x720 and 1920x1080; a +0.2 tile for one or two frames, a black tile and a black frame are
+  found in 31 of 31. Wider motion search (24 px, coarse to fine), ambiguous blocks scored by the range of their
+  predictions, edge strips scored, event `kind` from the union of affected pixels, a noise-aware residual floor.
+  Pixel-sized defaults scale with the shorter side (`scale`, reported with the effective sizes); explicit ARGS win. A block with a rejected match in either neighbour is
+  never scored as measured, even when the other match is ambiguous (a cut to a foreign last frame over a smooth ramp
+  passed); the dropout search is documented as capped at 8 x scale px
+  - A clean native 1920x1080 pan whose shadow edge slid into the 24 px bottom strip (1080 is not a multiple of 48) was `flicker`; a strip flag is now dropped when the block flush with the frame edge, which contains the strip, measures it quiet or ambiguous. Pan `pass`, the injected +0.2 and black tiles still found; 31 clean 640x360 renders still 31 `pass` with 31 of 31 found per injection. Motion beyond the window (about 200 px a frame at 1080p) can still be `flicker` instead of `inconclusive` (left open)
+- `score_run.py`: reads `Start-Process` (single or double quotes), `& $blender` and `"$BLENDER"` launches and escaped
+  inline JSON; a shell comment after any separator grants no plan exemption; the status path must be the real
+  `render_status.json`; the claimed duration is the stated total, or per-frame time times the frame count; URLs no longer
+  decide the platform; `echo` lines and quoted `--python-expr` text are not jobs. Round 6: `(blender ... &)`,
+  `bash -c '...'`, `blender-4.2` / `blender.exe` and an executable held in a variable are seen; each invocation is
+  judged by its own arguments, so a plan chained with `&&`, `;` or a newline to the real render exempts only itself, and
+  `plan: true` in an `echo`, a `:` or a `--python-expr` exempts nothing; a URL is not a status path; `2m30s` is 150 s, a
+  range is its upper bound, and a per-frame figure uses the job's -s/-e/-f frame count or counts as no duration. Round 7: `-f` (a frame, `1,3,5` or `1..5`) sets the frame count over -s/-e, which only `-a` uses; the out_dir to announce is read per invocation, so a chained plan's folder is not the render's
+- `scene_snapshot.py`: updates the scene before reading transforms, computes the transform of an object outside every
+  view layer (refuses one with constraints, a bone or vertex parent, or a path-animated curve parent), refuses an armature in Edit Mode, gives two saves
+  in one second distinct names, and leaves a user collection named `_Restored_dependencies` alone
+- `silhouette_score.py` refuses an object or camera outside the view layer
+- `usd_roundtrip.py`: matches objects whose mesh is named differently, pairs linked duplicates with their own imports (duplicates at the same transform are paired by the fewest differences, so an intact round trip is not a false material loss; `ambiguous_pairings` lists them), reads object-linked material overrides, removes
+  imported armatures and actions, restores the selection on a refused run; a Set Material node with a different material
+  is reported as the loss it is
+- `clash_audit.py`: partial contact against an open mesh is no clash; two sheets crossing in an X still are
+- `ingest_asset.py` refuses while an object is in Edit Mode
+- `import_painter_textures.py`: the normal convention is read from the file name when not given (DirectX flips green; a
+  name with no token is OpenGL, with a warning); shared mesh data with only some objects listed is refused
+- `terrain_heightfield.py` `replace` refuses a rigid body and any enabled (viewport or render) modifier outside a short geometry-neutral allow list (Bevel alone took a 1089-vertex grid to 1601); disabled modifiers are ignored
+- `surface_tools.py`: a two-point seam reports G1 with G2 not measured
+- `ps1_look.py` copies a compositor group shared with another scene before changing it
+- Docs: mocap tolerance per interpolation (Bezier 0.0158 m), scatter cap stated as soft, shape keys per mesh operation,
+  the scan-to-model direction tested, the Unity attribution, the 170 s background run, a covered window marked untested
+
+### Added
+- `docs/evidence/iteration-12.md`: the measured sentences of iteration 12 found by a pattern search of the `.md` files changed between `6493832` and `98d7076` (not `.py` docstrings), each with its backing or marked unbacked
+- Suites `tests/blender/test_iter13_flicker.py`, `test_iter13_scene.py`, `test_iter13_content.py`, `test_iter13_docs.py`
+
+---
+
 Iteration 12: example parity and the open roadmap. Plan: `docs/plans/iteration-12-parity-and-roadmap.md`.
 
 ### Added
@@ -33,7 +78,7 @@ Iteration 12: example parity and the open roadmap. Plan: `docs/plans/iteration-1
 - Parallel work: agents never share one live session, only separate saved copies merged by one owner. Unmeasured
 - `background_render.py` plan times a second frame when the first was short: the estimate was 2.5 to 4 times too long on short
   Eevee jobs, and is now within 1.00 to 1.17 of real time over 15 Windows runs
-- `score_run.py` sees PowerShell launches and foreground renders, checks the duration claim, and judges the window by platform
+- `score_run.py` sees PowerShell launches and foreground renders, checks the duration claim (only a per-frame figure is multiplied by the frame count), and judges the window by platform (a `file:///C:/` path still counts as Windows evidence)
 - `rigid_body_setup.py` rejects an invalid collision shape before changing anything
 - `flicker_check.py`: a sequence with a frame below `min_measured` no longer passes. A hard cut that used to return `pass` now
   returns `inconclusive` and names the frames in `unmeasured_frames`

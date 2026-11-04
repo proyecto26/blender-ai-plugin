@@ -18,7 +18,11 @@ Announcements: a Blender job launched in the background (Bash `&`, `nohup`, `run
 `Start-Job`, `run_in_background`), or a render run in the foreground, needs a message to the user BEFORE the launch that
 names the real out_dir (taken from the launch command or the args file it names; without one, a path to render_status.json)
 and a duration. With --status the duration is compared with the render's real time: more than 3 times off, and more than
-5 s, is a FLAG. The plan step (`plan: true`) is exempt, since it produces the message.
+5 s, is a FLAG. The plan step (`plan: true`) is exempt, since it produces the message; each Blender invocation is judged
+by its own arguments (the text after `--`, or its args file), so a plan chained to the real render exempts only itself. A
+per-frame figure needs a frame count (the message's, or the job's -s/-e/-f), else it is no duration. It matches tokens and
+does not parse the shell: it reads `bash -c '...'`, a trailing `&`, versioned executable names and a variable assigned a
+Blender path, but not `eval`, command substitution, aliases or a path built at run time.
 
 Text matching is heuristic and every such check says so. One run shows one case, not general reliability, and the
 score runs after the job, so it catches regressions rather than stopping a bad report.
@@ -41,7 +45,9 @@ DETACHED = r"\bnohup\b|(?<![&>|])&(?![&>])"
 # PowerShell has no trailing `&` (a leading one is the call operator); it detaches with these.
 DETACHED_PS = r"\bStart-Process\b|\bStart-Job\b|-AsJob\b|\bstart\s+/b\b"
 SHELLS = ("Bash", "PowerShell")
-BLENDER_EXE = r"blender(?:-launcher)?(?:\.exe)?"
+BLENDER_EXE = r"blender(?:-launcher|[-_]?\d+(?:\.\d+)*)?(?:\.exe)?"  # blender, blender-launcher.exe, blender-4.2, blender5.2.exe
+# A launch through a variable: `& $blender`, `"$BLENDER"`, `& "$env:BLENDER"`, `${BLENDER_EXE}`.
+BLENDER_VAR = r"\$\{?(?:env:)?blender(?:_?(?:exe|path|bin|launcher))?\}?"
 # Blender stops reading its own flags at `--`; what follows belongs to the script. Flags are case-sensitive (`-F` is not `-f`).
 BG_FLAGS = {"-b", "--background"}
 # Work that starts a job: render animation / frame, run a script. Short and long spellings, plus the `--flag=value` forms.
@@ -50,11 +56,17 @@ RENDER_FLAGS = {"-a", "--render-anim", "-f", "--render-frame"}
 # Not valid Blender, but an agent may write `-ba` or `-bf 1`; scoring leans to seeing a job, so a cluster of the short
 # letters b/a/f/P (optionally ending in digits, `-f1`) counts as each flag it contains.
 SHORT_CLUSTER = r"-([bafP]+)\d*"
-TOKEN = r"\"([^\"]*)\"|'([^']*)'|([^\s,\"']+)"
+# A drive-letter path: not the tail of a word or URL (`https://`, `example.com/p:/x`); `file:///C:/x` still counts.
+DRIVE_PATH = r"(?:(?<![\w/.:\-])|(?<=file:///))[A-Za-z]:[\\/]"
+# The status file with a directory in front of it (`out/render_status.json`), not a slash elsewhere in the message.
+STATUS_PATH = r"[^\s\"'<>|*?]*[\\/]render_status\.json(?![\w\-]|\.\w)"
+URL_SCHEME = r"\b(?!file:)[a-z][a-z0-9+.\-]*://"  # a URL is not a file the user can open (file:// is)
+TOKEN = r"\"([^\"]*)\"|'([^']*)'|([;|]+|[^\s,\"';|]+)"
 PIPE_END = {"&&", "||", ";", "|"}
 PLAN_ON = r"[\"']?plan[\"']?\s*[:=]\s*[\"']?(?:true|\$true)\b"
-DURATION = (r"(\d+(?:[.,]\d+)?)\s*(segundos?|seconds?|secs?|minutos?|minutes?|mins?|horas?|hours?|hrs?|s|h)\b")
-UNIT_SECONDS = {"s": 1, "h": 3600}
+# `2m30s`: a bare `m` counts as minutes only when digits follow it directly.
+DURATION = (r"(\d+(?:[.,]\d+)?)\s*(segundos?|seconds?|secs?|minutos?|minutes?|mins?|horas?|hours?|hrs?|s|h|m(?=\d))(?:\b|(?<=m)(?=\d))")
+UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600}
 FOREGROUND_LONG_S = 20
 LOG_CLAIM = r"(registro|log)\b.{0,40}(no contiene errores|sin errores|no errors|is clean|limpio)"
 UV_CLAIM = r"\buvs?\b.{0,20}(correct|ok\b)"
@@ -146,7 +158,8 @@ def local_clock(t):
 def detect_platform(run):
     """windows | macos | linux, from the tools and paths in the trace; 'unknown' when nothing decides."""
     blob = " ".join(str(c["input"]) for c in run["calls"])
-    if any(c["name"] == "PowerShell" for c in run["calls"]) or re.search(r"[A-Za-z]:[\\/]", blob):
+    blob = re.sub(r"\b(?!file:)[A-Za-z][A-Za-z0-9+.\-]*://[^\s\"')]*", " ", blob)  # a URL's path or query is not a local path
+    if any(c["name"] == "PowerShell" for c in run["calls"]) or re.search(DRIVE_PATH, blob):
         return "windows"
     if re.search(r"/Users/|/Applications/|\.app/", blob):
         return "macos"
@@ -277,21 +290,171 @@ def seconds_in(text):
     return found
 
 
-def blender_segments(command):
-    """Each Blender invocation in the command, as the flags Blender itself reads (up to `--` or the next shell operator).
-    Quoted pieces and comma lists (PowerShell -ArgumentList "-b","f.blend") become separate tokens."""
+TOTAL_WORD = r"\b(?:total\w*|en total|overall|in all|altogether|en conjunto)\b[^\d]{0,12}$"
+TOTAL_AFTER = r"\s*(?:\(|-)?\s*(?:in\s+)?(?:total|overall|in all|altogether|en total|en conjunto)\b"
+UNITS = r"(?:frame|step|sample|tile|image|fotograma|paso|muestra)s?"
+PER_AFTER = r"\s*(?:\b(?:per|a|each|por|cada)\b|/)\s*" + UNITS + r"\b"
+PER_BEFORE = r"\b(?:each|every|per|cada)\s+" + UNITS + r"\b[^.;\d]*$"
+FRAME = r"(?:frame|fotograma)s?"
+PER_FRAME = PER_AFTER.replace(UNITS, FRAME)
+PER_FRAME_BEFORE = PER_BEFORE.replace(UNITS, FRAME)
+PHASE_AFTER = r"\s*(?:of\s+)?(?:compil\w*|start-?up|load\w*|set-?up|warm-?up|shader\w*|kernel\w*)"
+WHOLE_BEFORE = r"\b(?:whole|entire|full|overall|in all|altogether|roughly|completo|toda|todo|en conjunto)\b[^\d.;]*$"
+PART_JOIN = r"[\s,+]*(?:\b(?:and|y|e|plus)\b)?[\s,+]*"
+
+
+RANGE_DASH = r"\s*(?:\bto\b|\bhasta\b|-|–|—)\s*"
+RANGE_WORD = r"\s*(?:\band\b|\by\b|\bor\b|\bo\b)\s*"
+RANGE_OPEN = r"\b(?:between|entre)\s*$"
+
+
+def claimed_seconds(text, job_frames=None):
+    """The total duration the message claims: a stated total (`total 48 s`), else the first figure. A figure written in
+    parts (`2 min 30 s`, falling units) is the sum of its parts; a range (`30 s to 2 min`, `between 30 s and 2 min`) is its
+    upper bound. A per-frame figure is multiplied by the frame count the message gives, else by `job_frames` (the job's
+    own -s/-e/-f); with neither it says nothing about the whole job and the result is None."""
+    groups = []  # [start, end, seconds, unit scale of the last part]
+    for m in re.finditer(DURATION, text, re.I):
+        unit = m.group(2).lower()
+        scale = UNIT_SECONDS.get(unit) or (60 if unit.startswith("min") else 3600 if unit[0] == "h" else 1)
+        value = float(m.group(1).replace(",", ".")) * scale
+        prev = groups[-1] if groups else None
+        gap = text[prev[1]:m.start()] if prev else ""
+        follows_unit = re.match(PER_AFTER, text[m.end():m.end() + 25], re.I) or re.match(PHASE_AFTER, text[m.end():m.end() + 20], re.I)
+        if prev and not follows_unit and (re.fullmatch(RANGE_DASH, gap, re.I) or (
+                re.fullmatch(RANGE_WORD, gap, re.I) and re.search(RANGE_OPEN, text[max(0, prev[0] - 12):prev[0]], re.I))):
+            prev[1], prev[2], prev[3] = m.end(), max(prev[2], value), max(prev[3], scale)
+        elif prev and scale < prev[3] and re.fullmatch(PART_JOIN, text[prev[1]:m.start()], re.I):
+            prev[1], prev[2], prev[3] = m.end(), prev[2] + value, scale
+        else:
+            groups.append([m.start(), m.end(), value, scale])
+    if not groups:
+        return None
+    stated = [g for g in groups if re.search(TOTAL_WORD, text[max(0, g[0] - 16):g[0]], re.I)
+              or re.match(TOTAL_AFTER, text[g[1]:g[1] + 20], re.I)]
+    if stated:
+        return stated[-1][2]
+    # No stated total. A per-frame / per-step figure or a setup phase (`30 s compile`) is not the whole job.
+    per_unit = [g for g in groups if re.match(PER_AFTER, text[g[1]:g[1] + 25], re.I)
+                or re.search(PER_BEFORE, text[max(0, g[0] - 45):g[0]], re.I)]
+    parts = [g for g in groups if re.match(PHASE_AFTER, text[g[1]:g[1] + 20], re.I)]
+    whole = [g for g in groups if g not in per_unit and g not in parts]
+    marked = [g for g in whole if re.search(WHOLE_BEFORE, text[max(0, g[0] - 25):g[0]], re.I)]
+    if marked:
+        return marked[-1][2]
+    frames = re.search(r"(\d+)\s*(?:frames?|fotogramas?)\b", text, re.I)
+    if per_unit:
+        # Only a per-frame figure scales with the frame count; a per-sample or per-step one says nothing about the whole.
+        per_frame = [g for g in per_unit if re.match(PER_FRAME, text[g[1]:g[1] + 25], re.I)
+                     or re.search(PER_FRAME_BEFORE, text[max(0, g[0] - 45):g[0]], re.I)]
+        if per_frame and (frames or job_frames):
+            return per_frame[0][2] * (int(frames.group(1)) if frames else job_frames)
+        if not whole:
+            return None
+    return (whole or groups)[0][2]
+
+
+# Commands that print or inspect their words and never run them.
+NON_LAUNCH = {"echo", "printf", "write-host", "write-output", "write-error", "cat", "type", "ls", "grep", "head", "tail",
+              "get-content", "test", "set", "export", "which", "where", "file", "stat", "wc"}
+# Blender flags whose next argument is one value, even when it starts with `-` and holds spaces.
+VALUE_FLAGS = {"--python-expr", "--python-text", "--python", "-P", "--python-console", "--addons", "--app-template"}
+
+
+# Shell operators that end one command (`&` backgrounds it); a `)` or `}` stuck to one (`&)`) is ignored.
+SEG_END = PIPE_END | {"&"}
+# A shell that takes the command to run as its next argument: `bash -c 'blender ...'`, `cmd /c "..."`.
+SHELL_C = {"-c", "-lc", "-ic", "-command", "/c", "/k"}
+# Blender stops reading flags at either of these; what follows belongs to the script.
+FLAGS_END = {"--", "--args"}
+ASSIGN = re.compile(r"\$?\{?(\w+)\}?=(.*)", re.S)
+
+
+def _is_blender_name(path):
+    return bool(re.fullmatch(BLENDER_EXE, path.replace("\\", "/").rsplit("/", 1)[-1].strip(), re.I))
+
+
+def _scan(command):
+    """Each Blender invocation in the command: {'flags': what Blender itself reads (up to `--` / `--args`), 'raw': the text of
+    the invocation up to the next shell operator or line, 'post': the text after `--` / `--args`}. Quoted pieces and comma
+    lists (PowerShell -ArgumentList "-b","f.blend") become separate tokens; the payload of `bash -c '...'` is scanned too;
+    a variable that was assigned a Blender path (`exe=blender`, `$exe = "blender"`) counts as Blender. It tokenizes; it does
+    not parse the shell."""
     segments, current = [], None
-    for quoted, single, bare in re.findall(TOKEN, command):
-        tok = quoted or single or bare
-        if re.fullmatch(BLENDER_EXE, tok.replace("\\", "/").rsplit("/", 1)[-1], re.I):
-            current = []
+    first, prev, end = None, None, 0  # first word of this shell piece; previous token; end of the previous match
+    blender_vars = set()
+    toks = list(re.finditer(TOKEN, command))
+
+    def close(at):
+        nonlocal current
+        if current is not None:
+            current["raw"] = command[current.pop("start"):at]
+            dd = current.pop("dd")
+            current["post"] = command[dd:at] if dd is not None else ""
+            current = None
+
+    for i, m in enumerate(toks):
+        groups = m.groups()
+        tok = next(g for g in groups if g is not None)
+        quoted, single, bare = groups
+        gap = command[end:m.start()]
+        if "\n" in gap and not re.search(r"[\\`][ \t\r]*\n", gap):
+            first = None
+            close(end)
+        prev_end, end = end, m.end()
+        core = re.sub(r"^(?:\$\(|[({])+", "", tok) if bare is not None else tok
+        last = core.replace("\\", "/").rsplit("/", 1)[-1]
+        word = last.lower().removesuffix(".exe")
+        if first is None:
+            first = word
+        op = bare is not None and core.rstrip(")}") in SEG_END
+        if current is None and (quoted is not None or single is not None) and prev and prev.lower() in SHELL_C:
+            segments.extend(_scan(tok))
+            prev = tok
+            continue
+        # Remember `exe=blender` / `$exe = "blender"` / `exe="blender"`.
+        if bare is not None:
+            assign = ASSIGN.fullmatch(core)
+            value = None
+            if assign and not assign.group(2) and i + 1 < len(toks) and toks[i + 1].start() == m.end():
+                value = next(g for g in toks[i + 1].groups() if g is not None)
+                name = assign.group(1)
+            elif assign:
+                value, name = assign.group(2), assign.group(1)
+            elif core == "=" and prev and re.fullmatch(r"\$\w+", prev) and i + 1 < len(toks):
+                value, name = next(g for g in toks[i + 1].groups() if g is not None), prev[1:]
+            if value is not None and _is_blender_name(value.strip("\"'")):
+                blender_vars.add(name.lower())
+        var = re.fullmatch(r"\$\{?(?:env:)?(\w+)\}?", core)
+        is_exe = (re.fullmatch(BLENDER_EXE, last, re.I) or re.fullmatch(BLENDER_VAR, last, re.I)
+                  or bool(var and var.group(1).lower() in blender_vars))
+        if is_exe and first in NON_LAUNCH and word != first:
+            pass  # `echo "$BLENDER" -b f.blend -a` prints; it launches nothing
+        elif is_exe:
+            close(prev_end)
+            current = {"flags": [], "start": m.start(), "dd": None}
             segments.append(current)
         elif current is not None:
-            if tok == "--" or (bare and tok in PIPE_END):
-                current = None
+            if op:
+                close(prev_end)
+            elif current["dd"] is not None:
+                pass  # the script's own arguments
+            elif tok in FLAGS_END:
+                current["dd"] = m.end()
+            elif (quoted or single) and tok.lstrip().startswith("-") and re.search(r"\s", tok) and prev not in VALUE_FLAGS:
+                current["flags"].extend(tok.split())  # -ArgumentList "-b scene.blend -a": one string holding several flags
             else:
-                current.append(tok)
+                current["flags"].append(tok)
+        if op:
+            first = None
+        prev = tok
+    close(end)
     return segments
+
+
+def blender_segments(command):
+    """The flags Blender reads in each Blender invocation of the command (see _scan)."""
+    return [s["flags"] for s in _scan(command)]
 
 
 def flag_set(tokens, wanted):
@@ -307,16 +470,59 @@ def flag_set(tokens, wanted):
     return found
 
 
+def frame_list_count(val):
+    """How many frames a `-f` value renders: `5` is 1, `1,3,5` is 3, `1..5` is 5; relative (+N/-N) or odd forms give None."""
+    total = 0
+    for part in val.split(","):
+        m = re.fullmatch(r"(\d+)(?:\.\.(\d+))?", part)
+        if not m or (m.group(2) and int(m.group(2)) < int(m.group(1))):
+            return None
+        total += int(m.group(2)) - int(m.group(1)) + 1 if m.group(2) else 1
+    return total
+
+
+def frame_count(tokens, raw=None):
+    """How many frames the invocation renders when its flags say so: the `-f` frames when given (Blender renders those and
+    ignores -s/-e for them), else the -s/-e range, else None."""
+    values, frames = {}, []
+    for i, tok in enumerate(tokens):
+        name, eq, val = tok.partition("=")
+        name = {"--frame-start": "-s", "--frame-end": "-e", "--render-frame": "-f"}.get(name, name)
+        if name in ("-s", "-e", "-f"):
+            val = val if eq else (tokens[i + 1] if i + 1 < len(tokens) else "")
+            if name == "-f":
+                # the command tokenizer splits on commas, so "-f 1,3,5" arrives as "1", "3", "5": rejoin them
+                j = i + (1 if eq else 2)
+                while (j < len(tokens) and re.fullmatch(r"\d+(?:\.\.\d+)?", tokens[j])
+                       and (raw is None or re.search(re.escape(val) + r"\s*,\s*" + re.escape(tokens[j]) + r"(?![\d.])", raw))):
+                    val, j = val + "," + tokens[j], j + 1
+                frames.append(val)
+            elif re.fullmatch(r"[+-]?\d+", val):
+                values[name] = int(val)
+    if frames:
+        counts = [frame_list_count(v) for v in frames]
+        return None if None in counts else sum(counts)
+    if "-s" in values and "-e" in values and values["-e"] >= values["-s"]:
+        return values["-e"] - values["-s"] + 1
+    return None
+
+
+def job_segments(command):
+    """Every background Blender invocation in the command that renders or runs a script, each with its own
+    arguments: {'render', 'frames', 'raw', 'post'}."""
+    jobs = []
+    for seg in _scan(command):
+        tokens = seg["flags"]
+        if flag_set(tokens, BG_FLAGS) and flag_set(tokens, WORK_FLAGS):
+            jobs.append({"render": bool(flag_set(tokens, RENDER_FLAGS)) or "background_render.py" in seg["raw"],
+                         "frames": frame_count(tokens, seg["raw"]), "raw": seg["raw"], "post": seg["post"]})
+    return jobs
+
+
 def blender_job(command):
     """None, or {'render': bool}: a background Blender invocation that renders or runs a script."""
-    job = None
-    for tokens in blender_segments(command):
-        if flag_set(tokens, BG_FLAGS) and flag_set(tokens, WORK_FLAGS):
-            job = job or {"render": False}
-            job["render"] = job["render"] or bool(flag_set(tokens, RENDER_FLAGS))
-    if job and re.search(r"background_render\.py", command):
-        job["render"] = True
-    return job
+    jobs = job_segments(command)
+    return {"render": any(j["render"] for j in jobs)} if jobs else None
 
 
 ARG_TOKENS = re.compile(r"\"[^\"\n]*\"|'[^'\n]*'|[^\s\"']+")
@@ -433,10 +639,38 @@ def args_file_text(call, run, ref, base):
     return re.sub(PLAN_ON, "plan: unknown", text, flags=re.I) if unknown else text
 
 
-def related_text(call, run):
-    """The launch command plus the text of the args file it names, if an earlier call wrote it."""
-    command = call["input"].get("command", "")
-    parts = [command]
+def strip_comment(command):
+    """The command without shell comments: a `#` that starts a word (after space, `;`, `|`, `&`) outside quotes, to the end of its line."""
+    out = []
+    for line in command.split("\n"):
+        quote, i = None, 0
+        while i < len(line):
+            ch = line[i]
+            if quote:
+                if ch == "\\" and quote == '"' and i + 1 < len(line):
+                    i += 1
+                elif ch == quote:
+                    quote = None
+            elif ch in "\"'":
+                quote = ch
+            elif ch == "#" and (i == 0 or line[i - 1].isspace() or line[i - 1] in ";|&("):
+                line = line[:i]
+                break
+            i += 1
+        out.append(line)
+    return "\n".join(out)
+
+
+def related_text(call, run, command=None):
+    """The launch command (or the given part of it) plus the text of the args file it names, if an earlier call wrote it."""
+    if command is None:
+        command = strip_comment(call["input"].get("command", ""))
+    return "\n".join([command] + args_texts(call, run, command))
+
+
+def args_texts(call, run, command):
+    """The text of each args file the command names (`--args-file X`), as it stood when this call launched."""
+    parts = []
     for groups in re.findall(r"--args-file[\"']?[\s,=]+(?:\"([^\"]+)\"|'([^']+)'|([^\s\"',]+))", command):
         ref = next(g for g in groups if g)
         ref = re.sub(r"^(?:\./|\.\./)+", "", norm_path(ref))
@@ -445,37 +679,62 @@ def related_text(call, run):
         # when the launch (or the earlier call) gives no directory, since then nothing else can tell them apart.
         # What the file held when this job launched, not its history: see args_file_text.
         parts.append(args_file_text(call, run, ref, base))
-    return "\n".join(parts)
+    return parts
+
+
+def is_plan(job, call, run):
+    """Whether this one invocation is the plan step: `plan: true` in ITS OWN script arguments (the text after `--` /
+    `--args`) or in the args file it names. `plan: true` in an `echo`, a `:` no-op, a `--python-expr`, or in another command
+    of the same line exempts nothing."""
+    own = job["post"] + "\n" + "\n".join(args_texts(call, run, job["raw"]))
+    return bool(re.search(PLAN_ON, own.replace('\\"', '"'), re.I))
+
+
+def launch_info(call, run):
+    """(None, None, None), or ('detached' | 'foreground', frames, jobs): a Blender job that needs a message before it starts, and the
+    frame count its own flags give (None when they give none). Each invocation is judged by its own arguments."""
+    if call["name"] not in SHELLS:
+        return None, None, None
+    command = strip_comment(call["input"].get("command", ""))
+    jobs = [j for j in job_segments(command) if not is_plan(j, call, run)]  # the plan step makes the message; it is not the job
+    if not jobs:
+        return None, None, None
+    frames = next((j["frames"] for j in jobs if j["render"] and j["frames"]), None)
+    pattern = DETACHED if call["name"] == "Bash" else DETACHED_PS
+    if call["input"].get("run_in_background") or re.search(pattern, command):
+        return "detached", frames, jobs
+    long = call["end"] is not None and call["t"] is not None and call["end"] - call["t"] > FOREGROUND_LONG_S
+    if long or any(j["render"] for j in jobs):
+        return "foreground", frames, jobs
+    return None, None, None
 
 
 def launch_kind(call, run):
     """None, or 'detached' / 'foreground' for a Blender job that needs a message before it starts."""
-    if call["name"] not in SHELLS:
-        return None
-    command = call["input"].get("command", "")
-    job = blender_job(command)
-    if not job:
-        return None
-    if re.search(PLAN_ON, related_text(call, run), re.I):
-        return None  # the plan step makes the message; it is not the job
-    pattern = DETACHED if call["name"] == "Bash" else DETACHED_PS
-    if call["input"].get("run_in_background") or re.search(pattern, command):
-        return "detached"
-    long = call["end"] is not None and call["t"] is not None and call["end"] - call["t"] > FOREGROUND_LONG_S
-    if long or job["render"]:
-        return "foreground"
-    return None
+    return launch_info(call, run)[0]
 
 
-def out_dirs(call, run):
-    found = re.findall(r"out_dir[\"']?\s*[:=]\s*[\"']([^\"']+)[\"']", related_text(call, run))
+def out_dirs(call, run, jobs=None):
+    # Inline JSON inside a command string arrives escaped: {\"out_dir\": \"C:\\\\x\"}.
+    # Given jobs, only those invocations' own text and args files count, not another command of a chained line.
+    if jobs is None:
+        text = related_text(call, run)
+    else:
+        text = "\n".join(j["raw"] + "\n" + "\n".join(args_texts(call, run, j["raw"])) for j in jobs)
+    text = text.replace('\\"', '"')
+    found = re.findall(r"out_dir[\"']?\s*[:=]\s*[\"']([^\"']+)[\"']", text)
     return [norm_path(p) for p in found]
+
+
+def status_path_in(text):
+    """Whether the text names the status file as a path the user can open: a URL ending in render_status.json is not one."""
+    return any(not re.search(URL_SCHEME, m.group(0), re.I) for m in re.finditer(STATUS_PATH, text))
 
 
 def score_announcements(run, args=None):
     timed = [x for x in run["texts"] if x["t"] is not None]
-    launches = [(c, launch_kind(c, run)) for c in run["calls"]]
-    launches = [(c, k) for c, k in launches if k]
+    launches = [(c,) + launch_info(c, run) for c in run["calls"]]
+    launches = [(c, k, n, js) for c, k, n, js in launches if k]
     problems, checked = [], 0
     for c in run["calls"]:
         if c["name"] == LIVE_CODE and c["t"] is not None and c["end"] and c["end"] - c["t"] > 5:
@@ -485,28 +744,31 @@ def score_announcements(run, args=None):
     if not launches and not any(c["t"] is not None for c in run["calls"]):
         return verdict("announcements", "SKIP", "the trace has no timings and no Blender job was launched")
     claimed = None
-    for c, kind in launches:
+    for c, kind, job_frames, job_list in launches:
         checked += 1
         before = [x for x in run["texts"] if not x["child"] and x["seq"] < c["seq"]
                   and (x["t"] is None or c["t"] is None or c["t"] - 900 <= x["t"] <= c["t"])]
         if not before:
             problems.append(f"{kind} Blender job with no message to the user before it")
             continue
-        dirs = out_dirs(c, run)
+        dirs = out_dirs(c, run, job_list)
         def has_path(text):
             flat = norm_path(text)
             # The folder as a whole path: "c:/run/outdated" is not "c:/run/out", "/x/run/out" is not "/run/out".
-            return any(re.search(r"(?<![\w./\-])" + re.escape(d) + r"(?![\w.\-])", flat) for d in dirs) if dirs else bool(re.search(r"render_status", text) and re.search(r"[\\/]", text))
-        full = [x for x in before if has_path(x["text"]) and seconds_in(x["text"])]
+            return any(re.search(r"(?<![\w./\-])" + re.escape(d) + r"(?![\w.\-])", flat) for d in dirs) if dirs else status_path_in(text)
+        # A duration is usable when it speaks for the whole job: a per-frame figure needs a frame count (the message's, or
+        # the job's own -s/-e/-f), a per-sample one never does.
+        usable = lambda text: claimed_seconds(text, job_frames) is not None
+        full = [x for x in before if has_path(x["text"]) and usable(x["text"])]
         if not full:
             missing = []
             if not any(has_path(x["text"]) for x in before):
                 missing.append("the real out_dir" if dirs else "a path to render_status.json")
-            if not any(seconds_in(x["text"]) for x in before):
+            if not any(usable(x["text"]) for x in before):
                 missing.append("a duration")
             problems.append(f"{kind} Blender job announced without {' or '.join(missing)}")
             continue
-        claimed = seconds_in(full[-1]["text"])[0]
+        claimed = claimed_seconds(full[-1]["text"], job_frames)
     if claimed is not None and args is not None and getattr(args, "status", None):
         status = json.load(open(args.status, encoding="utf-8"))
         if status.get("started") and status.get("ended"):

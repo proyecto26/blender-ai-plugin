@@ -20,18 +20,31 @@ ARGS:
               is written as the base cage plus a subdivision scheme, and a plain import gives back the cage.
 
 Matching: an imported object is paired with the original of the same type and the same name after USD name cleaning
-(characters other than letters, digits and _ become _) and without Blender's .001 suffix. The export writes a
-transform prim and a mesh prim of the same name per mesh object, so the import yields an empty AND a mesh with one
-name: they are told apart by type. Material names are compared the same way,
+(characters other than letters, digits and _ become _) and without Blender's .001 suffix. A mesh object is matched by
+its MESH DATA name, not its object name: the export writes a transform prim named after the object and a mesh prim
+named after the mesh data, and the import returns one object named after the mesh prim (measured on Blender 5.2:
+object "Crate" with mesh "Cube" comes back as "Cube"). Empties and other types are matched by object name. Results
+are still listed under the original object's name. Objects that share a label (linked duplicates share one mesh) are
+paired with their imports by the closest world matrix. The import merges the transform prim into the mesh object, so
+the object name is not recoverable: duplicates at the SAME transform are paired by the assignment with the fewest
+differences (`ambiguous_pairings` lists those labels), so an intact round trip is never reported as a swap. Material names are compared the same way,
 because the import renames a material that already exists. `ok` is true only when nothing differs.
+
+Materials are read from the evaluated object's slots, so an OBJECT-linked slot override is what USD receives and is
+compared. Known loss, reported as `ok: false`: a Geometry Nodes Set Material that puts a material different from the
+slot's on the faces. Blender's USD exporter writes only the slot material, so the file and the import carry the slot
+material and the node's material is gone (measured on Blender 5.2: NodeMat -> SlotMat). Setting the same material the
+slot already holds is not a loss and is `ok: true`.
 """
 import contextlib
+import itertools
 import json
 import os
 import re
 import sys
 
 import bpy
+import numpy as np
 
 SUFFIX_RE = re.compile(r"\.\d{3,}$")
 
@@ -85,19 +98,57 @@ def _describe(obj, depsgraph, imported=False):
     """`imported`: the object came from the USD import, which may add its own .001 to a name that already existed.
     Names of the originals are kept whole (Material.001 is a real name; USD writes it as Material_001)."""
     verts = faces = None
-    slots = obj.material_slots
+    names = [s.material.name for s in obj.material_slots if s.material]
     if obj.type == "MESH":
         ev = obj.evaluated_get(depsgraph)
-        slots = ev.material_slots  # the exporter writes the evaluated materials (e.g. Geometry Nodes Set Material)
         me = ev.to_mesh()
         try:
             verts, faces = len(me.vertices), len(me.polygons)
+            # the materials the evaluated faces use: a Set Material node replaces a slot's material, and a slot that
+            # no face uses is not written by the exporter, so the slot list alone gives false differences
+            idx = np.empty(len(me.polygons), dtype=np.int32)
+            me.polygons.foreach_get("material_index", idx)
+            mats = list(me.materials)
+            slots = ev.material_slots  # the evaluated object's slots honour an OBJECT-linked override of the mesh material
+            used = []
+            for i in sorted(set(idx.tolist())):
+                m = slots[i].material if 0 <= i < len(slots) else None
+                m = m or (mats[i] if 0 <= i < len(mats) else None)
+                if m:
+                    used.append(m.name)
+            names = used
         finally:
             ev.to_mesh_clear()
-    mats = sorted({_clean_key(SUFFIX_RE.sub("", s.material.name) if imported else s.material.name)
-                   for s in slots if s.material})
+    mats = sorted({_clean_key(SUFFIX_RE.sub("", n) if imported else n) for n in names})
     return {"type": obj.type, "verts": verts, "faces": faces, "materials": mats,
             "matrix": [list(row) for row in obj.matrix_world]}
+
+
+def _assign(n_k, n_c, cost):
+    """Pairs (key index, candidate index) of the cheapest one-to-one assignment; exhaustive up to 7x7, else greedy."""
+    if n_k == 0 or n_c == 0:
+        return []
+    if n_k <= 7 and n_c <= 7:
+        if n_k <= n_c:
+            opts = (list(enumerate(p)) for p in itertools.permutations(range(n_c), n_k))
+        else:
+            opts = (list(zip(p, range(n_c))) for p in itertools.permutations(range(n_k), n_c))
+        return min(opts, key=lambda pairs: sum(cost(i, j) for i, j in pairs))
+    out, used_k, used_c = [], set(), set()
+    for _c, i, j in sorted((cost(i, j), i, j) for i in range(n_k) for j in range(n_c)):
+        if i not in used_k and j not in used_c:
+            used_k.add(i)
+            used_c.add(j)
+            out.append((i, j))
+    return out
+
+
+def _match_key(obj):
+    """Where an original shows up after the round trip: the exporter writes a mesh object as a transform prim named
+    after the object and a mesh prim named after the MESH DATA, and the import gives the merged object the mesh prim's
+    name (measured on Blender 5.2: object "Crate" with mesh "Cube" comes back as "Cube"). Other types keep the object name."""
+    label = obj.data.name if obj.type == "MESH" and obj.data else obj.name
+    return (obj.type, _clean_key(label))
 
 
 def _targets(names):
@@ -125,22 +176,25 @@ def main(out_path, objects=None, tol=1e-4, keep=False, subdivision="TESSELLATE")
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
     with _render_levels(targets):
         dg = bpy.context.evaluated_depsgraph_get()
-        before = {(o.type, _clean_key(o.name)): _describe(o, dg) for o in targets}
+        before = {(o.type, _clean_key(o.name), o.name): _describe(o, dg) for o in targets}
 
     snap = {coll: {i.name for i in getattr(bpy.data, coll)}
-            for coll in ("objects", "meshes", "materials", "images", "collections", "cameras", "lights", "node_groups", "worlds")}
+            for coll in ("objects", "meshes", "materials", "images", "collections", "cameras", "lights", "node_groups", "worlds",
+                 "armatures", "actions")}
     scene = bpy.context.scene
     world, rd = scene.world, scene.render
     timing = (scene.frame_start, scene.frame_end, scene.frame_step, scene.frame_current, rd.fps, rd.fps_base)
     view_layer = bpy.context.view_layer
     prev_sel = list(bpy.context.selected_objects)
     prev_active = view_layer.objects.active
-    for o in prev_sel:
-        o.select_set(False)
-    for o in targets:
-        o.select_set(True)
-    view_layer.objects.active = targets[0]
     try:
+        # inside the try: an object that cannot be selected (its collection is excluded) refuses the run, and the
+        # selection and active object the user had are put back below
+        for o in prev_sel:
+            o.select_set(False)
+        for o in targets:
+            o.select_set(True)
+        view_layer.objects.active = targets[0]
         with bpy.context.temp_override(active_object=targets[0], selected_objects=targets,
                                        selected_editable_objects=targets):
             bpy.ops.wm.usd_export(filepath=out_path, selected_objects_only=True, export_materials=True,
@@ -155,7 +209,10 @@ def main(out_path, objects=None, tol=1e-4, keep=False, subdivision="TESSELLATE")
         if scene.world is not world:
             scene.world = world
         for o in targets:
-            o.select_set(False)
+            try:
+                o.select_set(False)
+            except RuntimeError:
+                pass  # not in this view layer: it was never selected
         for o in prev_sel:
             if o.name in bpy.data.objects:
                 o.select_set(True)
@@ -163,12 +220,41 @@ def main(out_path, objects=None, tol=1e-4, keep=False, subdivision="TESSELLATE")
 
     new = {coll: [i for i in getattr(bpy.data, coll) if i.name not in snap[coll]] for coll in snap}
     dg = bpy.context.evaluated_depsgraph_get()
-    after, duplicates = {}, []
+    # Objects that share one mesh (linked duplicates) share a label, so each label holds a LIST of imported objects
+    # and the originals with that label are paired with them by transform below.
+    after = {}
     for o in new["objects"]:
-        k = (o.type, _clean_key(SUFFIX_RE.sub("", o.name)))
-        if k in after:
-            duplicates.append(o.name)
-        after[k] = _describe(o, dg, imported=True)
+        # a mesh object is named after its mesh prim, which the exporter names from the MESH DATA (see "Matching")
+        label = o.data.name if o.type == "MESH" and o.data else o.name
+        k = (o.type, _clean_key(SUFFIX_RE.sub("", label)))
+        after.setdefault(k, []).append(_describe(o, dg, imported=True))
+
+    def _matrix_diff(a, b):
+        return max(abs(x - y) for ra, rb in zip(a["matrix"], b["matrix"]) for x, y in zip(ra, rb))
+
+    # Pair originals with imports within each label by the closest world matrix, so two linked duplicates at
+    # different transforms are each compared with their own import and never with each other's.
+    paired, duplicates, ambiguous = {}, [], []
+    groups = {}
+    for key in before:
+        groups.setdefault(_match_key(bpy.data.objects[key[2]]), []).append(key)
+    for mk, keys in groups.items():
+        cands = list(after.get(mk, []))
+        # The import merges the transform prim into the mesh object, so the object's name is not recoverable and
+        # coincident duplicates tie on the matrix. A pair costs its matrix distance (beyond tol, dominant) plus a
+        # step for each differing material set or vert/face count; the cheapest whole assignment wins, so an
+        # intact round trip never reports a swap as a loss while a real loss on one still shows.
+        def cost(ki, ci):
+            b, c = before[keys[ki]], cands[ci]
+            d = _matrix_diff(b, c)
+            return ((1000 + d) if d > tol else 0) + 10 * (b["materials"] != c["materials"]) \
+                + 10 * ((b["verts"], b["faces"]) != (c["verts"], c["faces"])) + d * 1e-6
+        for ki, ci in _assign(len(keys), len(cands), cost):
+            paired[keys[ki]] = cands[ci]
+        if len({tuple(round(x, 4) for row in before[k]["matrix"] for x in row) for k in keys}) < len(keys):
+            ambiguous.append(mk[1])
+        if len(cands) > len(keys):
+            duplicates.append(f"{mk[1]} ({len(cands)} imported for {len(keys)} exported)")
 
     problems = []
     count_before = {}
@@ -176,13 +262,13 @@ def main(out_path, objects=None, tol=1e-4, keep=False, subdivision="TESSELLATE")
         count_before[d["type"]] = count_before.get(d["type"], 0) + 1
     # Compare only objects that exist on both sides by type: the import may add Xform empties for parents.
     for typ in ("MESH",):
-        n_after = sum(1 for d in after.values() if d["type"] == typ)
+        n_after = sum(1 for ds in after.values() for d in ds if d["type"] == typ)
         if n_after != count_before.get(typ, 0):
             problems.append(f"{typ} count: exported {count_before.get(typ, 0)}, imported {n_after}")
     per_object = {}
     for key, b in before.items():
         k = key[1]
-        a = after.get(key)
+        a = paired.get(key)
         if a is None:
             problems.append(f"{k}: not found after import as {key[0]}")
             per_object[k] = {"found": False}
@@ -198,22 +284,22 @@ def main(out_path, objects=None, tol=1e-4, keep=False, subdivision="TESSELLATE")
         if a["materials"] != b["materials"]:
             problems.append(f"{k}: materials {b['materials']} -> {a['materials']}")
     for name in duplicates:
-        problems.append(f"{name}: imported twice under the same cleaned name")
+        problems.append(f"{name}: more objects imported than exported")
 
     removed = 0
     if not keep:
         for o in new["objects"]:
             bpy.data.objects.remove(o, do_unlink=True)
             removed += 1
-        for coll in ("meshes", "materials", "images", "cameras", "lights", "node_groups", "collections", "worlds"):
+        for coll in ("meshes", "armatures", "actions", "materials", "images", "cameras", "lights", "node_groups", "collections", "worlds"):
             for item in new[coll]:
                 try:
                     getattr(bpy.data, coll).remove(item)
                 except (ReferenceError, RuntimeError):
                     pass
     return {"ok": not problems, "problems": problems, "path": out_path, "bytes": os.path.getsize(out_path),
-            "exported": sorted(k[1] for k in before), "imported": sorted(f"{t}:{n}" for t, n in after), "per_object": per_object,
-            "counts_exported": count_before, "removed_from_scene": removed, "kept": bool(keep)}
+            "exported": sorted(k[1] for k in before), "imported": sorted(f"{t}:{n}" for (t, n), ds in after.items() for _ in ds), "per_object": per_object,
+            "counts_exported": count_before, "ambiguous_pairings": ambiguous, "removed_from_scene": removed, "kept": bool(keep)}
 
 
 ARGS = globals().get("ARGS") or _cli_args()

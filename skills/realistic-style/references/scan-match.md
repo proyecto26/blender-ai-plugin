@@ -27,7 +27,8 @@ direction hides one kind of error:
 
 - model to scan: points of the model that float above or sink below the scan (distance from model vertices to scan surface);
 - scan to model: parts of the scan the model misses, such as a handle or a recess (distance from scan vertices to the model's
-  surface).
+  surface). `tests/blender/test_iter13_docs.py` runs this direction on a scan with a small block standing off the sphere that the
+  model lacks: model to scan worst case is 0.002 m while scan to model reports 0.356 m (Blender 5.2.3).
 
 Starting tolerances, as a share of the object's bounding-box diagonal: mean under 0.2%, worst case under 1.5% for a
 background asset, under 0.5% for a hero asset. A 1 m prop with a 1.7 m diagonal then allows worst-case 25 mm off for

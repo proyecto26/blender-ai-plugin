@@ -15,7 +15,8 @@ The silhouette is the union of the projected triangles: other objects do not hid
 features thinner than a pixel can drop out. Mask rows are top-down: bbox y counts from the top of the image.
 Reference mask: the alpha channel when the image has any alpha below 1, otherwise everything that differs from the
 background colour, which is read from the four corners (they must agree, or the script refuses and asks for an
-alpha image). The loaded image datablocks are removed again; the scene is not changed.
+alpha image). An object or camera that is not in the view layer (excluded collection) is refused, because its transform
+is not evaluated. The loaded image datablocks are removed again; the scene is not changed.
 
 ARGS:
     objects   (list[str], required) mesh objects whose union is the subject
@@ -85,6 +86,14 @@ def load_reference(path, mode="auto", bg_tol=0.1):
     return mask, {"width": w, "height": h, "mask_from": used}
 
 
+def _require_in_view_layer(obj):
+    """An object in an excluded collection is not evaluated, so its world matrix is whatever it was when it was last
+    evaluated: scoring it would silently use a stale transform. Refused instead."""
+    if obj.name not in bpy.context.view_layer.objects:
+        raise ValueError(f"{obj.name!r} is not in the view layer (its collection is excluded or it is not linked to "
+                         "the scene), so its transform is not evaluated; include the collection first")
+
+
 def collect_triangles(names, depsgraph):
     """World-space triangles (n, 3, 3) of the evaluated meshes, modifiers included."""
     out = []
@@ -92,6 +101,7 @@ def collect_triangles(names, depsgraph):
         obj = bpy.data.objects.get(name)
         if obj is None or obj.type != "MESH":
             raise ValueError(f"not a mesh object: {name!r}")
+        _require_in_view_layer(obj)
         ev = obj.evaluated_get(depsgraph)
         me = ev.to_mesh()
         try:
@@ -210,6 +220,7 @@ def _camera(name):
     cam = bpy.data.objects.get(name)
     if cam is None or cam.type != "CAMERA":
         raise ValueError(f"camera not found: {name!r}")
+    _require_in_view_layer(cam)
     return cam
 
 
@@ -220,12 +231,14 @@ def main(objects=None, views=None, min_iou=0.9, bg_tol=0.1, _library=False):
         raise ValueError("objects (list of mesh object names) is required")
     if not views:
         raise ValueError("views (list of {camera, reference}) is required")
+    bpy.context.view_layer.update()  # objects linked a moment ago join the view layer, and transforms are current
     refs = []
     for v in views:
         if not isinstance(v, dict) or "camera" not in v or "reference" not in v:
             raise ValueError(f"each view needs camera and reference: {v!r}")
         _camera(v["camera"])
         refs.append(load_reference(v["reference"], v.get("mask", "auto"), float(bg_tol)))
+    bpy.context.view_layer.update()
     depsgraph = bpy.context.evaluated_depsgraph_get()
     tris = collect_triangles(objects, depsgraph)
     out = []

@@ -21,6 +21,9 @@ ARGS:
     color_levels (int) levels per colour channel after quantization, 3..256 (default 32, i.e. 5 bits per channel)
     dither_size (int) Bayer matrix side: 2, 4 or 8 (default 4)
 
+A compositor group shared with another scene is copied for this scene first (copy on write); the other scene keeps
+the original and is not changed.
+
 The dither works in display space (Linear Rec.709 -> sRGB -> add threshold -> posterize -> back), so with the
 Standard view transform the 8-bit output has exactly `color_levels` values per channel. The threshold is a
 render-sized image: after changing the render resolution, run this script again. Scene render dither_intensity
@@ -159,6 +162,10 @@ def _tree(scene):
     SK_PS1_ node out wherever it sits in the chain (nodes before and after stay connected) and drops this
     scene's old threshold image unless some other node tree still uses it."""
     tree = scene.compositing_node_group
+    if tree is not None and tree.users - (1 if tree.use_fake_user else 0) > 1:
+        # another scene uses this group: this scene gets its own copy, so the other scene is not changed
+        tree = tree.copy()
+        scene.compositing_node_group = tree
     if tree is None:
         tree = bpy.data.node_groups.new("Compositing", "CompositorNodeTree")
         scene.compositing_node_group = tree

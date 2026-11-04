@@ -5,14 +5,14 @@ work with a few bone or slider controls. Shape keys hold the poses; drivers conn
 
 ## Set of keys
 
-Minimum (matches the game minimum in `SKILL.md`): `jaw_open`, `blink_L`, `blink_R`, `brow_up_L`, `brow_up_R`, `smile`.
+Suggested minimum: `jaw_open`, `blink_L`, `blink_R`, `brow_up_L`, `brow_up_R`, `smile`. `SKILL.md` lists a smaller game minimum (jaw open, blink L/R, brow up/down); this set adds `smile` and splits the brow by side.
 Name left/right keys with the same `_L` / `_R` suffix as the bones. Add keys only for expressions the shot needs; every key
 is one more morph target to export and to test.
 
 Rules:
 
 - The Basis key is the neutral face. Never edit it after other keys exist unless you intend to move them all.
-- Edit a key by changing vertex positions only. Adding or deleting vertices after keys exist breaks all of them.
+- Edit a key by changing vertex positions. In Edit Mode, adding or deleting a vertex after keys exist keeps every key the same length as the mesh and leaves the other vertices' offsets alone (measured on Blender 5.2.3 with a 16-vertex grid and one key); an isolated vertex you add (`bmesh` `verts.new`) has zero offset in every existing key, so it does not follow the pose until you sculpt it into each key. Operators that create vertices from existing ones do not give zero: in the same test, duplicate copied the source vertex's key position (offset 0.1 where the source had 0.1), extrude gave -0.2 after a 0.3 move with the source at 0.1, which fits the key position being copied and only the Basis position being moved, and subdivide gave each new vertex an offset between its neighbours (0.0 to 0.3 for keys offset 0.0 to 0.3). In all three the old vertices' offsets were unchanged, and every key grew to the new vertex count (key length equals mesh vertex count). After extrude or subdivide, check each key near the new vertices. Rebuilding the mesh from a script was not tested against keys.
 - One key per pose. Combinations (smile + jaw open) are the sum of two keys; when the sum looks wrong, add a corrective key
   and drive it from both (see below).
 - Keys that must never go negative or above 1: set `slider_min = 0` and `slider_max = 1`. Outside that range the face
@@ -146,7 +146,7 @@ the bone is over-rotated, and a custom property drives a second key. They do not
 | Driver field red or `is_valid` False | bone name or data path misspelled | copy the name from `rig.pose.bones`; custom property must exist before the driver evaluates |
 | Face stretches past the sculpt | no clamp, slider range open | clamp in the expression and set `slider_min`/`slider_max` |
 | Two keys together look wrong | both move the same verts | corrective key driven by both |
-| Keys vanish after editing the mesh | vertex count changed | rebuild keys; never add or delete vertices once keys exist |
+| Keys lost or wrong after editing the mesh | the mesh was rebuilt from a script, or new vertices (extrude, duplicate, subdivide) carry copied or interpolated offsets | Edit Mode add or delete keeps the keys (see Rules); after extrude, duplicate or subdivide check each key near the new vertices; a rebuilt mesh was not tested, so rebuild the keys |
 
 ## Before export
 

@@ -96,12 +96,13 @@ class Rec:
             ne, nl = len(me.edges), len(me.loops)
             le = np.empty(nl, dtype=np.int32)
             me.loops.foreach_get("edge_index", le)
-            used = np.bincount(le, minlength=ne)
-            used = used[used > 0]
+            count = np.bincount(le, minlength=ne)
+            used = count[count > 0]
             self.closed = bool(nt > 0 and np.all(used == 2))
             ed = np.empty(ne * 2, dtype=np.int32)
             me.edges.foreach_get("vertices", ed)
             self.edges = ed.reshape(ne, 2)
+            self.boundary = self.edges[count == 1]  # border edges of an open surface (one face on them)
         finally:
             ev.to_mesh_clear()
         self.ok = len(self.tris) > 0
@@ -229,6 +230,38 @@ def _on_surface_fraction(src, dst, tol, cap, rng):
     return n / len(pts)
 
 
+def _border_distance(rec, p):
+    """Distance from point p to the nearest border edge of the open mesh `rec` (inf when it has none)."""
+    if len(rec.boundary) == 0:
+        return float("inf")
+    a, b = rec.verts[rec.boundary[:, 0]], rec.verts[rec.boundary[:, 1]]
+    ab = b - a
+    t = np.clip(np.einsum("ij,ij->i", p - a, ab) / np.maximum(np.einsum("ij,ij->i", ab, ab), 1e-30), 0.0, 1.0)
+    return float(np.linalg.norm(a + ab * t[:, None] - p, axis=1).min())
+
+
+def _shares_segment(src, dst, loc, n_dst, step, tol):
+    """True when the surfaces of `src` and `dst` both continue from the point `loc` along the line where their planes
+    meet (a step of `step` either way stays within `tol` of both surfaces and away from their borders): they overlap
+    in a segment through both, not at a point and not along a border."""
+    near = src.bvh.find_nearest(Vector(loc))
+    if near[0] is None:
+        return False
+    u = np.cross(n_dst, np.array(near[1], dtype=np.float64))
+    norm = float(np.linalg.norm(u))
+    if norm < 1e-6:
+        return False
+    u /= norm
+    for sign in (1.0, -1.0):
+        q = Vector(loc + sign * step * u)
+        hits = [m.bvh.find_nearest(q) for m in (src, dst)]
+        # the shared segment must run through the interior of both sheets: one that runs along a border of either
+        # (a wall standing on a floor, T-shaped) is contact
+        if all(h[0] is not None and h[3] <= tol for h in hits) and all(_border_distance(m, np.array(q)) > 10 * tol for m in (src, dst)):
+            return True
+    return False
+
+
 def _pierces(src, dst, eps):
     """True when an edge of `src` passes through the surface of `dst` (not just ending on it).
 
@@ -253,7 +286,24 @@ def _pierces(src, dst, eps):
             s = t + hit[3]
             if eps < s < length - eps:
                 if not dst.closed:
-                    return True  # an open surface has no inside to test: any mid-edge crossing counts
+                    # an open surface has no inside to test, so the edge must go through the face itself: from one
+                    # side to the other, and not at the face's border (an edge meeting a border only touches it)
+                    n = np.array(hit[1], dtype=np.float64)
+                    loc = np.array(hit[0], dtype=np.float64)
+                    sa, sb = float((a - loc) @ n), float((b - loc) @ n)
+                    if sa * sb < 0 and min(abs(sa), abs(sb)) > 10 * eps:
+                        if _border_distance(dst, loc) > 10 * eps:
+                            return True
+                        # on the border of `dst`: two open sheets that cross in an exact X meet only at borders, yet
+                        # share a segment. They cross when a short step along the line where the two planes meet
+                        # stays on both surfaces; a lone corner contact, and a closed `src` (a box edge meeting
+                        # a shelf's border), do not
+                        if not src.closed and _shares_segment(src, dst, loc, n, 1e-3 * reach, 10 * eps):
+                            return True
+                    t = s + 2 * eps
+                    if t >= length:
+                        break
+                    continue
                 cuts.append(s)
             t = s + 2 * eps
             if t >= length:

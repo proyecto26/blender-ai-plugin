@@ -31,9 +31,13 @@ mask map, whose AO is in G.
 | Roughness | Mask map A, inverted | smoothness is the inverse of roughness: `smoothness = 1 - roughness` |
 | Normal | Normal Map | texture type Normal Map in Unity |
 
-The inversion and the linear import come from third-party guidance, not Unity's page:
+The linear import rule is in Unity's page: it says to disable sRGB (Color Texture) in the Image Importer Inspector when importing
+the texture, and to build the mask map as a linear composited map
+(https://docs.unity3d.com/Packages/com.unity.render-pipelines.high-definition@17.0/manual/Mask-Map-and-Detail-Map.html, read for this
+revision). The same page does not mention inverting roughness, and it does not say what to put in blue when there is no detail
+mask (it only says blue is the detail mask: 1 shows the detail, 0 masks it). Those two come from third-party guidance:
 https://aitextured.com/articles/guides/unity-hdrp-mask-map-from-pbr-texture-set/ states to invert roughness before placing
-it in alpha, to fill blue with white when no detail mask is used, and to import the mask map with sRGB disabled. Confirm it in
+it in alpha and to fill blue with white when no detail mask is used. Confirm it in
 Unity with one known value: a material of roughness 0.2 should read smoothness 0.8.
 
 Normal-map green-channel convention is not covered here: check a lit preview of the first import.
