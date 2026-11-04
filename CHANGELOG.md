@@ -8,6 +8,20 @@ Format: [Semantic Versioning](https://semver.org/) — `Major.Minor.Patch`
 
 ## [Unreleased]
 
+Iteration 14: three of the small open items from iteration 13.
+
+- `score_run.py`: reads Blender launches hidden in `eval`, PowerShell `Invoke-Expression`/`iex`, `$(...)`, backticks,
+  same-command aliases and variables, and line continuations (shell-specific, also inside `bash -c` and `eval`
+  payloads); it no longer flags the same text inside `echo`, `grep` or a commit message. A run-time-built executable
+  is NOTE instead of OK. With no out_dir, a status path must be in the `-o` folder or its parent, resolved against the
+  session cwd and earlier plain `cd`s.
+- `usd_roundtrip.py`: coincident linked duplicates are paired by a minimum-cost assignment (Hungarian, any count, about
+  12 ms for 200), with real differences counted as whole numbers and the evaluated bounding box as a tie-breaker that
+  cannot outweigh them; ties are found by re-solving with each pair forbidden.
+- `import_painter_textures.py`: when neither the argument nor the file name gives the normal convention, a curl test on
+  the map's content adds a warning and `normal_convention_suggestion`; it flips green only with
+  `normal_convention="auto"`. On 216 synthetic maps: 174 right, 0 wrong, 42 undecided.
+
 Iteration 13: the review follow-ups of iteration 12. Plan: `docs/plans/iteration-13-review-follow-ups.md`.
 
 ### Changed
