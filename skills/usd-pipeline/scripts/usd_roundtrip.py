@@ -27,7 +27,7 @@ object "Crate" with mesh "Cube" comes back as "Cube"). Empties and other types a
 are still listed under the original object's name. Objects that share a label (linked duplicates share one mesh) are
 paired with their imports by the closest world matrix. The import merges the transform prim into the mesh object, so
 the object name is not recoverable: duplicates at the SAME transform are paired by the assignment with the fewest
-differences (`ambiguous_pairings` lists those labels), so an intact round trip is never reported as a swap. Material names are compared the same way,
+differences, exactly (a minimum-cost assignment, optimal for any count; the cost looks at material set, vert/face counts and the evaluated bounding box). `ambiguous_pairings` lists the labels where coincident objects remain or two pairings tie, since that is a guess; an intact round trip is never reported as a swap. Material names are compared the same way,
 because the import renames a material that already exists. `ok` is true only when nothing differs.
 
 Materials are read from the evaluated object's slots, so an OBJECT-linked slot override is what USD receives and is
@@ -37,7 +37,6 @@ material and the node's material is gone (measured on Blender 5.2: NodeMat -> Sl
 slot already holds is not a loss and is `ok: true`.
 """
 import contextlib
-import itertools
 import json
 import os
 import re
@@ -97,13 +96,18 @@ def _render_levels(objs):
 def _describe(obj, depsgraph, imported=False):
     """`imported`: the object came from the USD import, which may add its own .001 to a name that already existed.
     Names of the originals are kept whole (Material.001 is a real name; USD writes it as Material_001)."""
-    verts = faces = None
+    verts = faces = bbox = None
     names = [s.material.name for s in obj.material_slots if s.material]
     if obj.type == "MESH":
         ev = obj.evaluated_get(depsgraph)
         me = ev.to_mesh()
         try:
             verts, faces = len(me.vertices), len(me.polygons)
+            if verts:  # evaluated local extent: separates coincident duplicates whose modifiers move vertices without changing counts
+                co = np.empty(verts * 3, dtype=np.float32)
+                me.vertices.foreach_get("co", co)
+                co = co.reshape(-1, 3)
+                bbox = [float(x) for x in (*co.min(axis=0), *co.max(axis=0))]
             # the materials the evaluated faces use: a Set Material node replaces a slot's material, and a slot that
             # no face uses is not written by the exporter, so the slot list alone gives false differences
             idx = np.empty(len(me.polygons), dtype=np.int32)
@@ -120,27 +124,67 @@ def _describe(obj, depsgraph, imported=False):
         finally:
             ev.to_mesh_clear()
     mats = sorted({_clean_key(SUFFIX_RE.sub("", n) if imported else n) for n in names})
-    return {"type": obj.type, "verts": verts, "faces": faces, "materials": mats,
+    return {"type": obj.type, "verts": verts, "faces": faces, "bbox": bbox, "materials": mats,
             "matrix": [list(row) for row in obj.matrix_world]}
 
 
 def _assign(n_k, n_c, cost):
-    """Pairs (key index, candidate index) of the cheapest one-to-one assignment; exhaustive up to 7x7, else greedy."""
+    """Pairs (key index, candidate index) of the minimum-total-cost one-to-one assignment (Hungarian algorithm,
+    O(n^2 m) pure Python): optimal for any size, every row paired when n_k <= n_c, else every candidate."""
     if n_k == 0 or n_c == 0:
         return []
-    if n_k <= 7 and n_c <= 7:
-        if n_k <= n_c:
-            opts = (list(enumerate(p)) for p in itertools.permutations(range(n_c), n_k))
-        else:
-            opts = (list(zip(p, range(n_c))) for p in itertools.permutations(range(n_k), n_c))
-        return min(opts, key=lambda pairs: sum(cost(i, j) for i, j in pairs))
-    out, used_k, used_c = [], set(), set()
-    for _c, i, j in sorted((cost(i, j), i, j) for i in range(n_k) for j in range(n_c)):
-        if i not in used_k and j not in used_c:
-            used_k.add(i)
-            used_c.add(j)
-            out.append((i, j))
-    return out
+    flip = n_k > n_c  # the algorithm assigns every ROW, so the smaller side must be the rows
+    n, m = (n_c, n_k) if flip else (n_k, n_c)
+    c = [[0.0] * (m + 1) for _ in range(n + 1)]
+    for i in range(1, n + 1):
+        for j in range(1, m + 1):
+            c[i][j] = cost(j - 1, i - 1) if flip else cost(i - 1, j - 1)
+    inf = float("inf")
+    u, v, way, match = [0.0] * (n + 1), [0.0] * (m + 1), [0] * (m + 1), [0] * (m + 1)
+    for i in range(1, n + 1):
+        match[0], j0 = i, 0
+        minv, used = [inf] * (m + 1), [False] * (m + 1)
+        while True:
+            used[j0] = True
+            i0, delta, j1 = match[j0], inf, 0
+            for j in range(1, m + 1):
+                if not used[j]:
+                    cur = c[i0][j] - u[i0] - v[j]
+                    if cur < minv[j]:
+                        minv[j], way[j] = cur, j0
+                    if minv[j] < delta:
+                        delta, j1 = minv[j], j
+            for j in range(m + 1):
+                if used[j]:
+                    u[match[j]] += delta
+                    v[j] -= delta
+                else:
+                    minv[j] -= delta
+            j0 = j1
+            if match[j0] == 0:
+                break
+        while j0:
+            j1 = way[j0]
+            match[j0], j0 = match[j1], j1
+    pairs = [(match[j] - 1, j - 1) for j in range(1, m + 1) if match[j]]
+    return sorted((j, i) for i, j in pairs) if flip else sorted(pairs)
+
+
+def _has_tie(pairs, n_k, n_c, cost, eps=1e-9):
+    """True when another assignment of the same total exists one move away: two pairs exchanging their candidates,
+    or one pair taking a candidate nobody was given. A pairing with a tie is a guess between equals."""
+    cur = {i: j for i, j in pairs}
+    base = {i: cost(i, j) for i, j in pairs}
+    free = [j for j in range(n_c) if j not in set(cur.values())]
+    rows = sorted(cur)
+    for x, i in enumerate(rows):
+        for j in free:
+            if abs(cost(i, j) - base[i]) <= eps:
+                return True
+        for i2 in rows[x + 1:]:
+            if abs(cost(i, cur[i2]) + cost(i2, cur[i]) - base[i] - base[i2]) <= eps:
+                return True
+    return False
 
 
 def _match_key(obj):
@@ -247,11 +291,13 @@ def main(out_path, objects=None, tol=1e-4, keep=False, subdivision="TESSELLATE")
         def cost(ki, ci):
             b, c = before[keys[ki]], cands[ci]
             d = _matrix_diff(b, c)
-            return ((1000 + d) if d > tol else 0) + 10 * (b["materials"] != c["materials"]) \
+            bb = b["bbox"] is not None and c["bbox"] is not None and max(abs(x - y) for x, y in zip(b["bbox"], c["bbox"])) > 1e-3
+            return ((1000 + d) if d > tol else 0) + 10 * (b["materials"] != c["materials"]) + 10 * bb \
                 + 10 * ((b["verts"], b["faces"]) != (c["verts"], c["faces"])) + d * 1e-6
-        for ki, ci in _assign(len(keys), len(cands), cost):
+        pairs = _assign(len(keys), len(cands), cost)
+        for ki, ci in pairs:
             paired[keys[ki]] = cands[ci]
-        if len({tuple(round(x, 4) for row in before[k]["matrix"] for x in row) for k in keys}) < len(keys):
+        if len({tuple(round(x, 4) for row in before[k]["matrix"] for x in row) for k in keys}) < len(keys)                 or _has_tie(pairs, len(keys), len(cands), cost):
             ambiguous.append(mk[1])
         if len(cands) > len(keys):
             duplicates.append(f"{mk[1]} ({len(cands)} imported for {len(keys)} exported)")
@@ -275,7 +321,9 @@ def main(out_path, objects=None, tol=1e-4, keep=False, subdivision="TESSELLATE")
             continue
         worst = max(abs(x - y) for ra, rb in zip(a["matrix"], b["matrix"]) for x, y in zip(ra, rb))
         entry = {"found": True, "matrix_max_diff": worst, "verts": [b["verts"], a["verts"]],
-                 "faces": [b["faces"], a["faces"]], "materials": [b["materials"], a["materials"]]}
+                 "faces": [b["faces"], a["faces"]], "materials": [b["materials"], a["materials"]],
+                 "bbox_max_diff": (max(abs(x - y) for x, y in zip(b["bbox"], a["bbox"]))
+                                   if b["bbox"] is not None and a["bbox"] is not None else None)}
         per_object[k] = entry
         if worst > tol:
             problems.append(f"{k}: transform differs by {worst:.6f}")

@@ -439,6 +439,80 @@ def run_all(out_dir):
         check("C3 a real loss on one coincident duplicate is still ok:false", not r["ok"] and any("LostMat" in p for p in r["problems"]),
               [r["ok"], r["problems"]])
 
+    @case
+    def c3_optimal_assignment():
+        import itertools
+        import random
+        # a real (tiny) run only to get the script's own globals
+        reset()
+        cube("Q")
+        g = runpy.run_path(os.path.join(SKILLS, "usd-pipeline", "scripts", "usd_roundtrip.py"),
+                           init_globals={"ARGS": {"out_path": os.path.join(out_dir, "c3i", "q.usdc"), "objects": ["Q"]}},
+                           run_name="__skill_test__")
+        assign, has_tie = g["_assign"], g["_has_tie"]
+
+        def total(pairs, m):
+            return sum(m[i][j] for i, j in pairs)
+        # 8 coincident objects: greedy takes the cheapest cell (0,0)=1 first and is then forced into (1,1)=100
+        m = [[50] * 8 for _ in range(8)]
+        for k in range(2, 8):
+            m[k][k] = 0
+        m[0][0], m[0][1], m[1][0], m[1][1] = 1, 2, 2, 100
+        pairs = assign(8, 8, lambda i, j: m[i][j])
+        check("C3 8x8 where greedy gives 101 for the first two pairs, the optimum is 4 in total",
+              total(pairs, m) == 4 and (0, 1) in pairs and (1, 0) in pairs and len(pairs) == 8, [total(pairs, m), pairs])
+        # up to 7x7 the result equals the exhaustive minimum, square and rectangular
+        rng, same = random.Random(14), True
+        for n_k, n_c in [(1, 1), (2, 3), (3, 2), (5, 5), (7, 7), (4, 7), (7, 3), (6, 6)] * 6:
+            mm = [[rng.randint(0, 30) for _ in range(n_c)] for _ in range(n_k)]
+            got = assign(n_k, n_c, lambda i, j: mm[i][j])
+            if n_k <= n_c:
+                best = min(sum(mm[i][j] for i, j in enumerate(p)) for p in itertools.permutations(range(n_c), n_k))
+            else:
+                best = min(sum(mm[i][j] for j, i in enumerate(p)) for p in itertools.permutations(range(n_k), n_c))
+            ok = (total(got, mm) == best and len(got) == min(n_k, n_c)
+                  and len({i for i, _ in got}) == len(got) and len({j for _, j in got}) == len(got))
+            same = same and ok
+        check("C3 n<=7 assignments equal the exhaustive minimum (square and rectangular)", same)
+        # runtime
+        t0 = time.time()
+        big = [[(i * 7919 + j * 104729) % 1000 for j in range(60)] for i in range(60)]
+        pairs = assign(60, 60, lambda i, j: big[i][j])
+        t60 = time.time() - t0
+        check("C3 a 60x60 assignment is valid and takes under 2 s", len(pairs) == 60 and t60 < 2.0, t60)
+        t0 = time.time()
+        big = [[(i * 7919 + j * 104729) % 1000 for j in range(200)] for i in range(200)]
+        pairs = assign(200, 200, lambda i, j: big[i][j])
+        t200 = time.time() - t0
+        check("C3 a 200x200 assignment takes under 20 s", len(pairs) == 200 and t200 < 20.0, t200)
+        # ties
+        eq = [[0, 0], [5, 5]]
+        check("C3 identical cost rows are a tie", has_tie(assign(2, 2, lambda i, j: eq[i][j]), 2, 2, lambda i, j: eq[i][j]))
+        dj = [[0, 9], [9, 0]]
+        check("C3 a unique optimum is not a tie", not has_tie(assign(2, 2, lambda i, j: dj[i][j]), 2, 2, lambda i, j: dj[i][j]))
+
+    @case
+    def c3_coincident_modifier_duplicates():
+        # two coincident linked duplicates that differ only in an evaluated shape (a Simple Deform taper on one):
+        # same material, same vert/face counts, so only the bounding box tells them apart
+        reset()
+        me = cube("M").data
+        bpy.data.objects.remove(bpy.data.objects["M"])
+        objs = []
+        for n in ("ModA", "ModB"):
+            o = bpy.data.objects.new(n, me)
+            bpy.context.scene.collection.objects.link(o)
+            objs.append(o)
+        md = objs[1].modifiers.new("Taper", "SIMPLE_DEFORM")
+        md.deform_method = "TAPER"
+        md.factor = 0.5
+        bpy.context.view_layer.update()
+        for order in (["ModA", "ModB"], ["ModB", "ModA"]):
+            r = usd({"out_path": os.path.join(out_dir, "c3j", "mod_" + "".join(order) + ".usdc"), "objects": order})
+            diffs = {n: r["per_object"].get(n, {}).get("bbox_max_diff") for n in order}
+            check(f"C3 coincident duplicates differing only in a modifier are each paired with their own import ({order})",
+                  r["ok"] and all(d is not None and d < 1e-3 for d in diffs.values()), [r["problems"], diffs])
+
     # ------------------------------------------------------------------ C4 clash_audit
     def audit(**kw):
         return run("blender-mcp-workflow", "clash_audit.py", {"objects": None, **kw})
@@ -525,7 +599,8 @@ def run_all(out_dir):
 
     for fn in (c1_depsgraph, c1_armature_edit, c1_latest_unique, c1_user_collection, c2_excluded, c3_armature_orphans,
                c3_selection_refused, c3_set_material, c3_set_material_distinct, c3_object_link_override, c3_renamed_object_and_mesh,
-               c1_excluded_moved, c1_path_parent, c3_linked_duplicates, c3_coincident_duplicates, c4_open_mesh, c5_edit_mode):
+               c1_excluded_moved, c1_path_parent, c3_linked_duplicates, c3_coincident_duplicates, c3_optimal_assignment,
+               c3_coincident_modifier_duplicates, c4_open_mesh, c5_edit_mode):
         fn()
     return results
 
