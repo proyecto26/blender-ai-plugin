@@ -123,6 +123,7 @@ def extra_cases():
         checks += window_cases(tmp)
         checks += b_cases(tmp)
         checks += round6_cases(tmp)
+        checks += fix14a_cases()
         checks += flag_cases()
         checks += args_file_cases()
         checks += plan_state_cases()
@@ -561,6 +562,58 @@ def round6_cases(tmp):
         ("~90s", run("~90s." + st, "blender -b scene.blend -a", secs=95), "OK"),
         ("1 h 5 min", run("About 1 h 5 min." + st, "blender -b scene.blend -a", secs=3900), "OK"),
         ("quoted status path with spaces", run('About 2 min. Status: "C:/My Proj/out/render_status.json"', "blender -b scene.blend -a", secs=120), "OK"),
+    ]
+
+
+def fix14a_cases():
+    """Shell shapes that hide a launch (eval, command substitution, backticks, aliases, a variable holding a command), an
+    executable built at run time (a NOTE: unreadable, not a pass), and a status path judged with no out_dir."""
+    sh = lambda cmd, say=None: announce(launch_run(say, "Bash", cmd, took=90))
+    ps = lambda cmd: announce(launch_run(None, "PowerShell", cmd, took=90))
+    R = "blender -b scene.blend -a"
+    say = lambda path: "About 12 s. Progress: " + path
+    detail = lambda cmd, said=None: score_run.score_announcements(launch_run(said, "Bash", cmd, took=90))["evidence"]
+    return [
+        ("eval of a double-quoted launch", sh(f'eval "{R}"'), "FLAG"),
+        ("eval of a single-quoted launch", sh(f"eval '{R}'"), "FLAG"),
+        ("eval of bare words", sh(f"eval {R}"), "FLAG"),
+        ("command substitution inside quotes", sh(f'echo "$({R})"'), "FLAG"),
+        ("command substitution in an assignment", sh(f"x=$({R})"), "FLAG"),
+        ("nested substitution", sh(f"echo $(echo $({R}))"), "FLAG"),
+        ("backticks", sh(f"x=`{R}`"), "FLAG"),
+        ("backticks inside quotes", sh(f'echo "`{R}`"'), "FLAG"),
+        ("eval inside sh -c", sh("sh -c 'eval \"%s\"'" % R), "FLAG"),
+        ("alias of the bare executable", sh("alias b=blender; b -b scene.blend -a"), "FLAG"),
+        ("alias holding flags", sh("alias b='blender -b scene.blend'; b -a"), "FLAG"),
+        ("alias that is not blender", sh("alias b=ffmpeg; b -b scene.blend -a"), "OK"),
+        ("variable holding a whole command, eval", sh(f'cmd="{R}"; eval "$cmd"'), "FLAG"),
+        ("variable holding a whole command, sh -c", sh(f'cmd="{R}"; sh -c "$cmd"'), "FLAG"),
+        ("variable holding a whole command, run as $cmd", sh(f'cmd="{R}"; $cmd'), "FLAG"),
+        ("variable assigned blender, still read", sh("B=blender; $B -b scene.blend -a"), "FLAG"),
+        ("variable assigned $BLENDER, still read", sh("B=$BLENDER; $B -b scene.blend -a"), "FLAG"),
+        # Not launches: printed, literal, or unrelated.
+        ("single-quoted substitution is literal text", sh(f"echo '$({R})'"), "OK"),
+        ("substitution of an unrelated command", sh('echo "$(date)"; ls'), "OK"),
+        ("eval of an unrelated command", sh('eval "$(ssh-agent)"'), "OK"),
+        ("PowerShell backtick continuation is not a substitution", ps("blender -b scene.blend `\n --python probe.py"), "OK"),
+        # An executable built at run time cannot be read: NOTE, never a silent OK.
+        ("executable from a substitution", sh("$(which blender) -b scene.blend -a"), "NOTE"),
+        ("executable from a quoted substitution", sh('"$(which blender)" -b scene.blend -a'), "NOTE"),
+        ("variable assigned from a substitution", sh("B=$(which blender); $B -b scene.blend -a"), "NOTE"),
+        ("variable assigned from backticks", sh("B=`which blender`; $B -b scene.blend -a"), "NOTE"),
+        ("variable built from other variables", sh('B="$DIR/$NAME"; $B -b scene.blend -a'), "NOTE"),
+        ("run-time executable without Blender-shaped flags", sh("$(which python) script.py"), "OK"),
+        ("a readable launch next to an unreadable one is still judged", sh(f"{R}; $(which blender) -b x.blend -a"), "FLAG"),
+        # The status path with no out_dir: the folder the job renders to, when it says so.
+        ("no out_dir, -o folder and the status file in it", sh("blender -b f.blend -o C:/run/out/frame_#### -a", say("C:/run/out/render_status.json")), "OK"),
+        ("no out_dir, -o folder and the status file elsewhere", sh("blender -b f.blend -o C:/run/out/frame_#### -a", say("C:/other/render_status.json")), "FLAG"),
+        ("no out_dir, -o folder and the status file one level up", sh("blender -b f.blend -o C:/run/out/frames/f_#### -a", say("C:/run/out/render_status.json")), "OK"),
+        ("no out_dir, --render-output= folder with a slash", sh("blender -b f.blend --render-output=C:/run/out/ -a", say("C:/run/out/render_status.json")), "OK"),
+        ("no out_dir, relative -o decides nothing", sh("blender -b f.blend -o //out/f_#### -a", say("C:/anywhere/render_status.json")), "OK"),
+        ("no out_dir and no -o: the evidence says the name only was checked",
+         "file name only" in detail("blender -b f.blend -a", say("C:/anywhere/render_status.json")), True),
+        ("with an out_dir the evidence has no such caveat",
+         "file name only" in detail('blender -b f.blend --python r.py -- \'{"out_dir": "C:/run/out"}\'', say("C:/run/out/render_status.json")), False),
     ]
 
 

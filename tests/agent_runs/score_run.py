@@ -16,13 +16,21 @@ decides, and a blank one recorded as an inspect PASS is caught by the gates chec
 
 Announcements: a Blender job launched in the background (Bash `&`, `nohup`, `run_in_background`; PowerShell `Start-Process`,
 `Start-Job`, `run_in_background`), or a render run in the foreground, needs a message to the user BEFORE the launch that
-names the real out_dir (taken from the launch command or the args file it names; without one, a path to render_status.json)
-and a duration. With --status the duration is compared with the render's real time: more than 3 times off, and more than
+names the real out_dir (taken from the launch command or the args file it names; without one, a render_status.json in the
+absolute folder of the job's -o / --render-output or one level up from it; with neither, a path to render_status.json
+checked by its file name only, and the OK says so) and a duration. With --status the duration is compared with the render's real time: more than 3 times off, and more than
 5 s, is a FLAG. The plan step (`plan: true`) is exempt, since it produces the message; each Blender invocation is judged
 by its own arguments (the text after `--`, or its args file), so a plan chained to the real render exempts only itself. A
 per-frame figure needs a frame count (the message's, or the job's -s/-e/-f), else it is no duration. It matches tokens and
-does not parse the shell: it reads `bash -c '...'`, a trailing `&`, versioned executable names and a variable assigned a
-Blender path, but not `eval`, command substitution, aliases or a path built at run time.
+does not parse the shell: it reads `bash -c '...'`, `eval` payloads, `$(...)` and backtick bodies (not in single quotes,
+to a depth of 4), a trailing `&`, versioned executable names, a variable assigned a Blender path, an alias defined earlier
+in the same command and a variable holding a whole command line. An executable built at run time (`$(which blender) -b f
+-a`, or a variable assigned from a substitution or from other variables) with Blender-shaped flags is a NOTE, never an
+OK. Limits: a variable, alias or function defined in an earlier call or in the environment is not known (`$B -b f -a` with
+B never assigned in the same command reads as no launch); `eval "$X"` with X unassigned or assigned from a substitution
+is not read; a path or name assembled by concatenation (`${DIR}/bl${EXT}`) is not resolved; here-documents, `source`d
+files and functions are not followed; the
+`-o` folder is a hint, not the status folder, so a status file in a sibling folder of it is a FLAG that may be wrong.
 
 Text matching is heuristic and every such check says so. One run shows one case, not general reliability, and the
 score runs after the job, so it catches regressions rather than stopping a bad report.
@@ -374,15 +382,64 @@ def _is_blender_name(path):
     return bool(re.fullmatch(BLENDER_EXE, path.replace("\\", "/").rsplit("/", 1)[-1].strip(), re.I))
 
 
-def _scan(command):
+SUBST = "__SUBST__"  # stands for a `$(...)` / backtick body in the text left behind once the body is scanned on its own
+
+
+def _substitutions(command):
+    """(outer, bodies): the command with each command substitution (`$(...)`, backticks) replaced by `$__SUBST__`, and the
+    text of every such body. Bodies in single quotes and after a backslash are literal text and stay where they are."""
+    out, bodies, i, quote = [], [], 0, None
+    while i < len(command):
+        ch = command[i]
+        if ch == "\\" and quote != "'" and i + 1 < len(command):
+            out.append(command[i:i + 2])
+            i += 2
+            continue
+        if quote == "'":
+            quote = None if ch == "'" else quote
+        elif ch == "'" and quote is None:
+            quote = "'"
+        elif ch == '"':
+            quote = None if quote == '"' else '"'
+        elif ch == "$" and command[i + 1:i + 2] == "(" and command[i + 2:i + 3] != "(":
+            depth, j = 1, i + 2
+            while j < len(command) and depth:
+                depth += {"(": 1, ")": -1}.get(command[j], 0)
+                j += 1
+            if depth == 0:
+                bodies.append(command[i + 2:j - 1])
+                out.append("$" + SUBST)
+                i = j
+                continue
+        elif ch == "`":
+            j = command.find("`", i + 1)
+            if j > i + 1 and " " in command[i + 1:j]:
+                bodies.append(command[i + 1:j])
+                out.append("$" + SUBST)
+                i = j + 1
+                continue
+        out.append(ch)
+        i += 1
+    return "".join(out), bodies
+
+
+def _scan(command, depth=0):
     """Each Blender invocation in the command: {'flags': what Blender itself reads (up to `--` / `--args`), 'raw': the text of
     the invocation up to the next shell operator or line, 'post': the text after `--` / `--args`}. Quoted pieces and comma
-    lists (PowerShell -ArgumentList "-b","f.blend") become separate tokens; the payload of `bash -c '...'` is scanned too;
-    a variable that was assigned a Blender path (`exe=blender`, `$exe = "blender"`) counts as Blender. It tokenizes; it does
-    not parse the shell."""
+    list (PowerShell -ArgumentList "-b","f.blend") become separate tokens; the payload of `bash -c '...'`, of `eval` and of
+    `$(...)` / backticks is scanned too (to a depth of 4); a variable that was assigned a Blender path (`exe=blender`,
+    `$exe = "blender"`) counts as Blender, and so does an alias defined earlier in the same command (`alias b=blender`), and
+    a variable holding a whole command (`cmd="blender -b f -a"; eval "$cmd"`). An executable that is built at run time
+    (`$(which blender)`, a variable assigned from one) cannot be resolved: its segment is marked 'unresolved'. It tokenizes;
+    it does not parse the shell."""
     segments, current = [], None
     first, prev, end = None, None, 0  # first word of this shell piece; previous token; end of the previous match
-    blender_vars = set()
+    blender_vars, aliases, texts = set(), {}, {}
+    unresolved_vars = {SUBST.lower()}
+    if depth < 4:
+        command, bodies = _substitutions(command)
+        for body in bodies:
+            segments.extend(_scan(body, depth + 1))
     toks = list(re.finditer(TOKEN, command))
 
     def close(at):
@@ -405,11 +462,14 @@ def _scan(command):
         core = re.sub(r"^(?:\$\(|[({])+", "", tok) if bare is not None else tok
         last = core.replace("\\", "/").rsplit("/", 1)[-1]
         word = last.lower().removesuffix(".exe")
-        if first is None:
+        at_start = first is None
+        if at_start:
             first = word
         op = bare is not None and core.rstrip(")}") in SEG_END
-        if current is None and (quoted is not None or single is not None) and prev and prev.lower() in SHELL_C:
-            segments.extend(_scan(tok))
+        payload = quoted if quoted is not None else single
+        if current is None and payload is not None and prev and prev.lower() in SHELL_C | {"eval"} and depth < 4:
+            ref = re.fullmatch(r"\$\{?(\w+)\}?", payload.strip())
+            segments.extend(_scan(texts[ref.group(1).lower()] if ref and ref.group(1).lower() in texts else payload, depth + 1))
             prev = tok
             continue
         # Remember `exe=blender` / `$exe = "blender"` / `exe="blender"`.
@@ -423,16 +483,29 @@ def _scan(command):
                 value, name = assign.group(2), assign.group(1)
             elif core == "=" and prev and re.fullmatch(r"\$\w+", prev) and i + 1 < len(toks):
                 value, name = next(g for g in toks[i + 1].groups() if g is not None), prev[1:]
-            if value is not None and _is_blender_name(value.strip("\"'")):
-                blender_vars.add(name.lower())
+            if value is not None:
+                v = value.strip("\"'")
+                if prev and prev.lower() == "alias" and v.split() and _is_blender_name(v.split()[0]):
+                    aliases[name.lower()] = v.split()[1:]
+                elif _is_blender_name(v) or re.fullmatch(BLENDER_VAR, v, re.I):
+                    blender_vars.add(name.lower())
+                elif "$" in v:
+                    unresolved_vars.add(name.lower())  # built at run time: cannot be read
+                if re.search(r"\s", v):
+                    texts[name.lower()] = v
         var = re.fullmatch(r"\$\{?(?:env:)?(\w+)\}?", core)
         is_exe = (re.fullmatch(BLENDER_EXE, last, re.I) or re.fullmatch(BLENDER_VAR, last, re.I)
                   or bool(var and var.group(1).lower() in blender_vars))
-        if is_exe and first in NON_LAUNCH and word != first:
+        alias = core.lower() if at_start and current is None and bare is not None and core.lower() in aliases else None
+        unresolved = bool(at_start and not is_exe and var and var.group(1).lower() in unresolved_vars)
+        whole = var.group(1).lower() if at_start and bare is not None and var and var.group(1).lower() in texts else None
+        if whole and depth < 4:
+            segments.extend(_scan(texts[whole], depth + 1))  # `$cmd` run as a command: its words are the command
+        elif is_exe and first in NON_LAUNCH and word != first:
             pass  # `echo "$BLENDER" -b f.blend -a` prints; it launches nothing
-        elif is_exe:
+        elif is_exe or alias or unresolved:
             close(prev_end)
-            current = {"flags": [], "start": m.start(), "dd": None}
+            current = {"flags": list(aliases.get(alias, [])), "start": m.start(), "dd": None, "unresolved": unresolved}
             segments.append(current)
         elif current is not None:
             if op:
@@ -454,7 +527,7 @@ def _scan(command):
 
 def blender_segments(command):
     """The flags Blender reads in each Blender invocation of the command (see _scan)."""
-    return [s["flags"] for s in _scan(command)]
+    return [s["flags"] for s in _scan(command) if not s["unresolved"]]
 
 
 def flag_set(tokens, wanted):
@@ -513,10 +586,18 @@ def job_segments(command):
     jobs = []
     for seg in _scan(command):
         tokens = seg["flags"]
-        if flag_set(tokens, BG_FLAGS) and flag_set(tokens, WORK_FLAGS):
+        if not seg["unresolved"] and flag_set(tokens, BG_FLAGS) and flag_set(tokens, WORK_FLAGS):
             jobs.append({"render": bool(flag_set(tokens, RENDER_FLAGS)) or "background_render.py" in seg["raw"],
-                         "frames": frame_count(tokens, seg["raw"]), "raw": seg["raw"], "post": seg["post"]})
+                         "frames": frame_count(tokens, seg["raw"]), "raw": seg["raw"], "post": seg["post"],
+                         "flags": tokens})
     return jobs
+
+
+def unresolved_launches(command):
+    """How many invocations have an executable built at run time (`$(which blender) -b f -a`, a variable assigned from one)
+    and Blender-shaped flags: they may be a Blender job, and nothing here can tell."""
+    return sum(1 for seg in _scan(command) if seg["unresolved"] and flag_set(seg["flags"], BG_FLAGS)
+               and flag_set(seg["flags"], WORK_FLAGS))
 
 
 def blender_job(command):
@@ -731,17 +812,39 @@ def status_path_in(text):
     return any(not re.search(URL_SCHEME, m.group(0), re.I) for m in re.finditer(STATUS_PATH, text))
 
 
+def render_dirs(jobs):
+    """The folders the jobs write frames to (`-o C:/run/out/frame_####`, `--render-output=...`), when they are absolute paths."""
+    found = []
+    for j in jobs:
+        toks = j["flags"]
+        for i, tok in enumerate(toks):
+            name, eq, val = tok.partition("=")
+            if name in ("-o", "--render-output"):
+                val = (val if eq else (toks[i + 1] if i + 1 < len(toks) else "")).strip("\"'")
+                path = norm_path(val)
+                if resolved(path):
+                    found.append(path if val.endswith(("/", "\\")) else path.rsplit("/", 1)[0])
+    return found
+
+
+def related_dir(a, b):
+    """The same folder, or one inside the other (the status file sits in the out_dir, frames may go to a subfolder)."""
+    return a == b or a.startswith(b + "/") or b.startswith(a + "/")
+
+
 def score_announcements(run, args=None):
     timed = [x for x in run["texts"] if x["t"] is not None]
     launches = [(c,) + launch_info(c, run) for c in run["calls"]]
     launches = [(c, k, n, js) for c, k, n, js in launches if k]
-    problems, checked = [], 0
+    problems, checked, name_only, unresolved = [], 0, 0, 0
     for c in run["calls"]:
+        if c["name"] in SHELLS:
+            unresolved += unresolved_launches(strip_comment(c["input"].get("command", "")))
         if c["name"] == LIVE_CODE and c["t"] is not None and c["end"] and c["end"] - c["t"] > 5:
             before = [x["text"] for x in timed if c["t"] - 120 <= x["t"] <= c["t"]]
             if not any(re.search(FREEZE_WORDS, b, re.I) for b in before):
                 problems.append(f"live call of {c['end'] - c['t']:.0f} s with no warning")
-    if not launches and not any(c["t"] is not None for c in run["calls"]):
+    if not launches and not unresolved and not any(c["t"] is not None for c in run["calls"]):
         return verdict("announcements", "SKIP", "the trace has no timings and no Blender job was launched")
     claimed = None
     for c, kind, job_frames, job_list in launches:
@@ -752,10 +855,19 @@ def score_announcements(run, args=None):
             problems.append(f"{kind} Blender job with no message to the user before it")
             continue
         dirs = out_dirs(c, run, job_list)
+        hints = [] if dirs else render_dirs(job_list)
+        name_only += 0 if dirs or hints else 1
         def has_path(text):
             flat = norm_path(text)
             # The folder as a whole path: "c:/run/outdated" is not "c:/run/out", "/x/run/out" is not "/run/out".
-            return any(re.search(r"(?<![\w./\-])" + re.escape(d) + r"(?![\w.\-])", flat) for d in dirs) if dirs else status_path_in(text)
+            if dirs:
+                return any(re.search(r"(?<![\w./\-])" + re.escape(d) + r"(?![\w.\-])", flat) for d in dirs)
+            if hints:
+                # No out_dir given: the status file is in the folder the job renders to, or next to it.
+                named = [norm_path(m.group(0)).rsplit("/", 1)[0] for m in re.finditer(STATUS_PATH, text)
+                         if not re.search(URL_SCHEME, m.group(0), re.I)]
+                return any(not resolved(n) or related_dir(n, h) for n in named for h in hints)
+            return status_path_in(text)
         # A duration is usable when it speaks for the whole job: a per-frame figure needs a frame count (the message's, or
         # the job's own -s/-e/-f), a per-sample one never does.
         usable = lambda text: claimed_seconds(text, job_frames) is not None
@@ -763,7 +875,8 @@ def score_announcements(run, args=None):
         if not full:
             missing = []
             if not any(has_path(x["text"]) for x in before):
-                missing.append("the real out_dir" if dirs else "a path to render_status.json")
+                missing.append("the real out_dir" if dirs else "a path to render_status.json in the folder the job renders to"
+                               if hints else "a path to render_status.json")
             if not any(usable(x["text"]) for x in before):
                 missing.append("a duration")
             problems.append(f"{kind} Blender job announced without {' or '.join(missing)}")
@@ -777,8 +890,14 @@ def score_announcements(run, args=None):
                 problems.append(f"the message said {claimed:.0f} s and the render took {actual:.0f} s")
     if problems:
         return verdict("announcements", "FLAG", "; ".join(problems), True)
+    if unresolved:
+        return verdict("announcements", "NOTE", f"{unresolved} launch(es) whose executable is built at run time (command "
+                       "substitution, or a variable assigned from one): they may be a Blender job, and the announcement "
+                       "cannot be judged; read them by hand", True)
     if checked:
-        return verdict("announcements", "OK", f"{checked} Blender job(s) announced before launch with the real path and a duration", True)
+        blind = (f"; no out_dir or absolute -o in {name_only} job(s), so the status path was checked by its file name only"
+                 if name_only else "")
+        return verdict("announcements", "OK", f"{checked} Blender job(s) announced before launch with the real path and a duration" + blind, True)
     return verdict("announcements", "OK", "long calls warned; no Blender job launched", True)
 
 
