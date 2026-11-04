@@ -27,7 +27,7 @@ object "Crate" with mesh "Cube" comes back as "Cube"). Empties and other types a
 are still listed under the original object's name. Objects that share a label (linked duplicates share one mesh) are
 paired with their imports by the closest world matrix. The import merges the transform prim into the mesh object, so
 the object name is not recoverable: duplicates at the SAME transform are paired by the assignment with the fewest
-differences (a minimum-cost assignment, optimal for any count; costs are small whole numbers for real differences in transform, material set and vert/face counts, plus a bounded tie-breaker from the evaluated bounding box relative to object size that can never outweigh a real difference; floating-point sums are exact only for such bounded costs). `ambiguous_pairings` lists the labels where coincident objects remain or another assignment has the same total, since that is a guess (`tie_check_one_move_only` lists labels with more than 300 pairs, where only swaps are checked); an intact round trip is never reported as a swap. Material names are compared the same way,
+differences (a minimum-cost assignment, optimal for any count; costs are small whole numbers for real differences in transform, material set and vert/face counts, plus a bounded tie-breaker from the evaluated bounding box relative to object size that can never outweigh a real difference; the whole-number part of a total is exact; the fractional tie-breakers are summed in floating point, so totals within 1e-9 count as equal). `ambiguous_pairings` lists the labels where coincident objects remain or another assignment has the same total, since that is a guess (`tie_check_one_move_only` lists labels with more than 300 pairs, where only one-move changes are checked); an intact round trip is never reported as a swap. Material names are compared the same way,
 because the import renames a material that already exists. `ok` is true only when nothing differs.
 
 Materials are read from the evaluated object's slots, so an OBJECT-linked slot override is what USD receives and is
@@ -176,8 +176,8 @@ TIE_SOLVE_LIMIT = 300  # matched pairs for which every pair is forbidden and the
 def _has_tie(pairs, n_k, n_c, cost, eps=1e-9):
     """True when a different assignment has the same total: forbid each matched pair in turn and re-solve; an
     unchanged total means the pairing is a guess between equals (this also covers rows left unmatched with equal
-    options). Beyond TIE_SOLVE_LIMIT pairs only the one-move check (a swap of two candidates, or taking an unused
-    one) runs, which can miss a longer cycle; `_tie_checked_fully` says which one applied."""
+    options). Beyond TIE_SOLVE_LIMIT pairs only the one-move check (a swap of two candidates, taking an unused
+    candidate, or an unmatched original taking a matched one's candidate) runs, which can miss a longer cycle; `_tie_checked_fully` says which one applied."""
     if not pairs:
         return False
     base = sum(cost(i, j) for i, j in pairs)
@@ -192,8 +192,11 @@ def _has_tie(pairs, n_k, n_c, cost, eps=1e-9):
     used = set(cur.values())
     free = [j for j in range(n_c) if j not in used]
     rows = sorted(cur)
+    unmatched = [r for r in range(n_k) if r not in cur]
     for x, i in enumerate(rows):
         if any(abs(cost(i, j) - cost(i, cur[i])) <= eps for j in free):
+            return True
+        if any(abs(cost(r, cur[i]) - cost(i, cur[i])) <= eps for r in unmatched):
             return True
         for i2 in rows[x + 1:]:
             if abs(cost(i, cur[i2]) + cost(i2, cur[i]) - cost(i, cur[i]) - cost(i2, cur[i2])) <= eps:
