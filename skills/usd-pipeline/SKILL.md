@@ -37,10 +37,10 @@ Validate asset → Round trip (usd_roundtrip.py) → Read the problems → Fix o
    copy from the scene.
 3. `ok: false` lists each problem as a sentence (`RT_Crate: materials [...] -> [...]`). Fix the scene or document the loss
    in the delivery note. Do not hand over a file whose round trip you have not read.
-   Linked duplicates at the same transform cannot be told apart after import, so they are paired by an exact
-   minimum-difference assignment (any count; it weighs materials, vert/face counts and the evaluated bounding box).
-   Labels listed in `ambiguous_pairings` have coincident objects or tied pairings: if they differ only in something the
-   script does not measure, the pairing is still a guess.
+   Linked duplicates at the same transform cannot be told apart after import, so they are paired by a minimum-difference
+   assignment (any count). Real differences (transform, materials, vert/face counts) always outweigh the evaluated
+   bounding box, which only breaks ties. Labels in `ambiguous_pairings` have coincident objects or another assignment
+   with the same total: if they differ only in something the script does not measure, the pairing is still a guess.
 4. Deliver the file the script wrote (`path`).
 
 ## What the check covers, and what it does not

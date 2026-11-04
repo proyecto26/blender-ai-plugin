@@ -27,7 +27,7 @@ object "Crate" with mesh "Cube" comes back as "Cube"). Empties and other types a
 are still listed under the original object's name. Objects that share a label (linked duplicates share one mesh) are
 paired with their imports by the closest world matrix. The import merges the transform prim into the mesh object, so
 the object name is not recoverable: duplicates at the SAME transform are paired by the assignment with the fewest
-differences, exactly (a minimum-cost assignment, optimal for any count; the cost looks at material set, vert/face counts and the evaluated bounding box). `ambiguous_pairings` lists the labels where coincident objects remain or two pairings tie, since that is a guess; an intact round trip is never reported as a swap. Material names are compared the same way,
+differences (a minimum-cost assignment, optimal for any count; costs are small whole numbers for real differences in transform, material set and vert/face counts, plus a bounded tie-breaker from the evaluated bounding box relative to object size that can never outweigh a real difference; floating-point sums are exact only for such bounded costs). `ambiguous_pairings` lists the labels where coincident objects remain or another assignment has the same total, since that is a guess (`tie_check_one_move_only` lists labels with more than 300 pairs, where only swaps are checked); an intact round trip is never reported as a swap. Material names are compared the same way,
 because the import renames a material that already exists. `ok` is true only when nothing differs.
 
 Materials are read from the evaluated object's slots, so an OBJECT-linked slot override is what USD receives and is
@@ -170,21 +170,54 @@ def _assign(n_k, n_c, cost):
     return sorted((j, i) for i, j in pairs) if flip else sorted(pairs)
 
 
+TIE_SOLVE_LIMIT = 300  # matched pairs for which every pair is forbidden and the assignment re-solved
+
+
 def _has_tie(pairs, n_k, n_c, cost, eps=1e-9):
-    """True when another assignment of the same total exists one move away: two pairs exchanging their candidates,
-    or one pair taking a candidate nobody was given. A pairing with a tie is a guess between equals."""
-    cur = {i: j for i, j in pairs}
-    base = {i: cost(i, j) for i, j in pairs}
-    free = [j for j in range(n_c) if j not in set(cur.values())]
+    """True when a different assignment has the same total: forbid each matched pair in turn and re-solve; an
+    unchanged total means the pairing is a guess between equals (this also covers rows left unmatched with equal
+    options). Beyond TIE_SOLVE_LIMIT pairs only the one-move check (a swap of two candidates, or taking an unused
+    one) runs, which can miss a longer cycle; `_tie_checked_fully` says which one applied."""
+    if not pairs:
+        return False
+    base = sum(cost(i, j) for i, j in pairs)
+    if len(pairs) <= TIE_SOLVE_LIMIT:
+        big = 1e6 + abs(base) * 10
+        for fi, fj in pairs:
+            alt = _assign(n_k, n_c, lambda i, j: big if (i, j) == (fi, fj) else cost(i, j))
+            if len(alt) == len(pairs) and sum(big if (i, j) == (fi, fj) else cost(i, j) for i, j in alt) <= base + eps:
+                return True
+        return False
+    cur = dict(pairs)
+    used = set(cur.values())
+    free = [j for j in range(n_c) if j not in used]
     rows = sorted(cur)
     for x, i in enumerate(rows):
-        for j in free:
-            if abs(cost(i, j) - base[i]) <= eps:
-                return True
+        if any(abs(cost(i, j) - cost(i, cur[i])) <= eps for j in free):
+            return True
         for i2 in rows[x + 1:]:
-            if abs(cost(i, cur[i2]) + cost(i2, cur[i]) - base[i] - base[i2]) <= eps:
+            if abs(cost(i, cur[i2]) + cost(i2, cur[i]) - cost(i, cur[i]) - cost(i2, cur[i2])) <= eps:
                 return True
     return False
+
+
+def _tie_checked_fully(n_pairs):
+    return n_pairs <= TIE_SOLVE_LIMIT
+
+
+def _pair_cost(b, c, tol, n):
+    """Cost of pairing original description `b` with imported `c`, lexicographic by construction. Real differences are
+    whole numbers (1000 for a transform beyond tol, 10 each for a material set or vert/face count mismatch) and the
+    tie-breakers (matrix distance, evaluated bounding box relative to the object's size) add less than 1 over the
+    whole assignment of `n` pairs, so a tie-breaker can never outweigh a real difference or make a passing pairing fail."""
+    d = max(abs(x - y) for ra, rb in zip(b["matrix"], c["matrix"]) for x, y in zip(ra, rb))
+    primary = (1000 if d > tol else 0) + 10 * (b["materials"] != c["materials"]) \
+        + 10 * ((b["verts"], b["faces"]) != (c["verts"], c["faces"]))
+    rel = 0.0
+    if b.get("bbox") is not None and c.get("bbox") is not None:
+        size = max(max(b["bbox"][3 + k] - b["bbox"][k] for k in range(3)), 1e-6)
+        rel = min(1.0, max(abs(x - y) for x, y in zip(b["bbox"], c["bbox"])) / size)
+    return primary + (0.5 * rel + 0.5 * d / (1.0 + d)) / (n + 1)
 
 
 def _match_key(obj):
@@ -278,7 +311,7 @@ def main(out_path, objects=None, tol=1e-4, keep=False, subdivision="TESSELLATE")
 
     # Pair originals with imports within each label by the closest world matrix, so two linked duplicates at
     # different transforms are each compared with their own import and never with each other's.
-    paired, duplicates, ambiguous = {}, [], []
+    paired, duplicates, ambiguous, tie_partial = {}, [], [], []
     groups = {}
     for key in before:
         groups.setdefault(_match_key(bpy.data.objects[key[2]]), []).append(key)
@@ -288,17 +321,18 @@ def main(out_path, objects=None, tol=1e-4, keep=False, subdivision="TESSELLATE")
         # coincident duplicates tie on the matrix. A pair costs its matrix distance (beyond tol, dominant) plus a
         # step for each differing material set or vert/face count; the cheapest whole assignment wins, so an
         # intact round trip never reports a swap as a loss while a real loss on one still shows.
+        n_max = max(len(keys), len(cands))
+
         def cost(ki, ci):
-            b, c = before[keys[ki]], cands[ci]
-            d = _matrix_diff(b, c)
-            bb = b["bbox"] is not None and c["bbox"] is not None and max(abs(x - y) for x, y in zip(b["bbox"], c["bbox"])) > 1e-3
-            return ((1000 + d) if d > tol else 0) + 10 * (b["materials"] != c["materials"]) + 10 * bb \
-                + 10 * ((b["verts"], b["faces"]) != (c["verts"], c["faces"])) + d * 1e-6
+            return _pair_cost(before[keys[ki]], cands[ci], tol, n_max)
         pairs = _assign(len(keys), len(cands), cost)
         for ki, ci in pairs:
             paired[keys[ki]] = cands[ci]
-        if len({tuple(round(x, 4) for row in before[k]["matrix"] for x in row) for k in keys}) < len(keys)                 or _has_tie(pairs, len(keys), len(cands), cost):
+        if len({tuple(round(x, 4) for row in before[k]["matrix"] for x in row) for k in keys}) < len(keys) \
+                or _has_tie(pairs, len(keys), len(cands), cost):
             ambiguous.append(mk[1])
+        if not _tie_checked_fully(len(pairs)):
+            tie_partial.append(mk[1])
         if len(cands) > len(keys):
             duplicates.append(f"{mk[1]} ({len(cands)} imported for {len(keys)} exported)")
 
@@ -347,7 +381,7 @@ def main(out_path, objects=None, tol=1e-4, keep=False, subdivision="TESSELLATE")
                     pass
     return {"ok": not problems, "problems": problems, "path": out_path, "bytes": os.path.getsize(out_path),
             "exported": sorted(k[1] for k in before), "imported": sorted(f"{t}:{n}" for (t, n), ds in after.items() for _ in ds), "per_object": per_object,
-            "counts_exported": count_before, "ambiguous_pairings": ambiguous, "removed_from_scene": removed, "kept": bool(keep)}
+            "counts_exported": count_before, "ambiguous_pairings": ambiguous, "tie_check_one_move_only": tie_partial, "removed_from_scene": removed, "kept": bool(keep)}
 
 
 ARGS = globals().get("ARGS") or _cli_args()

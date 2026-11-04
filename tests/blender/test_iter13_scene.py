@@ -491,6 +491,48 @@ def run_all(out_dir):
         dj = [[0, 9], [9, 0]]
         check("C3 a unique optimum is not a tie", not has_tie(assign(2, 2, lambda i, j: dj[i][j]), 2, 2, lambda i, j: dj[i][j]))
 
+        def tie(mat):
+            n_k, n_c = len(mat), len(mat[0])
+            f = lambda i, j: mat[i][j]
+            return has_tie(assign(n_k, n_c, f), n_k, n_c, f)
+        check("C3 3x3 matrix with two optimal assignments is a tie", tie([[0, 0, 1], [1, 0, 0], [0, 1, 0]]))
+        check("C3 two rows competing for one column are a tie", tie([[0], [0]]))
+        check("C3 a unique 3x3 optimum is not a tie", not tie([[0, 5, 5], [5, 0, 5], [5, 5, 0]]))
+        # float-cost oracle against brute force, n<=7, square and rectangular
+        rng, bad = random.Random(7), []
+        for n_k, n_c in [(2, 2), (3, 5), (5, 3), (4, 4), (7, 7), (6, 7), (7, 5), (1, 4)] * 8:
+            mm = [[rng.random() * 1000 + (1000 if rng.random() < 0.3 else 0) for _ in range(n_c)] for _ in range(n_k)]
+            got = assign(n_k, n_c, lambda i, j: mm[i][j])
+            if n_k <= n_c:
+                best = min(sum(mm[i][j] for i, j in enumerate(p)) for p in itertools.permutations(range(n_c), n_k))
+            else:
+                best = min(sum(mm[i][j] for j, i in enumerate(p)) for p in itertools.permutations(range(n_k), n_c))
+            if abs(total(got, mm) - best) > 1e-9:
+                bad.append((n_k, n_c, total(got, mm), best))
+        check("C3 float-cost assignments equal the brute-force minimum (n<=7)", not bad, bad[:3])
+        # large cases with a planted optimum of exactly 0: the total must be the known optimum, not just valid
+        for n in (60, 200):
+            perm = list(range(n))
+            rng.shuffle(perm)
+            mm = [[0 if perm[i] == j else 1 + rng.random() * 50 for j in range(n)] for i in range(n)]
+            got = assign(n, n, lambda i, j: mm[i][j])
+            check(f"C3 {n}x{n} planted optimum is found exactly", total(got, mm) == 0 and sorted(got) == sorted(enumerate(perm)), total(got, mm))
+        # the bounding box is a tie-breaker only: same transforms and counts, materials A/B, bbox offsets that the old
+        # absolute 1e-3 threshold turned into a false material loss
+        def desc(mat, x):
+            return {"type": "MESH", "verts": 8, "faces": 6, "materials": [mat], "bbox": [x - 0.5, -0.5, -0.5, x + 0.5, 0.5, 0.5],
+                    "matrix": [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]}
+        before = [desc("A", 0.0), desc("B", 0.0008)]
+        after = [desc("B", -0.0003), desc("A", 0.0011)]
+        f = lambda i, j: g["_pair_cost"](before[i], after[j], 1e-4, 2)
+        pairs = assign(2, 2, f)
+        check("C3 a bbox offset cannot turn a matching material pairing into a failure", sorted(pairs) == [(0, 1), (1, 0)], pairs)
+        # a real material mismatch always outweighs any bbox distance
+        far = [desc("A", 0.0)]
+        cand = [desc("B", 0.0), desc("A", 5.0)]
+        pairs = assign(1, 2, lambda i, j: g["_pair_cost"](far[i], cand[j], 1e-4, 2))
+        check("C3 the bbox never outweighs a material mismatch", pairs == [(0, 1)], pairs)
+
     @case
     def c3_coincident_modifier_duplicates():
         # two coincident linked duplicates that differ only in an evaluated shape (a Simple Deform taper on one):
