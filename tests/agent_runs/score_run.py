@@ -875,44 +875,65 @@ def status_path_in(text):
 
 
 CD_WORDS = {"cd", "chdir", "pushd", "set-location", "sl", "push-location"}
+CD_ANY = r"(?<![\w.\-])(?:cd|chdir|pushd|popd|set-location|sl|push-location|pop-location)(?![\w.\-])"
 CD_VALUE_FLAGS = {"-path", "-literalpath"}
 
 
 def cwd_at(command, raw, cwd, shell="Bash"):
-    """The working directory where the invocation `raw` runs: the session's `cwd` moved by every `cd` / `Set-Location` /
-    `Push-Location` / `pushd` with a literal target earlier in the same command, absolute or relative to the directory so
-    far. A target that is not literal (a variable, `~`, `-`, a wildcard, a substitution), or `popd` / `Pop-Location`, makes
-    it unknown (None); an unknown directory never resolves a relative path."""
+    """The working directory where the invocation `raw` runs, read conservatively. A `cd` / `Set-Location` / `Push-Location` /
+    `pushd` with a literal target moves the session's `cwd` only when it is a plain top-level command at the start of its
+    sequence (the command start, after `;` or a newline), outside any ( ) or { }, and before the launch. ANY other mention of
+    a directory change before the launch (after && || | &, in a group or conditional, in a payload or substitution, popd, a
+    target that is not literal) makes the directory unknown (None), as does a launch that cannot be located in the command
+    text; an unknown directory never resolves a relative path. With no directory change in the command, `cwd` is returned."""
+    if not re.search(CD_ANY, command, re.I):
+        return cwd
     text = join_continuations(command, shell)
     at = text.find(raw) if raw else -1
-    prefix = text[:at] if at >= 0 else text
-    toks, here, start = list(re.finditer(TOKEN, prefix)), cwd, True
+    if at < 0 or text.find(raw, at + 1) >= 0:
+        return None  # the launch is in a payload, was joined from several lines, or appears twice: where it runs is unknown
+    prefix = text[:at]
+    toks, here, start, depth, prev_end = list(re.finditer(TOKEN, prefix)), cwd, True, 0, 0
     i = 0
     while i < len(toks):
-        groups = toks[i].groups()
+        m = toks[i]
+        groups = m.groups()
         tok = next(g for g in groups if g is not None)
         bare = groups[2] is not None
-        if bare and tok.rstrip(")}") in SEG_END:
+        if "\n" in prefix[prev_end:m.start()]:
             start = True
-        elif start and bare and tok.lower() in ("popd", "pop-location"):
-            here, start = None, False
-        elif start and bare and tok.lower() in CD_WORDS:
+        prev_end = m.end()
+        opens = len(tok) - len(tok.lstrip("({")) if bare else 0
+        closes = len(tok) - len(tok.rstrip(")}")) if bare else 0
+        word = tok.strip("(){}").lower() if bare else ""
+        if bare and tok.rstrip(")}") in SEG_END:
+            depth = max(0, depth - closes)
+            start = tok.rstrip(")}") == ";" and depth == 0  # only `;` (or a newline) starts a new top-level command
+        elif word in CD_WORDS and bare and start and depth == 0 and opens == 0 and not closes:
             j = i + 1
             while j < len(toks) and next(g for g in toks[j].groups() if g is not None).lower() in CD_VALUE_FLAGS:
                 j += 1
             target = next(g for g in toks[j].groups() if g is not None) if j < len(toks) else None
-            if target is None or target in PIPE_END or target == "&" or re.search(r"[$%~*?`]|^-$", target):
-                here = None  # not a literal path: where we are is unknown
+            after = next((g for g in toks[j + 1].groups() if g is not None), "") if j + 1 < len(toks) else ""
+            if target is None or target in PIPE_END or target == "&" or re.search(r"[$%~*?`(){}]|^-$", target):
+                return None  # not a literal path
+            if after.rstrip(")}") in ("|", "&"):
+                return None  # the cd runs in a pipeline or in the background
+            t = norm_path(target)
+            if re.match(r"[a-z]:|/", t):
+                here = t
             else:
-                t = norm_path(target)
-                if re.match(r"[a-z]:|/", t):
-                    here = t
-                else:
-                    here = posixpath.normpath(norm_path(here) + "/" + t) if here else None
+                here = posixpath.normpath(norm_path(here) + "/" + t) if here else None
             start = False
+            prev_end = toks[j].end()
             i = j
         else:
+            if re.search(CD_ANY, tok, re.I):
+                return None  # a directory change somewhere other than a plain top-level command
             start = False
+            depth += opens - closes
+            if depth < 0:
+                depth = 0
         i += 1
     return here
 
