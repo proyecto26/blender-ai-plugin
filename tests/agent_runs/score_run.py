@@ -483,15 +483,14 @@ def _scan(command, depth=0, env=None, shell="Bash"):
     sudo, env, nohup ...), never as the argument of echo, grep or git commit; a payload sees the variables, aliases and
     command texts of the command that holds it (`env`)."""
     segments, current = [], None
-    if depth == 0:
-        command = join_continuations(command, shell)
+    command = join_continuations(command, shell)  # every level: a payload has its own lines, in its own shell's rules
     first, prev, end = None, None, 0  # first word of this shell piece; previous token; end of the previous match
     blender_vars, aliases, texts = (set(), {}, {}) if env is None else (set(env[0]), dict(env[1]), dict(env[2]))
     unresolved_vars = {SUBST.lower()} | (set() if env is None else set(env[3]))
     if depth < 4:
         command, bodies = _substitutions(command)
         for body in bodies:
-            segments.extend(_scan(body, depth + 1, (blender_vars, aliases, texts, unresolved_vars)))
+            segments.extend(_scan(body, depth + 1, (blender_vars, aliases, texts, unresolved_vars), shell))
     toks = list(re.finditer(TOKEN, command))
 
     def close(at):
@@ -518,15 +517,18 @@ def _scan(command, depth=0, env=None, shell="Bash"):
         if at_start:
             first = word
         # `if true; then eval ...`, `{ eval ...`, `VAR=x eval ...`: the next word is the command.
-        skip_to_next = at_start and (word in KEYWORDS or not core or (bare is not None and re.fullmatch(r"\w+=.*", core) is not None))
+        # Only an unquoted word is syntax: `"if" eval ...` runs a command named if.
+        skip_to_next = at_start and bare is not None and (word in KEYWORDS or not core or re.fullmatch(r"\w+=.*", core) is not None)
         op = bare is not None and core.rstrip(")}") in SEG_END
         payload = quoted if quoted is not None else single
         env_now = (blender_vars, aliases, texts, unresolved_vars)
         if (current is None and payload is not None and prev and prev.lower() in SHELL_C | EVALS and first in INVOKERS
                 and depth < 4):
             ref = re.fullmatch(r"\$\{?(\w+)\}?", payload.strip())
+            inner = "PowerShell" if first in ("powershell", "pwsh") or first in ("iex", "invoke-expression") else (
+                "Bash" if first in ("sh", "bash", "zsh", "dash", "ksh", "fish") else shell)  # the payload's own shell
             segments.extend(_scan(texts[ref.group(1).lower()] if ref and ref.group(1).lower() in texts else payload,
-                                  depth + 1, env_now))
+                                  depth + 1, env_now, inner))
             prev = tok
             continue
         # Remember `exe=blender` / `$exe = "blender"` / `exe="blender"`.
@@ -560,7 +562,7 @@ def _scan(command, depth=0, env=None, shell="Bash"):
         runs_text = at_start or (prev is not None and prev.lower() in EVALS and first in EVALS)  # `$cmd`, `eval $cmd`
         whole = var.group(1).lower() if runs_text and bare is not None and var and var.group(1).lower() in texts else None
         if whole and depth < 4:
-            segments.extend(_scan(texts[whole], depth + 1, env_now))  # `$cmd` run as a command: its words are the command
+            segments.extend(_scan(texts[whole], depth + 1, env_now, shell))  # `$cmd` run as a command: its words are the command
         elif is_exe and first in NON_LAUNCH and word != first:
             pass  # `echo "$BLENDER" -b f.blend -a` prints; it launches nothing
         elif is_exe or alias or unresolved:
@@ -872,6 +874,49 @@ def status_path_in(text):
     return any(not re.search(URL_SCHEME, m.group(0), re.I) for m in re.finditer(STATUS_PATH, text))
 
 
+CD_WORDS = {"cd", "chdir", "pushd", "set-location", "sl", "push-location"}
+CD_VALUE_FLAGS = {"-path", "-literalpath"}
+
+
+def cwd_at(command, raw, cwd, shell="Bash"):
+    """The working directory where the invocation `raw` runs: the session's `cwd` moved by every `cd` / `Set-Location` /
+    `Push-Location` / `pushd` with a literal target earlier in the same command, absolute or relative to the directory so
+    far. A target that is not literal (a variable, `~`, `-`, a wildcard, a substitution), or `popd` / `Pop-Location`, makes
+    it unknown (None); an unknown directory never resolves a relative path."""
+    text = join_continuations(command, shell)
+    at = text.find(raw) if raw else -1
+    prefix = text[:at] if at >= 0 else text
+    toks, here, start = list(re.finditer(TOKEN, prefix)), cwd, True
+    i = 0
+    while i < len(toks):
+        groups = toks[i].groups()
+        tok = next(g for g in groups if g is not None)
+        bare = groups[2] is not None
+        if bare and tok.rstrip(")}") in SEG_END:
+            start = True
+        elif start and bare and tok.lower() in ("popd", "pop-location"):
+            here, start = None, False
+        elif start and bare and tok.lower() in CD_WORDS:
+            j = i + 1
+            while j < len(toks) and next(g for g in toks[j].groups() if g is not None).lower() in CD_VALUE_FLAGS:
+                j += 1
+            target = next(g for g in toks[j].groups() if g is not None) if j < len(toks) else None
+            if target is None or target in PIPE_END or target == "&" or re.search(r"[$%~*?`]|^-$", target):
+                here = None  # not a literal path: where we are is unknown
+            else:
+                t = norm_path(target)
+                if re.match(r"[a-z]:|/", t):
+                    here = t
+                else:
+                    here = posixpath.normpath(norm_path(here) + "/" + t) if here else None
+            start = False
+            i = j
+        else:
+            start = False
+        i += 1
+    return here
+
+
 def render_dirs(jobs, cwd=None):
     """The folders the jobs write frames to (`-o C:/run/out/frame_####`, `-o /tmp/run/f_####`, `--render-output=//out/f_`):
     the path without its file-name prefix and without a leading `//` (relative to the .blend), slashes normalized. One rule
@@ -929,7 +974,8 @@ def score_announcements(run, args=None):
             problems.append(f"{kind} Blender job with no message to the user before it")
             continue
         dirs = out_dirs(c, run, job_list)
-        hints = [] if dirs else render_dirs(job_list, run.get("cwd"))
+        command = strip_comment(c["input"].get("command", ""))
+        hints = [] if dirs else [h for j in job_list for h in render_dirs([j], cwd_at(command, j["raw"], run.get("cwd"), c["name"]))]
         name_only += 0 if dirs or hints else 1
         def has_path(text):
             flat = norm_path(text)
