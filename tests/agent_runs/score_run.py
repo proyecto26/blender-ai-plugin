@@ -877,12 +877,15 @@ def status_path_in(text):
 CD_WORDS = {"cd", "chdir", "pushd", "set-location", "sl", "push-location"}
 CD_ANY = r"(?<![\w.\-])(?:cd|chdir|pushd|popd|set-location|sl|push-location|pop-location)(?![\w.\-])"
 CD_VALUE_FLAGS = {"-path", "-literalpath"}
+BLOCK_OPEN = {"if", "while", "until", "for", "case", "select", "function"}  # a cd inside one may not run
+BLOCK_CLOSE = {"fi", "done", "esac"}
 
 
 def cwd_at(command, raw, cwd, shell="Bash"):
     """The working directory where the invocation `raw` runs, read conservatively. A `cd` / `Set-Location` / `Push-Location` /
     `pushd` with a literal target moves the session's `cwd` only when it is a plain top-level command at the start of its
-    sequence (the command start, after `;` or a newline), outside any ( ) or { }, and before the launch. ANY other mention of
+    sequence (the command start, after `;` or a newline), outside any ( ) or { } and any if/while/until/for/case block, and
+    before the launch. ANY other mention of
     a directory change before the launch (after && || | &, in a group or conditional, in a payload or substitution, popd, a
     target that is not literal) makes the directory unknown (None), as does a launch that cannot be located in the command
     text; an unknown directory never resolves a relative path. With no directory change in the command, `cwd` is returned."""
@@ -894,6 +897,7 @@ def cwd_at(command, raw, cwd, shell="Bash"):
         return None  # the launch is in a payload, was joined from several lines, or appears twice: where it runs is unknown
     prefix = text[:at]
     toks, here, start, depth, prev_end = list(re.finditer(TOKEN, prefix)), cwd, True, 0, 0
+    block = 0  # open shell compound commands (if/while/for/case ... fi/done/esac) before the launch
     i = 0
     while i < len(toks):
         m = toks[i]
@@ -909,6 +913,8 @@ def cwd_at(command, raw, cwd, shell="Bash"):
         if bare and tok.rstrip(")}") in SEG_END:
             depth = max(0, depth - closes)
             start = tok.rstrip(")}") == ";" and depth == 0  # only `;` (or a newline) starts a new top-level command
+        elif word in CD_WORDS and bare and start and (depth or block):
+            return None  # a directory change inside a group or a compound command may not run
         elif word in CD_WORDS and bare and start and depth == 0 and opens == 0 and not closes:
             j = i + 1
             while j < len(toks) and next(g for g in toks[j].groups() if g is not None).lower() in CD_VALUE_FLAGS:
@@ -930,6 +936,10 @@ def cwd_at(command, raw, cwd, shell="Bash"):
         else:
             if re.search(CD_ANY, tok, re.I):
                 return None  # a directory change somewhere other than a plain top-level command
+            if bare and start and word in BLOCK_OPEN:
+                block += 1
+            elif bare and start and word in BLOCK_CLOSE:
+                block = max(0, block - 1)
             start = False
             depth += opens - closes
             if depth < 0:
