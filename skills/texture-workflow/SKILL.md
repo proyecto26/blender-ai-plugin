@@ -156,7 +156,7 @@ ARGS: `low`, `high`, `maps`, `size`, `extrusion`, `samples`, `out_dir`
 
 Import ARGS (`import_painter_textures.py`): `folder`, `material`, `texture_set`, `normal_convention` (`OPENGL` or
 `DIRECTX`), `patterns`, `ao` (`skip` or `multiply`), `height_strength`, `assign_to`, `pack`. Read the result: `files`
-(which file went where), `unmatched`, `ambiguous`, `skipped_udim`. UDIM tiles are not wired. See
+(which file went where), `unmatched`, `ambiguous`, `skipped_udim`. UDIM tiles are not wired. A normal map's convention comes from the argument, then the file name, then its pixels (curl test, decides only with a clear margin); `normal_convention_source` says which, and `default` (assumed OpenGL, with a warning) means the pixels could not tell: pass `normal_convention`. See
 `references/substance-painter-handoff.md`.
 
 ## Reference Guide
