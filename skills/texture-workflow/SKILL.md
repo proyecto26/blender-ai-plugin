@@ -154,9 +154,8 @@ result = runpy.run_path("<skill_dir>/scripts/bake_maps.py", init_globals={"ARGS"
 
 ARGS: `low`, `high`, `maps`, `size`, `extrusion`, `samples`, `out_dir`
 
-Import ARGS (`import_painter_textures.py`): `folder`, `material`, `texture_set`, `normal_convention` (`OPENGL` or
-`DIRECTX`), `patterns`, `ao` (`skip` or `multiply`), `height_strength`, `assign_to`, `pack`. Read the result: `files`
-(which file went where), `unmatched`, `ambiguous`, `skipped_udim`. UDIM tiles are not wired. A normal map's convention comes from the argument, then the file name, then its pixels (curl test, decides only with a clear margin); `normal_convention_source` says which, and `default` (assumed OpenGL, with a warning) means the pixels could not tell: pass `normal_convention`. See
+Import ARGS (`import_painter_textures.py`): `folder`, `material`, `texture_set`, `normal_convention` (`OPENGL`, `DIRECTX` or `AUTO`), `patterns`, `ao` (`skip` or `multiply`), `height_strength`, `assign_to`, `pack`. Read the result: `files`
+(which file went where), `unmatched`, `ambiguous`, `skipped_udim`. UDIM tiles are not wired. A normal map's convention comes from the argument, then the file name, else OPENGL: the pixels never flip green on their own. With no argument and no name hint, a map whose pixels look like DirectX is still wired as OpenGL, with a warning and `normal_convention_suggestion: "directx"`; pass `normal_convention="DIRECTX"` if that is right. `normal_convention="AUTO"` lets the pixels decide (curl of the height-gradient field under both green conventions, measured at full resolution, decided only with a 4x margin; `normal_convention_source` says which rule won). AUTO can be wrong for a map that is not height-derived (painted, some bakes) or whose red channel is inverted, which swaps the two scores. See
 `references/substance-painter-handoff.md`.
 
 ## Reference Guide
