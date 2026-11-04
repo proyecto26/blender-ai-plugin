@@ -572,6 +572,10 @@ def fix14a_cases():
     ps = lambda cmd: announce(launch_run(None, "PowerShell", cmd, took=90))
     R = "blender -b scene.blend -a"
     say = lambda path: "About 12 s. Progress: " + path
+    def in_cwd(cwd, cmd, said):
+        run = launch_run(said, "Bash", cmd, took=90)
+        run["cwd"] = cwd
+        return announce(run)
     detail = lambda cmd, said=None: score_run.score_announcements(launch_run(said, "Bash", cmd, took=90))["evidence"]
     return [
         ("eval of a double-quoted launch", sh(f'eval "{R}"'), "FLAG"),
@@ -599,6 +603,35 @@ def fix14a_cases():
         ("PowerShell backtick continuation is one command, 90 s unannounced", ps("blender -b scene.blend `\n --python probe.py"), "FLAG"),
         ("PowerShell backtick continuation, 5 s probe", announce(launch_run(None, "PowerShell", "blender -b scene.blend `\n --python probe.py", took=5)), "OK"),
         ("bash backslash continuation is one command, 90 s unannounced", sh("blender -b scene.blend \\\n --python probe.py"), "FLAG"),
+        # Only a real continuation joins lines; another command on the next line never lends its plan exemption.
+        ("PowerShell path ending in a backslash does not join the next line",
+         ps('blender -b scene.blend --python s.py -o C:\\out\\\nWrite-Host -- \'{"plan":true}\''), "FLAG"),
+        ("Bash escaped backslash at the end of a line is not a continuation",
+         sh('blender -b scene.blend -a -o C:\\\\out\\\\\necho -- \'{"plan":true}\''), "FLAG"),
+        ("a continuation followed by a blank line joins nothing",
+         sh('blender -b scene.blend -a \\\n\nblender -b x.blend --python p.py -- \'{"plan":true}\''), "FLAG"),
+        ("PowerShell backtick inside a single-quoted string is not a continuation",
+         ps("blender -b scene.blend -a -o 'C:\\out`\nWrite-Host -- ''{\"plan\":true}''"), "FLAG"),
+        ("a real Bash continuation still carries the plan exemption",
+         announce(launch_run(None, "Bash", 'blender -b f.blend \\\n --python s.py -- \'{"plan": true}\'', took=8)), "OK"),
+        ("a real PowerShell continuation still carries the plan exemption",
+         announce(launch_run(None, "PowerShell", 'blender -b f.blend `\n --python s.py -- \'{"plan": true}\'', took=8)), "OK"),
+        # eval at a command start that is not the first word of the line
+        ("eval after then", sh(f'if true; then eval "{R}"; fi'), "FLAG"),
+        ("eval after else", sh(f'if false; then :; else eval "{R}"; fi'), "FLAG"),
+        ("eval after do", sh(f'while true; do eval "{R}"; done'), "FLAG"),
+        ("eval after VAR=value", sh(f'VAR=x eval "{R}"'), "FLAG"),
+        ("eval after two assignments", sh(f'A=1 B=2 eval "{R}"'), "FLAG"),
+        ("eval in braces", sh(f'{{ eval "{R}"; }}'), "FLAG"),
+        ("eval in a subshell", sh(f'( eval "{R}" )'), "FLAG"),
+        ("eval after &&", sh(f'true && eval "{R}"'), "FLAG"),
+        ("eval after ||", sh(f'false || eval "{R}"'), "FLAG"),
+        ("eval after a pipe", sh(f'echo x | eval "{R}"'), "FLAG"),
+        ("eval on the next line", sh(f'echo x\neval "{R}"'), "FLAG"),
+        ("eval after time", sh(f'time eval "{R}"'), "FLAG"),
+        ("eval after builtin", sh(f'builtin eval "{R}"'), "FLAG"),
+        ("eval after command", sh(f'command eval "{R}"'), "FLAG"),
+        ("echo then eval text in a then branch stays text", sh(f'if true; then echo eval "{R}"; fi'), "OK"),
         # eval / iex payloads: unquoted variable, Invoke-Expression, and only when invoked
         ("eval of an unquoted variable holding a command", sh(f'cmd="{R}"; eval $cmd'), "FLAG"),
         ("Invoke-Expression of a string", ps('Invoke-Expression "blender -b f.blend -a"'), "FLAG"),
@@ -631,6 +664,12 @@ def fix14a_cases():
         ("no out_dir, -o folder and the status file elsewhere", sh("blender -b f.blend -o C:/run/out/frame_#### -a", say("C:/other/render_status.json")), "FLAG"),
         ("no out_dir, -o folder and the status file one level up", sh("blender -b f.blend -o C:/run/out/frames/f_#### -a", say("C:/run/out/render_status.json")), "OK"),
         ("no out_dir, --render-output= folder with a slash", sh("blender -b f.blend --render-output=C:/run/out/ -a", say("C:/run/out/render_status.json")), "OK"),
+        ("no out_dir, ./ -o folder resolved against the session cwd", in_cwd("C:/proj", "blender -b f.blend -o ./out/out_####.png -a", say("C:/proj/out/render_status.json")), "OK"),
+        ("no out_dir, ./ -o folder, status in another project", in_cwd("C:/proj", "blender -b f.blend -o ./out/out_####.png -a", say("C:/other/out/render_status.json")), "FLAG"),
+        ("no out_dir, ../ -o folder resolved against the session cwd", in_cwd("C:/proj/sub", "blender -b f.blend -o ../out/f_#### -a", say("C:/proj/out/render_status.json")), "OK"),
+        ("no out_dir, ./ -o folder, cwd unknown: the trailing name decides", in_cwd(None, "blender -b f.blend -o ./out/out_####.png -a", say("C:/proj/out/render_status.json")), "OK"),
+        ("no out_dir, ./ -o folder, cwd unknown, another folder name", in_cwd(None, "blender -b f.blend -o ./out/out_####.png -a", say("C:/proj/elsewhere/render_status.json")), "FLAG"),
+        ("the session cwd is read from the init event", score_run.collect([(T0, {"type": "system", "cwd": "C:/proj"})])["cwd"], "C:/proj"),
         ("no out_dir, // -o folder, status in a folder of that name", sh("blender -b f.blend -o //out/f_#### -a", say("C:/run/out/render_status.json")), "OK"),
         ("no out_dir, // -o folder, status elsewhere", sh("blender -b f.blend -o //out/f_#### -a", say("C:/anywhere/render_status.json")), "FLAG"),
         ("no out_dir, POSIX -o folder and the status file in it", sh("blender -b f.blend -o /tmp/run/frame_#### -a", say("/tmp/run/render_status.json")), "OK"),
