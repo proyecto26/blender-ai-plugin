@@ -72,7 +72,8 @@ shape as a dropout and is reported as one when it spans 2x2 cells (a shadow is n
 unless the scene itself is black; a macOS Eevee run found the cube's shadow at 0.0036, flat, sliding 15 px a frame, reported as a
 dropout, and that case is now handled: a group of touching dropout cells whose footprint lands at least 85% on pixels of the same
 flat value (within `dropout_gap` / 2) in t-1 or t+1, at any shift up to the whole `max_motion_px` window, is the same shape moving
-and is not a dropout; it is an FFT correlation per group and neighbour, 10.7 s against 10.2 s for 10 frames of 1920x1080 with a
+and is not a dropout, except for the cells of the group that do not land on it (under 85% of the cell, at the best shift): those
+stay dropouts, so a tile attached to the moving shape is still found, and a lone unmatched cell is the shape's edge; it is an FFT correlation per group and neighbour, 10.7 s against 10.2 s for 10 frames of 1920x1080 with a
 300 x 500 px black tile; a flat shape that changes shape between frames, or moves farther than the window, is still reported);
 (4) the neighbours must be a steady shift of each other: a pan that accelerates, or a dropout beside another bad frame,
 is not confirmed and is left to `unmeasured_frames`; (5) a region that turns not black or white but another level (a
@@ -418,6 +419,11 @@ def _dropouts(frames, t, cell, R, level, flat_dev, gap, step=1):
             for i in np.nonzero(ok)[0]]
 
 
+FOOT_MATCH = 0.85  # share of the footprint that must land on the flat value in a neighbour (coarse test)
+CELL_MATCH = 0.85  # share of one cell that must land on it for the cell to count as the moving shape
+MIN_REST = 2  # unmatched cells in a 3x3 (self included) for an unmatched cell to stay a dropout
+
+
 def _moving_flat(frames, t, drops, cell, R, p, gap):
     """Drop the dropout groups that are a flat shape which moved. A group is a connected set (8 neighbours) of the cells
     `_dropouts` found in frame t; its flat value v is read from frame t. For each neighbour u (t-1, t+1) the pixels of u within
@@ -430,7 +436,10 @@ def _moving_flat(frames, t, drops, cell, R, p, gap):
     |s|): constant velocity), or when only one does and the mirrored place in the other neighbour is not wholly inside the
     frame (the shape entered or left it). Measured miss: a flat shape that is absent for one frame and shows up as a tile
     at the midpoint of its own positions in t-1 and t+1 (e.g. a 32 x 64 black slab at x=145 and x=175 and a black tile at
-    x=160 in between) is that same moving shape and is not reported."""
+    x=160 in between) is that same moving shape and is not reported. A dismissed group is split, not dropped whole: at the best
+    combination of shifts, the cells that do not land on the flat value (CELL_MATCH of the cell, in every neighbour used) are
+    kept as dropouts when they touch another unmatched cell (MIN_REST), so a tile attached to the moving shape (its footprint
+    still matches the shape at 86% or more) is found and the shape's own antialiased edge cells are not."""
     if not drops:
         return drops
     H, W = frames[t].shape
@@ -472,11 +481,17 @@ def _moving_flat(frames, t, drops, cell, R, p, gap):
             keep += [cells[c] for c in comp]
             continue
 
+        Dmaps = {}
+
+        def dark_map(u):
+            if u not in Dmaps:
+                M = np.zeros((hh, ww), dtype=np.float32)
+                M[sy0 - fy0:sy1 - fy0, sx0 - fx0:sx1 - fx0] = np.abs(frames[u][sy0:sy1, sx0:sx1] - v) <= 0.5 * gap
+                Dmaps[u] = M.reshape(hh // p, p, ww // p, p).mean(axis=(1, 3))
+            return Dmaps[u]
+
         def dark_corr(u):
-            M = np.zeros((hh, ww), dtype=np.float32)
-            M[sy0 - fy0:sy1 - fy0, sx0 - fx0:sx1 - fx0] = np.abs(frames[u][sy0:sy1, sx0:sx1] - v) <= 0.5 * gap
-            D = M.reshape(hh // p, p, ww // p, p).mean(axis=(1, 3))
-            return np.fft.irfft2(fg * np.fft.rfft2(D), s=g.shape)[ix]
+            return np.fft.irfft2(fg * np.fft.rfft2(dark_map(u)), s=g.shape)[ix]
 
         own = np.fft.irfft2(fg * np.fft.rfft2(g), s=g.shape)[ix]  # footprint cells that overlap the footprint shifted by s
         at_t = dark_corr(t)
@@ -487,25 +502,44 @@ def _moving_flat(frames, t, drops, cell, R, p, gap):
         left[own >= n_cells - 1e-6] = False  # shift 0: the footprint itself
         found = {}
         for u in (t - 1, t + 1):
-            hit = (dark_corr(u) >= 0.85 * n_cells) & left
+            hit = (dark_corr(u) >= FOOT_MATCH * n_cells) & left
             if hit.any():
                 found[u] = np.argwhere(hit) - Rp  # (dy, dx) in p-px units
-        moving = False
+        combos = []  # each: the shifts ((u, (dy, dx)), ...) that carry the footprint to a flat place in every neighbour
         if len(found) == 2:
             # constant velocity: the shift to t-1 is minus the shift to t+1
             for a_ in found[t - 1]:
                 tol = max(2.0, 0.5 * float(np.hypot(*a_)))
-                if (np.hypot(*(found[t + 1] + a_).T) <= tol).any():
-                    moving = True
-                    break
+                for b_ in found[t + 1]:
+                    if float(np.hypot(*(b_ + a_))) <= tol:
+                        combos.append(((t - 1, (int(a_[0]), int(a_[1]))), (t + 1, (int(b_[0]), int(b_[1])))))
         elif found:
             # only one neighbour holds it: that is a moving shape only when it entered or left the frame, i.e. where the
             # other neighbour would hold it (the mirrored shift) is not wholly inside the frame
             (u1, sh1), = found.items()
-            moving = any(not (0 <= y0 * cell - dy * p and y1 * cell - dy * p <= H and 0 <= x0 * cell - dx * p
-                              and x1 * cell - dx * p <= W) for dy, dx in sh1)
-        if not moving:
+            for dy, dx in sh1:
+                if not (0 <= y0 * cell - dy * p and y1 * cell - dy * p <= H and 0 <= x0 * cell - dx * p
+                        and x1 * cell - dx * p <= W):
+                    combos.append(((u1, (int(dy), int(dx))),))
+        if not combos:
             keep += [cells[c] for c in comp]
+            continue
+
+        # the group moved, but a part of it may not have: the cells that do not land (CELL_MATCH) on the flat value in every
+        # neighbour at the shifts of the best-fitting combination are a dropout attached to the shape and stay; a single
+        # unmatched cell with no unmatched neighbour (the antialiased edge of the moving shape) is dropped
+        def matched(combo):
+            ok = {}
+            for cy, cx in comp:
+                r0, c0 = Rp + (cy - y0) * c_p, Rp + (cx - x0) * c_p
+                ok[(cy, cx)] = all(dark_map(u)[r0 + dy:r0 + dy + c_p, c0 + dx:c0 + dx + c_p].mean() >= CELL_MATCH
+                                   for u, (dy, dx) in combo)
+            return ok
+        best_ok = max((matched(cb) for cb in combos), key=lambda o: sum(o.values()))
+        rest = {c for c, m in best_ok.items() if not m}
+        for c in comp:
+            if c in rest and sum(1 for a in (-1, 0, 1) for b in (-1, 0, 1) if (c[0] + a, c[1] + b) in rest) >= MIN_REST:
+                keep.append(cells[c])
     return keep
 
 

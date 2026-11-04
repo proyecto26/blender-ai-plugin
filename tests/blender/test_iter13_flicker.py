@@ -393,6 +393,11 @@ def run_all(out_dir, check):
         r = run({"paths": slide_seq(f"slide_{scale}_{sw}", scale, n, (150, 210, sw), speed)})
         check(f"a flat near-black {sw} px shape sliding {speed * scale} px a frame at scale {scale}: pass, no event "
               "(a dropout false positive on 72da9c7)", r["verdict"] == "pass" and not r["events"], summary(r))
+    def holds(events, box, tol=16):
+        # some event region contains the injected tile box (within one block)
+        return any(e["region_px"][0] <= box[0] + tol and e["region_px"][1] <= box[1] + tol
+                   and e["region_px"][2] >= box[2] - tol and e["region_px"][3] >= box[3] - tol for e in events)
+
     tile = (4, (400, 250, 464, 314))
     for scale, n in ((1, 10), (3, 7)):
         r = run({"paths": slide_seq(f"slide_tile_{scale}", scale, n, (150, 210, 24), 15, tile=tile)})
@@ -413,11 +418,13 @@ def run_all(out_dir, check):
 
     for v, name in ((0.0, "black"), (1.0, "white")):
         r = run({"paths": static_seq(f"static32_{name}", v, 32, 40, 340), "max_motion_px": 48})
-        check(f"a one-frame {name} 32 px tile 8 px from a static {name} 32 px square (max_motion_px 48, in every frame): found at frame 4 "
-              "(missed on b5650fe)", r["verdict"] == "flicker" and [e["frame"] for e in r["events"]] == [4], summary(r))
+        check(f"a one-frame {name} 32 px tile 8 px from a static {name} 32 px square (max_motion_px 48, in every frame): found at frame 4, "
+              "region holds the tile (missed on b5650fe)", r["verdict"] == "flicker" and [e["frame"] for e in r["events"]] == [4]
+              and holds(r["events"], (340, 150, 372, 182)), summary(r))
         r = run({"paths": static_seq(f"static16_{name}", v, 16, 24, 324), "block": 8})
-        check(f"a one-frame {name} 16 px tile 24 px from a static {name} 16 px square (block 8): found at frame 4 "
-              "(missed on b5650fe)", r["verdict"] == "flicker" and [e["frame"] for e in r["events"]] == [4], summary(r))
+        check(f"a one-frame {name} 16 px tile 24 px from a static {name} 16 px square (block 8): found at frame 4, region holds the tile "
+              "(missed on b5650fe)", r["verdict"] == "flicker" and [e["frame"] for e in r["events"]] == [4]
+              and holds(r["events"], (324, 150, 340, 166), 8), summary(r))
     for label, tile_box in (("touch", (190, 150, 222, 182)), ("apart", (208, 150, 240, 182))):
         frames_ = []
         base_tex = noise(360, 640, 3)
@@ -427,8 +434,33 @@ def run_all(out_dir, check):
             frames_.append(f)
         frames_[4][tile_box[1]:tile_box[3], tile_box[0]:tile_box[2]] = 0.0
         r = run({"paths": seq(os.path.join(base, f"adj_{label}"), frames_)})
-        check(f"a one-frame black tile {label} the sliding shape (within 24 px): found at frame 4 (the `touch` one missed on b5650fe)",
-              r["verdict"] == "flicker" and [e["frame"] for e in r["events"]] == [4], summary(r))
+        check(f"a one-frame black tile {label} the sliding shape (within 24 px): found at frame 4, region holds the tile (the `touch` one missed on b5650fe)",
+              r["verdict"] == "flicker" and [e["frame"] for e in r["events"]] == [4] and holds(r["events"], tile_box), summary(r))
+
+    # Round 11 (these fail on 7ffa74e): a tile ATTACHED to a sliding bar joins its dropout group (the group matched the bar in
+    # each neighbour at 86%); only the part of the group that matches the moving shape is dismissed, the rest stays a dropout.
+    def bar_seq(label, v, tile_box, vel=24, bw=16):
+        base_tex = noise(480, 640, 3)
+        frames_ = []
+        for t in range(9):
+            f = base_tex.copy()
+            x = 160 + vel * (t - 4)
+            f[64:464, x:x + bw] = v
+            frames_.append(f)
+        if tile_box:
+            frames_[4][tile_box[1]:tile_box[3], tile_box[0]:tile_box[2]] = v
+        return seq(os.path.join(base, label), frames_)
+
+    for v, name in ((0.0, "black"), (1.0, "white")):
+        r = run({"paths": bar_seq(f"bar_clean_{name}", v, None)})
+        check(f"a {name} 16 x 400 px bar sliding 24 px a frame (no tile): pass, no event", r["verdict"] == "pass" and not r["events"], summary(r))
+        for label, box in (("above (the Codex case)", (160, 32, 192, 64)), ("on the leading edge", (176, 200, 208, 232)),
+                           ("on the trailing edge", (128, 200, 160, 232)), ("above, as wide as the bar", (160, 32, 176, 64)),
+                           ("past the end", (160, 464, 192, 480))):
+            r = run({"paths": bar_seq(f"bar_{name}_{box[0]}_{box[1]}", v, box)})
+            check(f"a one-frame {name} tile {box} attached to that bar ({label}): found at frame 4 only, region holds the tile "
+                  "(missed on 7ffa74e)", r["verdict"] == "flicker" and [e["frame"] for e in r["events"]] == [4]
+                  and holds(r["events"], box, 16), summary(r))
 
     check("no images leaked", len([i for i in bpy.data.images if i.name.startswith("tmp_iter13")]) == 0)
 
