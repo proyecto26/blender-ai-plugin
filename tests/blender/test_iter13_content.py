@@ -267,6 +267,15 @@ def test_d1_content(rec, scene, out_dir):
         r = go(flat, **extra)
         rec.check(f"D1c flat map {extra}: default OPENGL, no flip, no suggestion",
                   r["normal_convention_source"] == "default" and not r["flipped"] and r["normal_convention_suggestion"] is None, r)
+    # pins the 4.0 margin: a correct-direction map whose ratio (3.5) is above the signal floor but below the margin
+    weak = baked_normal(128, 128, "DIRECTX", 1, slope=0.03, sigma=5.0)
+    r = go(weak, normal_convention="auto")
+    sc = r["normal_convention_scores"]
+    rec.check("D1c auto, ratio between 3 and 4 and above the signal floor: stays default",
+              3.0 < sc["ratio"] < 4.0 and sc["opengl_curl"] > 0.004 and r["normal_convention_source"] == "default" and not r["flipped"], r)
+    r = go(weak)
+    rec.check("D1c ratio between 3 and 4, no argument: no suggestion",
+              r["normal_convention_suggestion"] is None and not r["flipped"], r)
     r = go(baked_normal(128, 128, "DIRECTX", 1, slope=0.01), normal_convention="auto")
     rec.check("D1c auto, near-flat map: default rather than a guess", r["normal_convention_source"] == "default" and not r["flipped"], r)
     rng = np.random.default_rng(4)
