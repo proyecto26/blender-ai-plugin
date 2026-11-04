@@ -184,6 +184,75 @@ def test_d1(rec, scene, out_dir):
               len(shared.materials) == 1 and len(a.material_slots) == 1 and len(b.material_slots) == 1, len(shared.materials))
 
 
+def baked_normal(size, convention, seed=1, slope=0.8):
+    """RGB (size, size, 3) 0..1 8-bit-quantised tangent-space normal map of a smooth random height field."""
+    rng = np.random.default_rng(seed)
+    f = np.fft.fftfreq(size)
+    k = np.exp(-(f[:, None] ** 2 + f[None, :] ** 2) * (2 * (np.pi * size / 40) ** 2))
+    h = np.fft.ifft2(np.fft.fft2(rng.standard_normal((size, size))) * k).real
+    gv, gu = np.gradient(h)
+    rms = np.sqrt((gu ** 2 + gv ** 2).mean()) + 1e-12
+    n = np.stack([-gu / rms * slope, -gv / rms * slope, np.ones_like(gu)], -1)
+    n /= np.linalg.norm(n, axis=-1, keepdims=True)
+    if convention == "DIRECTX":
+        n[:, :, 1] *= -1
+    return np.round((n * 0.5 + 0.5) * 255) / 255
+
+
+def save_normal(path, rgb):
+    h, w = rgb.shape[:2]
+    img = bpy.data.images.new("tmp_nrm", w, h, alpha=False)
+    try:
+        img.colorspace_settings.name = "Non-Color"
+        px = np.ones((h, w, 4), dtype=np.float32)
+        px[:, :, :3] = rgb
+        img.pixels.foreach_set(px.ravel())
+        img.filepath_raw = path
+        img.file_format = "PNG"
+        img.save()
+    finally:
+        bpy.data.images.remove(img)
+
+
+def test_d1_content(rec, scene, out_dir):
+    def folder(tag, normal_name, rgb):
+        f = os.path.join(out_dir, "d1c_" + tag)
+        os.makedirs(f, exist_ok=True)
+        save_map(os.path.join(f, "Mat_BaseColor.png"), 0.5)
+        save_normal(os.path.join(f, normal_name), rgb)
+        return f
+
+    def flipped(r):
+        return "FLIP_G_Invert" in bpy.data.materials[r["material"]].node_tree.nodes
+
+    dx, gl = baked_normal(128, "DIRECTX"), baked_normal(128, "OPENGL")
+    r = run("texture-workflow", "import_painter_textures.py", {"folder": folder("dx", "Mat_Normal.png", dx), "material": "MAT_I13C_DX"})
+    rec.check("D1c DirectX map with a neutral name: detected from content and flipped",
+              r["normal_convention"] == "DIRECTX" and r["normal_convention_source"] == "content" and flipped(r), r)
+    rec.check("D1c content result carries both curl scores and a warning",
+              r["normal_convention_scores"]["directx_curl"] < r["normal_convention_scores"]["opengl_curl"] and any("pixels" in w for w in r["warnings"]), r)
+    r = run("texture-workflow", "import_painter_textures.py", {"folder": folder("gl", "Mat_Normal.png", gl), "material": "MAT_I13C_GL"})
+    rec.check("D1c OpenGL map with a neutral name: detected from content, not flipped",
+              r["normal_convention"] == "OPENGL" and r["normal_convention_source"] == "content" and not flipped(r), r)
+    flat = np.ones((64, 64, 3)) * np.array([0.5, 0.5, 1.0])
+    r = run("texture-workflow", "import_painter_textures.py", {"folder": folder("flat", "Mat_Normal.png", flat), "material": "MAT_I13C_FLAT"})
+    rec.check("D1c flat normal map: default OPENGL, no guess, warns",
+              r["normal_convention"] == "OPENGL" and r["normal_convention_source"] == "default" and not flipped(r) and r["warnings"], r)
+    r = run("texture-workflow", "import_painter_textures.py", {"folder": folder("near", "Mat_Normal.png", baked_normal(128, "DIRECTX", slope=0.01)),
+                                                                "material": "MAT_I13C_NEAR"})
+    rec.check("D1c near-flat map: default rather than a guess", r["normal_convention_source"] == "default" and not flipped(r), r)
+    r = run("texture-workflow", "import_painter_textures.py", {"folder": folder("arg", "Mat_Normal.png", dx), "material": "MAT_I13C_ARG",
+                                                                "normal_convention": "OPENGL"})
+    rec.check("D1c explicit argument beats content (DirectX pixels, OPENGL asked): not flipped, source argument",
+              r["normal_convention_source"] == "argument" and not flipped(r) and r["normal_convention_scores"] is None, r)
+    r = run("texture-workflow", "import_painter_textures.py", {"folder": folder("name", "Mat_Normal_OpenGL.png", dx), "material": "MAT_I13C_NAME"})
+    rec.check("D1c file name beats content (DirectX pixels named OpenGL): not flipped, source filename",
+              r["normal_convention_source"] == "filename" and r["normal_convention"] == "OPENGL" and not flipped(r), r)
+    r = run("texture-workflow", "import_painter_textures.py", {"folder": folder("name2", "Mat_Normal_DirectX.png", gl), "material": "MAT_I13C_NAME2"})
+    rec.check("D1c file name beats content (OpenGL pixels named DirectX): flipped, source filename",
+              r["normal_convention_source"] == "filename" and flipped(r), r)
+
+
 # ---------------------------------------------------------------- D2
 
 def test_d2(rec, scene, out_dir):
@@ -263,7 +332,7 @@ def run_all(out_dir):
     os.makedirs(out_dir, exist_ok=True)
     rec = Recorder()
     scene = bpy.context.scene
-    for name, fn in (("D1", test_d1), ("D2", test_d2), ("D3", test_d3), ("D4", test_d4)):
+    for name, fn in (("D1", test_d1), ("D1c", test_d1_content), ("D2", test_d2), ("D3", test_d3), ("D4", test_d4)):
         rec.section(name, lambda r, fn=fn: fn(r, scene, out_dir))
     return rec.results
 
