@@ -123,6 +123,7 @@ def extra_cases():
         checks += window_cases(tmp)
         checks += b_cases(tmp)
         checks += round6_cases(tmp)
+        checks += fix14a_cases()
         checks += flag_cases()
         checks += args_file_cases()
         checks += plan_state_cases()
@@ -561,6 +562,171 @@ def round6_cases(tmp):
         ("~90s", run("~90s." + st, "blender -b scene.blend -a", secs=95), "OK"),
         ("1 h 5 min", run("About 1 h 5 min." + st, "blender -b scene.blend -a", secs=3900), "OK"),
         ("quoted status path with spaces", run('About 2 min. Status: "C:/My Proj/out/render_status.json"', "blender -b scene.blend -a", secs=120), "OK"),
+    ]
+
+
+def fix14a_cases():
+    """Shell shapes that hide a launch (eval, command substitution, backticks, aliases, a variable holding a command), an
+    executable built at run time (a NOTE: unreadable, not a pass), and a status path judged with no out_dir."""
+    sh = lambda cmd, say=None: announce(launch_run(say, "Bash", cmd, took=90))
+    ps = lambda cmd: announce(launch_run(None, "PowerShell", cmd, took=90))
+    R = "blender -b scene.blend -a"
+    say = lambda path: "About 12 s. Progress: " + path
+    def in_cwd(cwd, cmd, said):
+        run = launch_run(said, "Bash", cmd, took=90)
+        run["cwd"] = cwd
+        return announce(run)
+    detail = lambda cmd, said=None: score_run.score_announcements(launch_run(said, "Bash", cmd, took=90))["evidence"]
+    return [
+        ("eval of a double-quoted launch", sh(f'eval "{R}"'), "FLAG"),
+        ("eval of a single-quoted launch", sh(f"eval '{R}'"), "FLAG"),
+        ("eval of bare words", sh(f"eval {R}"), "FLAG"),
+        ("command substitution inside quotes", sh(f'echo "$({R})"'), "FLAG"),
+        ("command substitution in an assignment", sh(f"x=$({R})"), "FLAG"),
+        ("nested substitution", sh(f"echo $(echo $({R}))"), "FLAG"),
+        ("backticks", sh(f"x=`{R}`"), "FLAG"),
+        ("backticks inside quotes", sh(f'echo "`{R}`"'), "FLAG"),
+        ("eval inside sh -c", sh("sh -c 'eval \"%s\"'" % R), "FLAG"),
+        ("alias of the bare executable", sh("alias b=blender; b -b scene.blend -a"), "FLAG"),
+        ("alias holding flags", sh("alias b='blender -b scene.blend'; b -a"), "FLAG"),
+        ("alias that is not blender", sh("alias b=ffmpeg; b -b scene.blend -a"), "OK"),
+        ("variable holding a whole command, eval", sh(f'cmd="{R}"; eval "$cmd"'), "FLAG"),
+        ("variable holding a whole command, sh -c", sh(f'cmd="{R}"; sh -c "$cmd"'), "FLAG"),
+        ("variable holding a whole command, run as $cmd", sh(f'cmd="{R}"; $cmd'), "FLAG"),
+        ("variable assigned blender, still read", sh("B=blender; $B -b scene.blend -a"), "FLAG"),
+        ("variable assigned $BLENDER, still read", sh("B=$BLENDER; $B -b scene.blend -a"), "FLAG"),
+        # Not launches: printed, literal, or unrelated.
+        ("single-quoted substitution is literal text", sh(f"echo '$({R})'"), "OK"),
+        ("substitution of an unrelated command", sh('echo "$(date)"; ls'), "OK"),
+        ("eval of an unrelated command", sh('eval "$(ssh-agent)"'), "OK"),
+        # A backtick (PowerShell) or backslash line continuation joins the lines: one 90 s script launch, unannounced.
+        ("PowerShell backtick continuation is one command, 90 s unannounced", ps("blender -b scene.blend `\n --python probe.py"), "FLAG"),
+        ("PowerShell backtick continuation, 5 s probe", announce(launch_run(None, "PowerShell", "blender -b scene.blend `\n --python probe.py", took=5)), "OK"),
+        ("bash backslash continuation is one command, 90 s unannounced", sh("blender -b scene.blend \\\n --python probe.py"), "FLAG"),
+        # Only a real continuation joins lines; another command on the next line never lends its plan exemption.
+        ("PowerShell path ending in a backslash does not join the next line",
+         ps('blender -b scene.blend --python s.py -o C:\\out\\\nWrite-Host -- \'{"plan":true}\''), "FLAG"),
+        ("Bash escaped backslash at the end of a line is not a continuation",
+         sh('blender -b scene.blend -a -o C:\\\\out\\\\\necho -- \'{"plan":true}\''), "FLAG"),
+        ("a continuation followed by a blank line joins nothing",
+         sh('blender -b scene.blend -a \\\n\nblender -b x.blend --python p.py -- \'{"plan":true}\''), "FLAG"),
+        ("PowerShell backtick inside a single-quoted string is not a continuation",
+         ps("blender -b scene.blend -a -o 'C:\\out`\nWrite-Host -- ''{\"plan\":true}''"), "FLAG"),
+        ("a real Bash continuation still carries the plan exemption",
+         announce(launch_run(None, "Bash", 'blender -b f.blend \\\n --python s.py -- \'{"plan": true}\'', took=8)), "OK"),
+        ("a real PowerShell continuation still carries the plan exemption",
+         announce(launch_run(None, "PowerShell", 'blender -b f.blend `\n --python s.py -- \'{"plan": true}\'', took=8)), "OK"),
+        # Continuations inside a payload, in the payload's own shell.
+        ("bash -c payload with a backslash continuation", sh("bash -c 'blender -b f.blend \\\n -a'"), "FLAG"),
+        ("eval payload with a backslash continuation", sh('eval "blender -b f.blend \\\n -a"'), "FLAG"),
+        ("pwsh -Command payload with a backtick continuation", ps('pwsh -Command "blender -b f.blend `\n -a"'), "FLAG"),
+        ("iex payload with a backtick continuation", ps('iex "blender -b f.blend `\n -a"'), "FLAG"),
+        ("bash -c payload with a plan on a continuation line",
+         announce(launch_run(None, "Bash", "bash -c 'blender -b f.blend \\\n --python s.py -- \\'{\"plan\": true}\\''", took=8)), "OK"),
+        ("a path ending in a backslash inside a pwsh payload joins nothing",
+         ps("pwsh -Command \"blender -b f.blend -a -o C:\\out\\\nWrite-Host -- '{\\\"plan\\\":true}'\""), "FLAG"),
+        # A quoted keyword is not syntax
+        ('quoted "if" does not open a command', sh(f'"if" eval "{R}"'), "OK"),
+        ("unquoted if does", sh(f'if eval "{R}"; then :; fi'), "FLAG"),
+        # eval at a command start that is not the first word of the line
+        ("eval after then", sh(f'if true; then eval "{R}"; fi'), "FLAG"),
+        ("eval after else", sh(f'if false; then :; else eval "{R}"; fi'), "FLAG"),
+        ("eval after do", sh(f'while true; do eval "{R}"; done'), "FLAG"),
+        ("eval after VAR=value", sh(f'VAR=x eval "{R}"'), "FLAG"),
+        ("eval after two assignments", sh(f'A=1 B=2 eval "{R}"'), "FLAG"),
+        ("eval in braces", sh(f'{{ eval "{R}"; }}'), "FLAG"),
+        ("eval in a subshell", sh(f'( eval "{R}" )'), "FLAG"),
+        ("eval after &&", sh(f'true && eval "{R}"'), "FLAG"),
+        ("eval after ||", sh(f'false || eval "{R}"'), "FLAG"),
+        ("eval after a pipe", sh(f'echo x | eval "{R}"'), "FLAG"),
+        ("eval on the next line", sh(f'echo x\neval "{R}"'), "FLAG"),
+        ("eval after time", sh(f'time eval "{R}"'), "FLAG"),
+        ("eval after builtin", sh(f'builtin eval "{R}"'), "FLAG"),
+        ("eval after command", sh(f'command eval "{R}"'), "FLAG"),
+        ("echo then eval text in a then branch stays text", sh(f'if true; then echo eval "{R}"; fi'), "OK"),
+        # eval / iex payloads: unquoted variable, Invoke-Expression, and only when invoked
+        ("eval of an unquoted variable holding a command", sh(f'cmd="{R}"; eval $cmd'), "FLAG"),
+        ("Invoke-Expression of a string", ps('Invoke-Expression "blender -b f.blend -a"'), "FLAG"),
+        ("iex of a string", ps('iex "blender -b f.blend -a"'), "FLAG"),
+        ("iex of a variable holding a command", ps('$cmd = "blender -b f.blend -a"; iex $cmd'), "FLAG"),
+        ("sudo bash -c payload", sh(f"sudo bash -c '{R}'"), "FLAG"),
+        ("bash -c payload sees an earlier variable", sh('B=blender; bash -c "$B -b f.blend -a"'), "FLAG"),
+        ("echo of an eval line is text", sh('echo eval "blender -b f.blend -a"'), "OK"),
+        ("grep for an eval line is text", sh("grep eval 'blender -b f.blend -a' file"), "OK"),
+        ("printf of a bash -c line is text", sh("printf '%s' bash -c 'blender -b f.blend -a'"), "OK"),
+        ("Write-Host of an iex line is text", ps('Write-Host iex "blender -b f.blend -a"'), "OK"),
+        ("git commit message naming eval is text", sh('git commit -m eval "blender -b f.blend -a"'), "OK"),
+        # A run-time executable in any launch position is a NOTE.
+        ("Start-Process target from Get-Command", ps('$B = $(Get-Command blender).Source; Start-Process $B -ArgumentList "-b f.blend -a"'), "NOTE"),
+        ("Start-Process -FilePath from a substitution variable", ps('$B = $(Get-Command blender).Source; Start-Process -FilePath $B -ArgumentList "-b","f.blend","-a"'), "NOTE"),
+        ("call operator on a run-time variable", ps('$B = $(Get-Command blender).Source; & $B -b f.blend -a'), "NOTE"),
+        ("bash -c with a run-time variable", sh('B=$(which blender); bash -c "$B -b f.blend -a"'), "NOTE"),
+        ("sudo with a run-time variable", sh('B=$(which blender); sudo $B -b f.blend -a'), "NOTE"),
+        ("Start-Process of a variable assigned blender", ps('$B = "blender"; Start-Process $B -ArgumentList "-b f.blend -a"'), "FLAG"),
+        # An executable built at run time cannot be read: NOTE, never a silent OK.
+        ("executable from a substitution", sh("$(which blender) -b scene.blend -a"), "NOTE"),
+        ("executable from a quoted substitution", sh('"$(which blender)" -b scene.blend -a'), "NOTE"),
+        ("variable assigned from a substitution", sh("B=$(which blender); $B -b scene.blend -a"), "NOTE"),
+        ("variable assigned from backticks", sh("B=`which blender`; $B -b scene.blend -a"), "NOTE"),
+        ("variable built from other variables", sh('B="$DIR/$NAME"; $B -b scene.blend -a'), "NOTE"),
+        ("run-time executable without Blender-shaped flags", sh("$(which python) script.py"), "OK"),
+        ("a readable launch next to an unreadable one is still judged", sh(f"{R}; $(which blender) -b x.blend -a"), "FLAG"),
+        # The status path with no out_dir: the folder the job renders to, when it says so.
+        ("no out_dir, -o folder and the status file in it", sh("blender -b f.blend -o C:/run/out/frame_#### -a", say("C:/run/out/render_status.json")), "OK"),
+        ("no out_dir, -o folder and the status file elsewhere", sh("blender -b f.blend -o C:/run/out/frame_#### -a", say("C:/other/render_status.json")), "FLAG"),
+        ("no out_dir, -o folder and the status file one level up", sh("blender -b f.blend -o C:/run/out/frames/f_#### -a", say("C:/run/out/render_status.json")), "OK"),
+        ("no out_dir, --render-output= folder with a slash", sh("blender -b f.blend --render-output=C:/run/out/ -a", say("C:/run/out/render_status.json")), "OK"),
+        ("no out_dir, ./ -o folder resolved against the session cwd", in_cwd("C:/proj", "blender -b f.blend -o ./out/out_####.png -a", say("C:/proj/out/render_status.json")), "OK"),
+        ("no out_dir, ./ -o folder, status in another project", in_cwd("C:/proj", "blender -b f.blend -o ./out/out_####.png -a", say("C:/other/out/render_status.json")), "FLAG"),
+        ("no out_dir, ../ -o folder resolved against the session cwd", in_cwd("C:/proj/sub", "blender -b f.blend -o ../out/f_#### -a", say("C:/proj/out/render_status.json")), "OK"),
+        ("cd inside a multi-line if block may not run: cwd unknown, the correct status path is OK", in_cwd("/tmp/proj", "if [ -d /tmp/other ]; then\ncd /tmp/other\nfi\nblender -b f.blend -o out/f_#### -a", say("/tmp/proj/out/render_status.json")), "OK"),
+        ("cd inside a for block may not run: cwd unknown, another folder name is FLAG", in_cwd("/tmp/proj", "for d in a; do\ncd /tmp/x\ndone\nblender -b f.blend -o out/f_#### -a", say("/tmp/x/elsewhere/render_status.json")), "FLAG"),
+        ("a plain cd after a closed if block still applies", in_cwd("/tmp/proj", "if true; then echo hi; fi\ncd /tmp/y\nblender -b f.blend -o ./out/f_#### -a", say("/tmp/proj/out/render_status.json")), "FLAG"),
+        ("no out_dir, ./ -o folder, cwd unknown: the trailing name decides", in_cwd(None, "blender -b f.blend -o ./out/out_####.png -a", say("C:/proj/out/render_status.json")), "OK"),
+        ("no out_dir, ./ -o folder, cwd unknown, another folder name", in_cwd(None, "blender -b f.blend -o ./out/out_####.png -a", say("C:/proj/elsewhere/render_status.json")), "FLAG"),
+        ("cd to an absolute folder, then a relative -o", in_cwd("/tmp/proj", "cd /tmp/other; blender -b f.blend -o out/f_#### -a", say("/tmp/other/out/render_status.json")), "OK"),
+        ("cd to an absolute folder, the stale cwd's status path is wrong", in_cwd("/tmp/proj", "cd /tmp/other; blender -b f.blend -o out/f_#### -a", say("/tmp/proj/out/render_status.json")), "FLAG"),
+        ("cd to a relative folder", in_cwd("/tmp/proj", "cd sub && blender -b f.blend -o out/f_#### -a", say("/tmp/proj/sub/out/render_status.json")), "OK"),
+        ("cd .. then a relative -o", in_cwd("/tmp/proj/sub", "cd .. && blender -b f.blend -o out/f_#### -a", say("/tmp/proj/out/render_status.json")), "OK"),
+        ("cd after the launch changes nothing", in_cwd("/tmp/proj", "blender -b f.blend -o out/f_#### -a; cd /tmp/other", say("/tmp/proj/out/render_status.json")), "OK"),
+        # Conservative: only a plain top-level cd before the launch counts; any other directory change makes the cwd unknown.
+        ("cd in a subshell does not move the cwd", in_cwd("/tmp/proj", "(echo prep; cd /tmp/other ); blender -b f.blend -o out/f_#### -a", say("/tmp/proj/out/render_status.json")), "OK"),
+        ("cd in a subshell: unknown, so the trailing name decides", in_cwd("/tmp/proj", "(echo prep; cd /tmp/other ); blender -b f.blend -o out/f_#### -a", say("/tmp/proj/elsewhere/render_status.json")), "FLAG"),
+        ("cd after && is conditional", in_cwd("/tmp/proj", "false && cd /tmp/other; blender -b f.blend -o out/f_#### -a", say("/tmp/proj/out/render_status.json")), "OK"),
+        ("cd in an if branch is conditional", in_cwd("/tmp/proj", "if true; then cd /tmp/other; fi; blender -b f.blend -o out/f_#### -a", say("/tmp/proj/out/render_status.json")), "OK"),
+        ("cd in a brace group", in_cwd("/tmp/proj", "{ cd /tmp/other; }; blender -b f.blend -o out/f_#### -a", say("/tmp/proj/out/render_status.json")), "OK"),
+        ("cd in a pipeline", in_cwd("/tmp/proj", "cd /tmp/other | cat; blender -b f.blend -o out/f_#### -a", say("/tmp/proj/out/render_status.json")), "OK"),
+        ("a cd after a launch inside bash -c does not move the cwd",
+         in_cwd("/tmp/proj", "bash -c 'blender -b f.blend -o out/f_#### \\\n -a'; cd /tmp/other", say("/tmp/proj/out/render_status.json")), "OK"),
+        ("a newline-separated cd after another command", in_cwd("/tmp/proj", "echo x\ncd /tmp/other\nblender -b f.blend -o out/f_#### -a", say("/tmp/other/out/render_status.json")), "OK"),
+        ("a newline-separated cd after another command moves the cwd", in_cwd("/tmp/proj", "echo x\ncd /tmp/other\nblender -b f.blend -o out/f_#### -a", say("/tmp/proj/out/render_status.json")), "FLAG"),
+        ("cd inside bash -c makes the cwd unknown", in_cwd("/tmp/proj", "bash -c 'cd /tmp/other'; blender -b f.blend -o out/f_#### -a", say("/tmp/other/out/render_status.json")), "OK"),
+        ("cd inside the payload that launches", in_cwd("/tmp/proj", "bash -c 'cd /tmp/other; blender -b f.blend -o out/f_#### -a'", say("/tmp/other/out/render_status.json")), "OK"),
+        ("a plain top-level cd then && still moves the cwd", in_cwd("/tmp/proj", "cd /tmp/other && blender -b f.blend -o out/f_#### -a", say("/tmp/proj/out/render_status.json")), "FLAG"),
+        ("cd to a variable: trailing name, not the stale cwd", in_cwd("/tmp/proj", "cd $D; blender -b f.blend -o out/f_#### -a", say("/tmp/other/out/render_status.json")), "OK"),
+        ("cd to a variable: another folder name still fails", in_cwd("/tmp/proj", "cd $D; blender -b f.blend -o out/f_#### -a", say("/tmp/other/elsewhere/render_status.json")), "FLAG"),
+        ("cd ~ is unknown", in_cwd("/tmp/proj", "cd ~/x; blender -b f.blend -o out/f_#### -a", say("/home/u/x/out/render_status.json")), "OK"),
+        ("Set-Location absolute", announce(dict(launch_run(say("C:/other/out/render_status.json"), "PowerShell",
+         "Set-Location C:\\other; blender -b f.blend -o out/f_#### -a", took=90), cwd="C:/proj")), "OK"),
+        ("Push-Location -Path", announce(dict(launch_run(say("C:/other/out/render_status.json"), "PowerShell",
+         "Push-Location -Path C:\\other; blender -b f.blend -o out/f_#### -a", took=90), cwd="C:/proj")), "OK"),
+        ("cd with a PowerShell subexpression target is unknown", announce(dict(launch_run(say("C:/other/out/render_status.json"), "PowerShell",
+         "cd $dir; blender -b f.blend -o out/f_#### -a", took=90), cwd="C:/proj")), "OK"),
+        ("the session cwd is read from the init event", score_run.collect([(T0, {"type": "system", "cwd": "C:/proj"})])["cwd"], "C:/proj"),
+        ("no out_dir, // -o folder, status in a folder of that name", sh("blender -b f.blend -o //out/f_#### -a", say("C:/run/out/render_status.json")), "OK"),
+        ("no out_dir, // -o folder, status elsewhere", sh("blender -b f.blend -o //out/f_#### -a", say("C:/anywhere/render_status.json")), "FLAG"),
+        ("no out_dir, POSIX -o folder and the status file in it", sh("blender -b f.blend -o /tmp/run/frame_#### -a", say("/tmp/run/render_status.json")), "OK"),
+        ("no out_dir, POSIX -o folder and an unrelated status path", sh("blender -b f.blend -o /tmp/run/frame_#### -a", say("/home/u/render_status.json")), "FLAG"),
+        ("no out_dir, POSIX -o folder and its parent", sh("blender -b f.blend -o /tmp/run/frames/f_#### -a", say("/tmp/run/render_status.json")), "OK"),
+        ("no out_dir, POSIX -o folder and two levels up", sh("blender -b f.blend -o /tmp/run/frames/f_#### -a", say("/tmp/render_status.json")), "FLAG"),
+        ("no out_dir, Windows -o folder and the drive root", sh("blender -b f.blend -o C:/run/out/frame_#### -a", say("C:/render_status.json")), "FLAG"),
+        ("no out_dir, Windows -o folder and its parent", sh("blender -b f.blend -o C:/run/out/frame_#### -a", say("C:/run/render_status.json")), "OK"),
+        ("no out_dir, Windows backslash -o folder", sh("blender -b f.blend -o C:\\run\\out\\frame_#### -a", say("C:/run/out/render_status.json")), "OK"),
+        ("no out_dir, status in a subfolder of the -o folder", sh("blender -b f.blend -o C:/run/out/frame_#### -a", say("C:/run/out/sub/render_status.json")), "FLAG"),
+        ("no out_dir and no -o: the evidence says the name only was checked",
+         "file name only" in detail("blender -b f.blend -a", say("C:/anywhere/render_status.json")), True),
+        ("with an out_dir the evidence has no such caveat",
+         "file name only" in detail('blender -b f.blend --python r.py -- \'{"out_dir": "C:/run/out"}\'', say("C:/run/out/render_status.json")), False),
     ]
 
 

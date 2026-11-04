@@ -184,6 +184,129 @@ def test_d1(rec, scene, out_dir):
               len(shared.materials) == 1 and len(a.material_slots) == 1 and len(b.material_slots) == 1, len(shared.materials))
 
 
+def baked_normal(h, w, convention, seed=1, slope=0.8, invert_red=False, sigma=None):
+    """RGB (h, w, 3) 0..1 8-bit-quantised tangent-space normal map of a smooth, periodic random height field."""
+    rng = np.random.default_rng(seed)
+    fy, fx = np.fft.fftfreq(h)[:, None], np.fft.fftfreq(w)[None, :]
+    sigma = sigma or max(3.0, min(h, w) / 40)
+    k = np.exp(-(fx ** 2 + fy ** 2) * (2 * (np.pi * sigma) ** 2))
+    hf = np.fft.ifft2(np.fft.fft2(rng.standard_normal((h, w))) * k).real
+    gv, gu = np.gradient(hf)
+    rms = np.sqrt((gu ** 2 + gv ** 2).mean()) + 1e-12
+    n = np.stack([-gu / rms * slope, -gv / rms * slope, np.ones_like(gu)], -1)
+    n /= np.linalg.norm(n, axis=-1, keepdims=True)
+    if convention == "DIRECTX":
+        n[:, :, 1] *= -1
+    if invert_red:
+        n[:, :, 0] *= -1
+    return np.round((n * 0.5 + 0.5) * 255) / 255
+
+
+def save_normal(path, rgb):
+    h, w = rgb.shape[:2]
+    img = bpy.data.images.new("tmp_nrm", w, h, alpha=False)
+    try:
+        img.colorspace_settings.name = "Non-Color"
+        px = np.ones((h, w, 4), dtype=np.float32)
+        px[:, :, :3] = rgb
+        img.pixels.foreach_set(px.ravel())
+        img.filepath_raw = path
+        img.file_format = "PNG"
+        img.save()
+    finally:
+        bpy.data.images.remove(img)
+
+
+def test_d1_content(rec, scene, out_dir):
+    counter = [0]
+
+    def go(rgb, normal_name="Mat_Normal.png", **extra):
+        counter[0] += 1
+        f = os.path.join(out_dir, f"d1c_{counter[0]}")
+        os.makedirs(f, exist_ok=True)
+        save_map(os.path.join(f, "Mat_BaseColor.png"), 0.5)
+        save_normal(os.path.join(f, normal_name), rgb)
+        r = run("texture-workflow", "import_painter_textures.py", {"folder": f, "material": f"MAT_I13C_{counter[0]}", **extra})
+        r["flipped"] = "FLIP_G_Invert" in bpy.data.materials[r["material"]].node_tree.nodes
+        return r
+
+    # default mode (no argument, no name hint): never flips from content; DirectX-looking pixels only suggest
+    for seed in (1, 2, 3):
+        r = go(baked_normal(128, 128, "DIRECTX", seed))
+        rec.check(f"D1c seed {seed} DirectX pixels, neutral name, no argument: NOT flipped, suggestion 'directx', warning",
+                  not r["flipped"] and r["normal_convention"] == "OPENGL" and r["normal_convention_source"] == "default"
+                  and r["normal_convention_suggestion"] == "directx" and any("look like DirectX" in w for w in r["warnings"]), r)
+        r = go(baked_normal(128, 128, "OPENGL", seed))
+        rec.check(f"D1c seed {seed} OpenGL pixels, neutral name: not flipped, no suggestion",
+                  not r["flipped"] and r["normal_convention_suggestion"] is None and r["normal_convention_source"] == "default", r)
+    # auto: the pixels decide, on several seeds and shapes (2048x64 and 64x2048 failed when the map was block-averaged first)
+    for seed in (1, 2, 3):
+        for conv in ("DIRECTX", "OPENGL"):
+            r = go(baked_normal(128, 128, conv, seed), normal_convention="auto")
+            rec.check(f"D1c auto seed {seed} {conv} pixels: {conv} from content",
+                      r["normal_convention"] == conv and r["normal_convention_source"] == "content" and r["flipped"] == (conv == "DIRECTX"), r)
+    for (h, w) in ((2048, 64), (64, 2048), (2048, 2048)):
+        for conv in ("DIRECTX", "OPENGL"):
+            r = go(baked_normal(h, w, conv, 5, slope=1.0), normal_convention="auto")
+            sc = r["normal_convention_scores"]
+            rec.check(f"D1c auto {h}x{w} {conv}: {conv} from content, ratio >= 4",
+                      r["normal_convention"] == conv and r["normal_convention_source"] == "content" and sc["ratio"] >= 4, r)
+    # fine detail (about 1 px features): averaging normals before the gradient flips the answer on such maps
+    for (h, w) in ((2048, 64), (64, 2048), (2048, 2048)):
+        for conv in ("DIRECTX", "OPENGL"):
+            r = go(baked_normal(h, w, conv, 7, slope=0.5, sigma=1.0), normal_convention="auto")
+            rec.check(f"D1c auto fine-detail {h}x{w} {conv}: {conv} from content (full-resolution measurement)",
+                      r["normal_convention"] == conv and r["normal_convention_source"] == "content", r["normal_convention_scores"])
+    r = go(baked_normal(128, 128, "OPENGL", 1), normal_convention="auto")
+    sc = r["normal_convention_scores"]
+    rec.check("D1c scores are reported, with the right convention clearly lower",
+              sc["opengl_curl"] * 4 <= sc["directx_curl"], sc)
+    # nothing to read: default everywhere, auto included
+    flat = np.ones((64, 64, 3)) * np.array([0.5, 0.5, 1.0])
+    for extra in ({}, {"normal_convention": "auto"}):
+        r = go(flat, **extra)
+        rec.check(f"D1c flat map {extra}: default OPENGL, no flip, no suggestion",
+                  r["normal_convention_source"] == "default" and not r["flipped"] and r["normal_convention_suggestion"] is None, r)
+    # pins the 4.0 margin: a correct-direction map whose ratio (3.5) is above the signal floor but below the margin
+    weak = baked_normal(128, 128, "DIRECTX", 1, slope=0.03, sigma=5.0)
+    r = go(weak, normal_convention="auto")
+    sc = r["normal_convention_scores"]
+    rec.check("D1c auto, ratio between 3 and 4 and above the signal floor: stays default",
+              3.0 < sc["ratio"] < 4.0 and sc["opengl_curl"] > 0.004 and r["normal_convention_source"] == "default" and not r["flipped"], r)
+    r = go(weak)
+    rec.check("D1c ratio between 3 and 4, no argument: no suggestion",
+              r["normal_convention_suggestion"] is None and not r["flipped"], r)
+    r = go(baked_normal(128, 128, "DIRECTX", 1, slope=0.01), normal_convention="auto")
+    rec.check("D1c auto, near-flat map: default rather than a guess", r["normal_convention_source"] == "default" and not r["flipped"], r)
+    rng = np.random.default_rng(4)
+    xy = rng.standard_normal((128, 128, 2)) * 0.15
+    white = np.round((np.concatenate([xy, np.sqrt(1 - (xy ** 2).sum(-1, keepdims=True))], -1) * 0.5 + 0.5) * 255) / 255
+    r = go(white, normal_convention="auto")
+    rec.check("D1c auto, uncorrelated noise (scores about equal): default", r["normal_convention_source"] == "default" and not r["flipped"], r)
+    mix = np.concatenate([baked_normal(64, 128, "OPENGL", 1), baked_normal(64, 128, "DIRECTX", 2)], axis=0)
+    r = go(mix, normal_convention="auto")
+    rec.check("D1c auto, half OpenGL half DirectX (below the margin): default", r["normal_convention_source"] == "default" and not r["flipped"], r)
+    # an inverted red channel swaps the scores: default mode must not flip, auto may be wrong and says so
+    inv = baked_normal(128, 128, "OPENGL", 1, invert_red=True)
+    r = go(inv)
+    rec.check("D1c OpenGL map with inverted red, no argument: not flipped (suggestion may be wrong, warning says so)",
+              not r["flipped"] and any("inverted red" in w for w in r["warnings"]), r)
+    r = go(inv, normal_convention="auto")
+    rec.check("D1c auto on an inverted-red OpenGL map picks DIRECTX (known failure) and the warning says it can be wrong",
+              r["normal_convention"] == "DIRECTX" and any("inverted" in w and "wrong" in w for w in r["warnings"]), r)
+    # argument and file name still win over content
+    dx = baked_normal(128, 128, "DIRECTX", 1)
+    r = go(dx, normal_convention="OPENGL")
+    rec.check("D1c explicit argument beats content: not flipped, source argument",
+              r["normal_convention_source"] == "argument" and not r["flipped"] and r["normal_convention_scores"] is None, r)
+    r = go(dx, "Mat_Normal_OpenGL.png", normal_convention="auto")
+    rec.check("D1c file name beats auto and content (DirectX pixels named OpenGL): not flipped, source filename",
+              r["normal_convention_source"] == "filename" and r["normal_convention"] == "OPENGL" and not r["flipped"], r)
+    r = go(baked_normal(128, 128, "OPENGL", 1), "Mat_Normal_DirectX.png")
+    rec.check("D1c file name beats content (OpenGL pixels named DirectX): flipped, source filename",
+              r["normal_convention_source"] == "filename" and r["flipped"], r)
+
+
 # ---------------------------------------------------------------- D2
 
 def test_d2(rec, scene, out_dir):
@@ -263,7 +386,7 @@ def run_all(out_dir):
     os.makedirs(out_dir, exist_ok=True)
     rec = Recorder()
     scene = bpy.context.scene
-    for name, fn in (("D1", test_d1), ("D2", test_d2), ("D3", test_d3), ("D4", test_d4)):
+    for name, fn in (("D1", test_d1), ("D1c", test_d1_content), ("D2", test_d2), ("D3", test_d3), ("D4", test_d4)):
         rec.section(name, lambda r, fn=fn: fn(r, scene, out_dir))
     return rec.results
 

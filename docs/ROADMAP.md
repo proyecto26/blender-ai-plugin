@@ -106,15 +106,28 @@ Measured limits left after the iteration 13 fixes.
   `inconclusive`; native 1080p was checked on three Eevee sequences only (no Cycles); in a 1080p pan with a black tile
   an extra small event is reported one frame later; a +0.2 tile's region is more than one block (16 px at 640x360)
   short in 2 of 31 shots (24 and 56 px); the Blender test covers synthetic cases and one real pan, not the 155-case
-  harness, which is run by hand; a textured foreign tile for one frame with the same mean gives no event, as expected (tested on the 1080p fixture and 3 real 640x360 renders), but with a mean +0.2 higher it is found on the fixture and NOT on real renders, where the motion match rejects the tile and its brightness is never compared (pinned as a known limit in the test; a pulse rule for such blocks fixed 1 of 3 and, loosened, gave 10 false alarms in 31 clean renders); the 6 macOS
-  sequences (4 false alarms in iteration 12) were not re-run
-- [ ] `score_run.py`: matches tokens and does not parse the shell (`eval`, command substitution, aliases and paths built
-  at run time are not read); without an out_dir the status path is only checked by its file name
-- [ ] `usd_roundtrip.py`: linked duplicates at the same transform are paired by fewest differences (reported in
-  `ambiguous_pairings`); if they differ only in something it does not measure, the pairing is a guess, and
-  above 7 coincident objects the pairing is greedy, so it can report more differences than the fewest possible
-- [ ] `import_painter_textures.py`: the normal convention is read from the file name only
+  harness, which is run by hand; a textured foreign tile for one frame with the same mean gives no event, as expected (tested on the 1080p fixture and 3 real 640x360 renders), but with a mean +0.2 higher it is found on the fixture and NOT on real renders, where the motion match rejects the tile and its brightness is never compared (pinned as a known limit in the test; a pulse rule for such blocks fixed 1 of 3 and, loosened, gave 10 false alarms in 31 clean renders); on macOS (Blender 5.2.3,
+  M2 Max) 15 of 16 clean sequences pass and 12 of 12 injected defects are found, the 16th being the shadow above
+- [x] `score_run.py`: launches hidden in `eval`, `iex`/`Invoke-Expression`, `$(...)`, backticks, same-command aliases and
+  variables are read; a run-time-built executable is NOTE, not OK; a status path with no out_dir is checked against
+  the `-o` folder or its parent (fixed in iteration 14)
+- [x] `usd_roundtrip.py`: coincident duplicates are paired by a minimum-cost assignment for any count, ties are found by
+  re-solving, and the bounding box only breaks ties (fixed in iteration 14)
+- [x] `import_painter_textures.py`: with no argument and no name hint, the map's content gives a suggestion and a
+  warning; `normal_convention="auto"` applies it (fixed in iteration 14)
 - [ ] Blender suites in CI (they run by hand today)
+
+## Iteration 14, open
+
+- [ ] `score_run.py`: still a token reader, not a shell: a launch whose executable, alias or variable comes from an
+  earlier call or the environment, a payload built by concatenation, `eval "$X"` where X comes from a substitution, and
+  functions or sourced files are not read; a `cd` is applied only as a plain top-level command before the launch, any
+  other makes the folder unknown (then compared by its trailing name)
+- [ ] `usd_roundtrip.py`: duplicates that differ only in something it does not measure are still a guess (flagged in
+  `ambiguous_pairings`); above 300 pairs only one-move ties are checked (`tie_check_one_move_only`)
+- [ ] `import_painter_textures.py`: content detection is a curl test that assumes a height-derived map: on 216 synthetic
+  maps at margin 4.0 it was right on 174, wrong on 0 and undecided on 42, but with the red channel inverted `auto` was
+  confidently wrong on 60 of 72; flat, stripe-only, noisy or weak-relief maps stay `default`
 
 ## Not planned, and why
 

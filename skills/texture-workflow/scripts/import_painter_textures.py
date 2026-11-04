@@ -14,12 +14,21 @@ ARGS:
     folder             (str)  folder holding the exported image files (png jpg jpeg tga tif tiff exr)
     material           (str)  new material name (default "MAT_<texture_set>" or "MAT_Painter"); refused if it exists
     texture_set        (str|None) only files whose name contains this text (case-insensitive)
-    normal_convention  (str|None) "OPENGL" or "DIRECTX": how the normal map on disk was written. DIRECTX inserts a
-                       green-channel invert before the Normal Map node. The pixels cannot tell, so when you leave this
-                       out the script reads it from the normal map's file name (a "DirectX"/"DX" token means DIRECTX,
-                       "OpenGL"/"GL" means OPENGL; Painter's DirectX and OpenGL normal export presets put that token
-                       in the name). A name with neither token is taken as OPENGL and `warnings` says so; an explicit
-                       value that disagrees with the file name also warns, and the explicit value wins.
+    normal_convention  (str|None) "OPENGL", "DIRECTX" or "AUTO": how the normal map on disk was written. DIRECTX inserts
+                       a green-channel invert before the Normal Map node. Decision order: this argument, then the file name
+                       (a "DirectX"/"DX" token means DIRECTX, "OpenGL"/"GL" means OPENGL; Painter's export presets put that
+                       token in the name), else OPENGL. An explicit value that disagrees with the file name warns, and the
+                       explicit value wins. The pixels never flip green by themselves: with no argument and no name hint the
+                       map is wired as OPENGL, and if its pixels look like DirectX the result carries
+                       `normal_convention_suggestion: "directx"` plus a warning. "AUTO" lets the pixels decide (after the file
+                       name). The test: a map made from a height field is that field's gradient, so its gradient field has
+                       almost no curl under the right green convention; the curl is measured at full resolution under both,
+                       and counts only when one is 4x lower and the other clearly above noise. AUTO can be WRONG for a map
+                       that is not height-derived (hand-painted, some bakes) or whose red channel is inverted (that swaps the
+                       two scores); flat, near-flat, stripe-only and noisy maps give no answer.
+                       Result: `normal_convention_source` ("argument", "filename", "content" [AUTO only], "default"; None
+                       without a normal map), `normal_convention_scores` (both curls and their ratio, when the pixels were
+                       read) and `normal_convention_suggestion`.
     patterns           (dict|None) extra keywords per map kind, e.g. {"roughness": ["rgh"]}; kinds are
                        base_color, roughness, metallic, normal, height, ao, emissive, opacity, orm
     ao                 (str)  "skip" (default) or "multiply" (multiplies AO into Base Color: not PBR-correct, off by default)
@@ -38,6 +47,7 @@ import re
 import sys
 
 import bpy
+import numpy as np
 
 # The map kind is read from the end of the file name (see _classify). Order matters: the packed ORM map is tried first.
 PATTERNS = {
@@ -112,6 +122,63 @@ def _sock(sockets, name):
 
 
 NORMAL_TOKENS = ("normal", "nrm", "nor")
+DETECT_MAX_PIXELS = 4_000_000  # measure at most about this many pixels, in full-resolution strips (never downsampled)
+DETECT_STRIP = 128             # rows per strip
+DETECT_MARGIN = 4.0            # the losing convention's curl must be at least this many times the winner's
+DETECT_MIN_SIGNAL = 0.004      # ...and the loser's curl must exceed this (8-bit quantisation noise sits near 0.001-0.002)
+
+
+def _strip_curl(rgb):
+    """Sum and count of |d gy/dx - d gx/dy| for both green conventions over one full-resolution strip. The gradients
+    (-nx/nz, -ny/nz) are formed per pixel BEFORE any averaging: averaging normals first does not preserve integrability."""
+    n = rgb[:, :, :3].astype(np.float32) * 2.0 - 1.0
+    nz = n[:, :, 2]
+    ok = nz > 0.2  # steep or invalid (non-normal) pixels make the division blow up: leave them out
+    safe = np.where(ok, nz, 1.0)
+    gx, gy = -n[:, :, 0] / safe, -n[:, :, 1] / safe
+    m = ok[1:-1, 1:-1] & ok[1:-1, 2:] & ok[1:-1, :-2] & ok[2:, 1:-1] & ok[:-2, 1:-1]
+    dgx_dv = (gx[2:, 1:-1] - gx[:-2, 1:-1]) * 0.5
+    dgy_du = (gy[1:-1, 2:] - gy[1:-1, :-2]) * 0.5
+    return (float(np.abs(dgy_du - dgx_dv)[m].sum()), float(np.abs(-dgy_du - dgx_dv)[m].sum()),
+            int(m.sum()), int(ok.sum()), int(ok.size))
+
+
+def _detect_normal_convention(rgb):
+    """Which green convention does the tangent-space normal map in rgb (float (H, W, >=3), 0..1) look like?
+    A normal map derived from a height field is the gradient of it, so its gradient field is curl-free under the right
+    green convention; the wrong one adds 2*d2h/dxdy. Returns ("OPENGL" | "DIRECTX" | None, info); None = cannot tell
+    (flat, no mixed x/y variation, scores too close). This is evidence, not identification: a map that is not a height
+    gradient, or whose RED channel is inverted, swaps or scrambles the two scores."""
+    h, w = rgb.shape[:2]
+    info = {"opengl_curl": None, "directx_curl": None, "ratio": None, "valid_fraction": None}
+    if h < 3 or w < 3:
+        return None, info
+    n_strips = max(1, -(-(h - 2) // DETECT_STRIP))
+    keep = max(8, DETECT_MAX_PIXELS // max(1, DETECT_STRIP * w))
+    picks = range(n_strips) if n_strips <= keep else sorted({int(i * n_strips / keep) for i in range(keep)})
+    sg = sd = 0.0
+    cnt = okc = tot = 0
+    for i in picks:
+        r0 = i * DETECT_STRIP
+        g, d, c, o, t = _strip_curl(rgb[r0:min(h, r0 + DETECT_STRIP + 2)])
+        sg, sd, cnt, okc, tot = sg + g, sd + d, cnt + c, okc + o, tot + t
+    info["valid_fraction"] = round(okc / max(tot, 1), 3)
+    if cnt < 64 or okc < 0.5 * tot:
+        return None, info
+    gl, dx = sg / cnt, sd / cnt
+    info.update(opengl_curl=round(gl, 5), directx_curl=round(dx, 5))
+    lo, hi = min(gl, dx), max(gl, dx)
+    info["ratio"] = round(hi / max(lo, 1e-9), 2)
+    if hi < DETECT_MIN_SIGNAL or hi < DETECT_MARGIN * lo:
+        return None, info
+    return ("OPENGL" if gl < dx else "DIRECTX"), info
+
+
+def _read_rgb(img):
+    w, h = img.size
+    buf = np.empty(w * h * img.channels, dtype=np.float32)
+    img.pixels.foreach_get(buf)
+    return buf.reshape(h, w, img.channels)
 
 
 def main(folder, material=None, texture_set=None, normal_convention=None, patterns=None, ao="skip",
@@ -119,8 +186,11 @@ def main(folder, material=None, texture_set=None, normal_convention=None, patter
     if not os.path.isdir(folder):
         raise ValueError(f"folder not found: {folder}")
     convention = None if normal_convention is None else str(normal_convention).upper()
-    if convention not in (None, "OPENGL", "DIRECTX"):
-        raise ValueError("normal_convention must be OPENGL or DIRECTX")
+    if convention not in (None, "OPENGL", "DIRECTX", "AUTO"):
+        raise ValueError("normal_convention must be OPENGL, DIRECTX or AUTO")
+    auto = convention == "AUTO"
+    if auto:
+        convention = None
     if ao not in ("skip", "multiply"):
         raise ValueError("ao must be 'skip' or 'multiply'")
     merged = {k: list(v) for k, v in PATTERNS.items()}
@@ -166,6 +236,7 @@ def main(folder, material=None, texture_set=None, normal_convention=None, patter
         raise ValueError(f"no texture maps matched in {folder} (unmatched: {unmatched[:10]})")
 
     warnings = []
+    conv_source, conv_scores, conv_suggestion = None, None, None
     if "normal" in found:
         toks = [t for t in re.split(r"[^a-z0-9]+", os.path.splitext(found["normal"])[0].lower()) if t]
         conv_at = [(i, "DIRECTX" if t in ("directx", "dx") else "OPENGL")
@@ -179,15 +250,15 @@ def main(folder, material=None, texture_set=None, normal_convention=None, patter
             if len({c for _, c in conv_at}) > 1:
                 warnings.append(f"normal map {found['normal']!r} names both DirectX and OpenGL; used {named}, the one next "
                                 "to the 'normal' token. Pass normal_convention to override.")
-        if convention is None:
-            convention = named or "OPENGL"
-            if named is None:
-                warnings.append(f"normal map {found['normal']!r} does not name its convention; assumed OPENGL (no green "
-                                "flip). If it was exported for DirectX, pass normal_convention='DIRECTX'.")
-        elif named is not None and named != convention:
-            warnings.append(f"normal_convention={convention} disagrees with the file name {found['normal']!r} ({named}); "
-                            f"using {convention} as asked.")
-    convention = convention or "OPENGL"
+        if convention is not None:
+            conv_source = "argument"
+            if named is not None and named != convention:
+                warnings.append(f"normal_convention={convention} disagrees with the file name {found['normal']!r} ({named}); "
+                                f"using {convention} as asked.")
+        elif named is not None:
+            convention, conv_source = named, "filename"
+        else:
+            conv_source = "content" if auto else "default"  # settled once the image is loaded, below
     mat = bpy.data.materials.new(name)
     nt = mat.node_tree
     bsdf = next(n for n in nt.nodes if n.bl_idname == "ShaderNodeBsdfPrincipled")
@@ -243,6 +314,29 @@ def main(folder, material=None, texture_set=None, normal_convention=None, patter
     normal_src = None
     if "normal" in found:
         tex = load("normal")
+        if conv_source in ("content", "default"):
+            guess, conv_scores = _detect_normal_convention(_read_rgb(tex.image))
+            if conv_source == "content":  # normal_convention="auto": the pixels may flip green
+                if guess is None:
+                    convention, conv_source = "OPENGL", "default"
+                    warnings.append(f"normal_convention='auto': normal map {found['normal']!r} names no convention and its pixels "
+                                    f"do not settle it (curl scores {conv_scores}); assumed OPENGL (no green flip).")
+                else:
+                    convention = guess
+                    warnings.append(f"normal_convention='auto': read {guess} from the pixels of {found['normal']!r} (curl scores "
+                                    f"{conv_scores}). This can be wrong for a map that is not the gradient of a height field "
+                                    "(hand-painted, some bakes) or whose red channel is inverted; pass normal_convention to be sure.")
+            else:  # no argument, no name hint: OpenGL as before; DirectX-looking pixels are only a suggestion
+                convention = "OPENGL"
+                if guess == "DIRECTX":
+                    conv_suggestion = "directx"
+                    warnings.append(f"normal map {found['normal']!r} does not name its convention; assumed OPENGL (no green flip), "
+                                    f"but its pixels look like DirectX (curl scores {conv_scores}). Not flipped: that test can be "
+                                    "wrong for maps that are not height-derived or have an inverted red channel. If it is DirectX, "
+                                    "pass normal_convention='DIRECTX' (or 'auto' to let the pixels decide).")
+                else:
+                    warnings.append(f"normal map {found['normal']!r} does not name its convention; assumed OPENGL (no green flip). "
+                                    "If it was exported for DirectX, pass normal_convention='DIRECTX'.")
         colour = _sock(tex.outputs, "Color")
         if convention == "DIRECTX":
             sep = nodes.new("ShaderNodeSeparateColor")
@@ -291,7 +385,9 @@ def main(folder, material=None, texture_set=None, normal_convention=None, patter
         done.add(obj.data.name)
         obj.data.materials.append(mat)
     return {"material": mat.name, "files": found, "wired": wired, "images": images, "unmatched": unmatched,
-            "ambiguous": ambiguous, "skipped_udim": skipped_udim, "normal_convention": convention,
+            "ambiguous": ambiguous, "skipped_udim": skipped_udim, "normal_convention": convention or "OPENGL", "normal_convention_source": conv_source,
+            "normal_convention_scores": conv_scores,
+            "normal_convention_suggestion": conv_suggestion,
             "assigned": [o.name for o in targets], "warnings": warnings}
 
 
