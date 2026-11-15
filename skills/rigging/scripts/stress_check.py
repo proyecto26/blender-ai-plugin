@@ -9,7 +9,7 @@ Safety: the poses are set on a temporary action. In `finally` the original actio
 armature's pose position, every pose bone's transform and the IK/FK switch values are restored, and the temporary
 action is removed with `bpy.data.actions.remove` (datablock removal, no file is deleted). It never saves the file.
 
-Per (pose, limb) row the status is OK, NOT_REACHED, STRETCH, COLLAPSE, NON_FINITE, MISSING_ROLE, NO_ARMATURE_MODIFIER (no enabled Armature modifier that binds by vertex groups or envelopes),
+Per (pose, limb) row the status is OK, NOT_REACHED, STRETCH, COLLAPSE, NON_FINITE, MISSING_ROLE, UNWEIGHTED_LIMB (a limb whose deform bones no mesh is weighted to), NO_ARMATURE_MODIFIER (no enabled Armature modifier that binds by vertex groups or envelopes),
 NO_DEFORMATION (the pose was reached but the limb's vertices did not move: an inert skin) or NOT_CHECKED. Each pose is checked before measuring: the evaluated bone's rotation must be within 5 degrees of the
 requested rotation (same axis, same direction, same angle), else the row is NOT_REACHED (a FAIL naming the bone,
 the angle reached and how far it is from the request), so a constraint that blocks or redirects a pose (Limit
@@ -58,7 +58,7 @@ ARGS:
                  checked. Limbs named
                  arm.* are posed with arm poses, leg.* with leg poses. `upper`/`lower` are a bone name (or a chain); `twist` is
                  a list (default: `lower` plus its descendants whose name contains "twist"). Default: found by name
-                 roles among deform bones that a mesh is weighted to (controls are skipped; two unrelated candidates are
+                 roles among deform bones, preferring those a mesh is weighted to (controls are skipped; a limb no mesh is weighted to is UNWEIGHTED_LIMB, FAIL; two unrelated candidates are
                  refused, naming them) (upper_arm/forearm/lower_arm, thigh/upper_leg, shin/calf/lower_leg, either side style). A limb
                  with some roles found and others missing, or a mapped bone that does not exist, FAILs
     poses        (list[str]|None) subset of arms_raised, elbows_130, knees_130, crouch, twist_90, twist_180
@@ -135,16 +135,24 @@ def _as_list(v):
 
 
 def _detect_limbs(arm, weighted):
-    """Limbs by name role, among deform bones that a mesh is weighted to (controls such as `forearm_ctl.L` are not
-    skinned and are skipped). Returns {limb: {"upper": [..], "lower": [..]}} (maybe partial or ambiguous)."""
+    """Limbs by name role among deform bones (non-deforming controls such as `forearm_ctl.L` are skipped). When a
+    role has several deform candidates, the ones a mesh is weighted to are preferred; a limb whose deform bones are
+    not weighted at all is still returned, so that it gets reported (UNWEIGHTED_LIMB) instead of vanishing.
+    Returns {limb: {"upper": [..], "lower": [..]}} (maybe partial or ambiguous)."""
     found = {}
     for b in arm.data.bones:
         core, side = _side_of(b.name)
-        if side is None or "twist" in core.lower() or not b.use_deform or (weighted is not None and b.name not in weighted):
+        if side is None or "twist" in core.lower() or not b.use_deform:
             continue
         for (kind, role), rx in ROLE_RE.items():
             if rx.search(core):
                 found.setdefault(f"{kind}.{side}", {}).setdefault(role, []).append(b.name)
+    if weighted is not None:
+        for spec in found.values():
+            for role, names in spec.items():
+                keep = [n for n in names if n in weighted]
+                if keep:
+                    spec[role] = keep
     return found
 
 
@@ -436,7 +444,12 @@ def main(armature, meshes=None, bone_map=None, poses=None, fk_switches=None, res
     for sw in fk_switches or []:
         holder = arm.pose.bones[sw["bone"]] if sw.get("bone") else arm
         switches.append((holder, sw["prop"], holder[sw["prop"]], float(sw.get("value", 0.0))))
-    good = {n: s for n, s in limbs.items() if n not in problems}
+    unweighted = [n for n, spec in limbs.items() if n not in problems and weighted is not None
+                  and not any(b in weighted for names in spec.values() for b in names or [])]
+    for name in unweighted:
+        rows.append({"pose": "all", "limb": name, "mesh": None, "status": "UNWEIGHTED_LIMB", "verdict": "FAIL",
+                     "problems": ["none of this limb's deform bones has a vertex group in the meshes: it is not skinned"]})
+    good = {n: s for n, s in limbs.items() if n not in problems and n not in unweighted}
     snap = _snapshot(arm, scene)
     tmp_action = None
     try:

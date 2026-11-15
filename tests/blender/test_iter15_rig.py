@@ -134,6 +134,9 @@ CTL_BONE = ("forearm_ctl.L", (0.3, 0, 1), (0.3, 0, 1.25), "upper_arm.L")
 def limb(kind="good", radius=0.15):
     fresh()
     bones = {"candy": CANDY_BONES, "leg": LEG_BONES, "leg_limit": LEG_BONES}.get(kind, GOOD_BONES)
+    if kind == "arm_unweighted_leg":
+        bones = GOOD_BONES + [("upper_leg.L", (0.5, 0, 0), (0.5, 0, 1), None),
+                              ("lower_leg.L", (0.5, 0, 1), (0.5, 0, 2), "upper_leg.L")]
     if kind in ("ctl", "ctl_deform"):
         bones = GOOD_BONES + [CTL_BONE]
     arm = make_armature("ARM_Limb", bones, nodeform=("forearm_ctl.L",) if kind == "ctl" else ())
@@ -607,6 +610,19 @@ def test_u1_role_detection_ignores_controls_and_refuses_ambiguity():
     return out
 
 
+def test_v1_unweighted_limb_is_reported():
+    limb("arm_unweighted_leg")  # the mesh is weighted to the arm bones only; the leg bones deform nothing
+    res = run("rigging", "stress_check.py", armature="ARM_Limb")
+    leg = [r for r in res["rows"] if r["limb"] == "leg.L"]
+    assert leg and leg[0]["status"] == "UNWEIGHTED_LIMB" and leg[0]["verdict"] == "FAIL", res["rows"]
+    assert any(r["limb"] == "arm.L" and r["status"] == "OK" for r in res["rows"]) and res["verdict"] == "FAIL", res["verdict"]
+    # control-bone filtering stays: a non-deforming control gives no row and no failure
+    limb("ctl")
+    res = run("rigging", "stress_check.py", armature="ARM_Limb")
+    assert res["verdict"] == "PASS" and set(res["limbs"]) == {"arm.L"}, res["limbs"]
+    return {"leg_row": leg[0]["status"], "overall": "FAIL"}
+
+
 def test_u2_slender_limbs_are_judged_fairly():
     out = {}
     limb("good", radius=0.02)
@@ -715,7 +731,8 @@ def main():
              test_s2_reach_checks_axis_and_direction, test_s3_unmeasured_is_not_pass, test_s4_axis_angle_armature_rotation,
              test_s5_restore_after_mid_run_failure, test_s6_leg_fixture_knees_and_crouch,
              test_t1_inert_skin_is_not_a_pass, test_t2_empty_inputs_are_not_a_pass,
-             test_u1_role_detection_ignores_controls_and_refuses_ambiguity, test_u2_slender_limbs_are_judged_fairly, test_e2_thresholds_margin,
+             test_u1_role_detection_ignores_controls_and_refuses_ambiguity, test_v1_unweighted_limb_is_reported,
+             test_u2_slender_limbs_are_judged_fairly, test_e2_thresholds_margin,
              test_b1_result_contract_and_exit_codes]
     checks, failed = {}, []
     for fn in tests:
