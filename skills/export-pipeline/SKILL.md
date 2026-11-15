@@ -177,6 +177,7 @@ path of this installed script and their ARGS. Don't inline or rewrite the script
 | Script | What it does |
 |--------|--------------|
 | `scripts/export_asset.py` | Export selected/listed objects with engine presets (FBX / glTF / USD / OBJ). Validates the output file exists and reports its size. Does not modify the scene (selection is restored; modifiers are applied only in the exported data). |
+| `scripts/fbx_roundtrip.py` | Round-trip check for FBX: exports the selection to a NEW file (an existing file is refused unless `overwrite=True`), imports it into a temporary scene, and compares each object's world dimensions (0.1 %), bone names and parents, and action names. Objects are paired by a temporary custom property, never by name, so `SM_Box` and `SM_Box.001` are told apart. Removes only the temporary scene and what the import created; PASS / WARN / FAIL (exit 2 on FAIL headless). ARGS: `out_path`, `objects`, `overwrite`, `tol`, `global_scale`, `result_path`, `run_id`. |
 
 ```python
 import runpy
