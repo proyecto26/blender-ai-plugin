@@ -149,13 +149,14 @@ path of this installed script and their ARGS. Don't inline or rewrite the script
 |--------|--------------|
 | `scripts/rig_check.py` | Read-only armature + skinning audit with a PASS/WARN/FAIL per check: zero-length bones, unapplied armature scale/rotation, `.L`/`.R` (or `L_`/`R_`) pairs and mirrored bone Z axes (3 degrees), an Armature modifier that targets this armature, non-finite weights, weight sums (0.001), unweighted vertices, influences per vertex (engines usually cap at 4 or 8). A missing or non-mesh name in `meshes` is an error. |
 | `scripts/stress_check.py` | Poses the limb bones (arms raised, elbows and knees 130, crouch, forearm twist 90 and 180) on a temporary action and measures the evaluated mesh per limb: edge stretch, twist collapse, non-finite vertices. A pose the rig cannot reach (Limit Rotation, IK) is a FAIL `NOT_REACHED`, never a pass. Restores the file's pose, action and frame, saves nothing. |
+| `scripts/shape_key_audit.py` | Read-only audit of shape keys with a PASS/WARN/FAIL per check: keys that do nothing, NaN or infinite coordinates, a missing relative key, drivers that target a missing object, bone or key, and `.L`/`.R` key pairs whose mirrored deltas differ by more than 1% of the mesh size (a pair that cannot be matched vertex by vertex is NOT_CHECKED). Changes nothing in the scene. |
 
 ```python
 import runpy
 result = runpy.run_path("<skill_dir>/scripts/rig_check.py", init_globals={"ARGS": {...}})["result"]
 ```
 
-ARGS: `rig_check`: `armature`, `meshes`, `max_influences`. `stress_check`: `armature`, `meshes`, `bone_map` (`{"arm.L": {"upper": "arm_upper.L", "lower": "arm_lower.L", "twist": [...]}}`; default found by name), `poses`, `fk_switches` (custom properties to set to FK while posing). Both also take `result_path` and `run_id`.
+ARGS: `rig_check`: `armature`, `meshes`, `max_influences`. `stress_check`: `armature`, `meshes`, `bone_map` (`{"arm.L": {"upper": "arm_upper.L", "lower": "arm_lower.L", "twist": [...]}}`; default found by name), `poses`, `fk_switches` (custom properties to set to FK while posing). `shape_key_audit`: `meshes`. All three take `result_path` and `run_id`.
 
 Stress thresholds: collapse ratio below 0.5 on a twist pose, or edge stretch p95 above 1.5 on any pose, is a FAIL. Bending and twisting about the bone's local X and Y axes. To pass a 180 degree twist, give the forearm twist bones (`..._twist_1`, `_2`, ...) and weight along them: one bone carrying the whole twist collapses the mesh (candy wrapper).
 

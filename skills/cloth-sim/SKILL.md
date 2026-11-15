@@ -89,13 +89,14 @@ path of this installed script and their ARGS. Don't inline or rewrite the script
 | Script | What it does |
 |--------|--------------|
 | `scripts/cloth_setup.py` | Add a cloth simulation with a fabric preset, optional pin group, collision on listed colliders, and cache range. Re-running updates the existing modifier. |
+| `scripts/garment_check.py` | Read-only check that a garment does not sit inside the body. Poses the limb bones (rest plus arms raised, elbows and knees 130, crouch, forearm twist) on a temporary action and counts garment vertices inside the evaluated body, with a PASS/WARN/FAIL result. The body must be a closed, consistently wound mesh and at least 90% of the garment must be near it, else the row is NOT_CHECKED (never a pass). A pose the rig cannot reach is a FAIL `NOT_REACHED`. Restores pose, frame and actions, saves nothing. |
 
 ```python
 import runpy
 result = runpy.run_path("<skill_dir>/scripts/cloth_setup.py", init_globals={"ARGS": {...}})["result"]
 ```
 
-ARGS: `cloth`, `fabric`, `pin_group`, `colliders`, `frames`, `self_collision`. A rerun without `pin_group` keeps the existing pin; `pin_group=""` clears it; the result reports the real `pin_group`.
+ARGS: `garment_check`: `garment`, `body`, `armature`, `bone_map`, `poses`, `fk_switches`, `search_radius`, `result_path`, `run_id`. `cloth_setup`: `cloth`, `fabric`, `pin_group`, `colliders`, `frames`, `self_collision`. A rerun without `pin_group` keeps the existing pin; `pin_group=""` clears it; the result reports the real `pin_group`.
 
 ## Reference Guide
 
