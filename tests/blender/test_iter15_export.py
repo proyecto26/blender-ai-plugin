@@ -175,7 +175,17 @@ def test_a14_curve_world_space():
     # object rotation), so allow the radius on each side in y/z and a little at the ends.
     assert abs(bb[0][0] - 1) < 0.15 and abs(bb[0][1] - 5) < 0.15, bb
     assert abs(sum(bb[1]) / 2 - 1) < 0.02 and abs(sum(bb[2]) / 2 - 1) < 0.02, bb
-    return {"world_bbox": [[round(a, 4), round(b, 4)] for a, b in bb]}
+    # no caller-side depsgraph update: the transform changes and the script runs straight away, so the
+    # script's own view_layer.update() is what makes matrix_world current
+    ob.location = (-4, 6, 2)
+    ob.rotation_euler = (0.0, 0.4, 1.1)
+    args["points"] = [[0, 0, 0], [0, 4, 0]]
+    run("procedural-modeling", "gn_curve_profile.py", args)
+    bb2 = _world_bbox(ob)
+    assert abs(bb2[1][0] - 0) < 0.15 and abs(bb2[1][1] - 4) < 0.15, bb2
+    assert abs(sum(bb2[0]) / 2) < 0.02 and abs(sum(bb2[2]) / 2) < 0.02, bb2
+    return {"world_bbox": [[round(a, 4), round(b, 4)] for a, b in bb],
+            "no_caller_update_bbox": [[round(a, 4), round(b, 4)] for a, b in bb2]}
 
 
 def test_a15_bevel_order():
