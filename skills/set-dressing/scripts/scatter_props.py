@@ -115,12 +115,30 @@ def _shape(kind):
 
 
 def _same_shape(me, bm):
-    """True when mesh `me` has the geometry this script generates (so it is an earlier version of its own)."""
-    if len(me.vertices) != len(bm.verts):
+    """True when mesh `me` is what an earlier version of this script generated: same vertices, the same
+    faces (vertex indices) and only the one "UVMap" channel it wrote."""
+    if len(me.vertices) != len(bm.verts) or len(me.polygons) != len(bm.faces):
+        return False
+    if [l.name for l in me.uv_layers] != ["UVMap"]:
+        return False
+    if [tuple(p.vertices) for p in me.polygons] != [tuple(v.index for v in f.verts) for f in bm.faces]:
         return False
     mine = sorted(tuple(round(c, 4) for c in v.co) for v in me.vertices)
     ours = sorted(tuple(round(c, 4) for c in v.co) for v in bm.verts)
     return mine == ours
+
+
+def _preflight(kind):
+    """Refuse (before anything is changed) a mesh named ME_Prop_<kind> that this script did not make."""
+    me = bpy.data.meshes.get(f"ME_Prop_{kind}")
+    if me is None or me.get("set_dressing"):
+        return
+    bm = _shape(kind)
+    ok = _same_shape(me, bm)
+    bm.free()
+    if not ok:
+        raise ValueError(f"mesh {me.name!r} already exists and was not made by this script; "
+                         "rename or remove it, or dress with a different kind")
 
 
 def _mesh(kind):
@@ -128,11 +146,8 @@ def _mesh(kind):
     me = bpy.data.meshes.get(name)
     if me is not None and me.get("set_dressing_uv") == UV_VERSION and len(me.uv_layers):
         return me
+    _preflight(kind)
     bm = _shape(kind)
-    if me is not None and not me.get("set_dressing") and not _same_shape(me, bm):
-        bm.free()
-        raise ValueError(f"mesh {name!r} already exists and was not made by this script; "
-                         "rename or remove it, or dress with a different kind")
     _island_uvs(bm)
     if me is None:
         me = bpy.data.meshes.new(name)
@@ -177,6 +192,8 @@ def main(target, count=8, kinds=None, clusters=3, min_dist=0.4, max_dist=3.5, gr
     bad = [k for k in kinds if k not in KINDS]
     if bad:
         raise ValueError(f"unknown kinds {bad}; use {list(KINDS)}")
+    for k in kinds:
+        _preflight(k)  # every mesh is checked before any earlier prop is removed
     rng = random.Random(seed)
 
     col = bpy.data.collections.get(collection)

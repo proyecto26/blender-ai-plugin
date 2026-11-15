@@ -369,7 +369,9 @@ def _coverage(uvt):
     for (u, v), parts in sorted(tiles.items()):
         idx = np.concatenate(parts)
         g = _raster(uvt[idx] - np.array([u, v], np.float64))
-        cov[1001 + u + 10 * v] = float((g > 0).sum()) / g.size
+        covered = float((g > 0).sum()) / g.size
+        if covered > 0:  # a tile only the bounding box touches is not an occupied tile
+            cov[1001 + u + 10 * v] = covered
         overlap_cells += int((g > 1).sum())
     return cov, overlap_cells / (RASTER_N * RASTER_N)
 
@@ -488,7 +490,7 @@ def _measure(obj, layer, texture_px, lightmap_rules, allow_overlap, target_px_pe
     str_ratio = _stretch(p3[live], live_uv)
     stretch_p95 = float(np.percentile(str_ratio, 95)) if len(str_ratio) else None
     spread = float(dens.max() / dens.min()) if len(dens) else None
-    flat = uvt.reshape(-1, 2)
+    flat = d["loop_uv"]  # polygon loops, not triangle corners
     oob = int(((flat < -1e-4) | (flat > 1.0001)).any(axis=1).sum())
     density = math.sqrt(area_uv / area_3d) * texture_px if area_3d > 0 else 0.0
 

@@ -384,6 +384,9 @@ def test_bake_restores_state():
     mat = bpy.data.materials.new("MAT_Pre")
     mat.use_nodes = True
     bpy.data.objects["SM_Bake"].data.materials.append(mat)
+    mat.node_tree.nodes.active = mat.node_tree.nodes["Principled BSDF"]
+    for n in mat.node_tree.nodes:
+        n.select = n.name == "Principled BSDF"
     scene = bpy.context.scene
     scene.render.bake.use_selected_to_active = True
     scene.render.bake.cage_extrusion = 0.123
@@ -396,8 +399,8 @@ def test_bake_restores_state():
     args = {"low": "SM_Bake", "maps": ["ao"], "size": 16, "samples": 2, "out_dir": out}
     run("texture-workflow", "bake_maps.py", args)
     ok_after = _bake_state()
-    ok_after["mats"].pop("MAT_Pre", None), before["mats"].pop("MAT_Pre", None)
-    mat_nodes_ok = _bake_state()["mats"]["MAT_Pre"]
+    assert before["mats"]["MAT_Pre"] == ["Principled BSDF", ["Principled BSDF"]] or \
+        before["mats"]["MAT_Pre"] == ("Principled BSDF", ["Principled BSDF"]), before["mats"]
 
     def go():
         try:
@@ -407,11 +410,10 @@ def test_bake_restores_state():
     _r, stub = with_stub("object", "bake", {"CANCELLED"}, go)
     assert stub.calls == 1
     fail_after = _bake_state()
-    fail_after["mats"].pop("MAT_Pre", None)
     for label, got in (("success", ok_after), ("cancelled", fail_after)):
-        for key in ("sel", "active", "bake", "engine", "samples"):
+        for key in ("sel", "active", "bake", "engine", "samples", "mats"):
             assert got[key] == before[key], (label, key, got[key], before[key])
-    assert mat_nodes_ok[0] != "SK_BakeTarget" or True
+    assert "SK_BakeTarget" in bpy.data.materials["MAT_Pre"].node_tree.nodes, "bake target node was not created"
     return {"before": {k: before[k] for k in ("sel", "active", "bake")}}
 
 
@@ -487,6 +489,41 @@ def test_s_cross_tile_coverage():
     assert abs(cov["1001"] - 1.0) < 0.02 and abs(cov["1002"] - 0.1) < 0.02, cov
     assert abs(e["uv_coverage"] - 0.55) < 0.02 and e["checks"]["coverage"]["status"] == "WARN", e
     return {"per_tile": cov, "mean": e["uv_coverage"]}
+
+
+def _tri_obj(name, tris):
+    bm = bmesh.new()
+    uv = bm.loops.layers.uv.new("UVMap")
+    for k, t in enumerate(tris):
+        f = bm.faces.new([bm.verts.new((u, v, k * 0.0 + 0.0 + 0.1 * k)) for u, v in t])
+        for l, (u, v) in zip(f.loops, t):
+            l[uv].uv = (u, v)
+    me = bpy.data.meshes.new(name)
+    bm.to_mesh(me)
+    bm.free()
+    return make_obj(name, me)
+
+
+def test_s_coverage_counts_only_covered_tiles():
+    reset()
+    tris = [[(0, 0), (3, 0), (0, 3)],
+            [(3, 0), (3, 1), (2, 1)], [(2, 1), (2, 2), (1, 2)], [(1, 2), (1, 3), (0, 3)]]
+    # six tiles are filled completely; the triangle's bounding box also touches three empty ones
+    # (the three small complements together with the big triangle leave (2,1) and (1,2) tiles empty)
+    _tri_obj("Big", tris)
+    e = uvc(objects=["Big"], allow_overlap=True)["objects"]["Big"]
+    cov = e["coverage_per_tile"]
+    assert len(cov) == 6 and all(v > 0.97 for v in cov.values()), cov
+    assert e["uv_coverage"] > 0.97 and e["checks"]["coverage"]["status"] == "PASS", e
+    return {"tiles": sorted(cov), "mean": e["uv_coverage"]}
+
+
+def test_s_loops_outside_counts_polygon_loops():
+    reset()
+    quads("Out", [sq(0, 0, 1)], {"UVMap": [uvsq(1.5, 0.2, 1.0)]})
+    e = uvc(objects=["Out"], allow_overlap=True)["objects"]["Out"]
+    assert e["loops_outside_0_1"] == 4, e["loops_outside_0_1"]
+    return {"loops": e["loops_outside_0_1"]}
 
 
 def test_s_shared_mesh_unwrap():
@@ -689,6 +726,51 @@ def test_s_scatter_reuses_old_mesh():
     return {"rebuilt_islands": e["islands"]}
 
 
+def _cube_like_foreign(name, triangulate=False, extra_uv=False):
+    me = _old_style_prop_mesh(name, (0.6, 0.6, 0.6))
+    if triangulate:
+        bm = bmesh.new()
+        bm.from_mesh(me)
+        bmesh.ops.triangulate(bm, faces=bm.faces[:])
+        bm.to_mesh(me)
+        bm.free()
+    if extra_uv:
+        me.uv_layers.new(name="Authored")
+    return me
+
+
+def test_s_scatter_refuses_same_vertices_other_topology():
+    out = {}
+    for label, kw in (("triangulated", {"triangulate": True}), ("extra_uv", {"extra_uv": True})):
+        _scatter_setup()
+        foreign = _cube_like_foreign("ME_Prop_box", **kw)
+        faces0 = [tuple(p.vertices) for p in foreign.polygons]
+        uvs0 = [l.name for l in foreign.uv_layers]
+        try:
+            run("set-dressing", "scatter_props.py", {"target": "SM_T", "count": 2, "kinds": ["box"], "ground": "Ground"})
+        except ValueError as exc:
+            assert [tuple(p.vertices) for p in foreign.polygons] == faces0 and [l.name for l in foreign.uv_layers] == uvs0
+            out[label] = str(exc)[:50]
+            continue
+        raise AssertionError(f"{label}: a foreign mesh with the same vertices was adopted and rewritten")
+    return out
+
+
+def test_s_scatter_preflight_keeps_previous_props():
+    _scatter_setup()
+    r1 = run("set-dressing", "scatter_props.py", {"target": "SM_T", "count": 3, "kinds": ["box"], "ground": "Ground"})
+    first = sorted(p["name"] for p in r1["props"])
+    _old_style_prop_mesh("ME_Prop_barrel", (9.0, 0.1, 0.1))  # foreign mesh for a kind used only on the rerun
+    try:
+        run("set-dressing", "scatter_props.py", {"target": "SM_T", "count": 3, "kinds": ["box", "barrel"],
+                                                 "clusters": 1, "ground": "Ground"})
+    except ValueError:
+        now = sorted(o.name for o in bpy.data.collections["COL_SetDressing"].objects)
+        assert now == first, f"previous props lost: {first} -> {now}"
+        return {"survived": now}
+    raise AssertionError("foreign mesh was not refused")
+
+
 def test_s_scatter_refuses_foreign_mesh():
     _scatter_setup()
     foreign = _old_style_prop_mesh("ME_Prop_box", (3.0, 0.1, 0.1))
@@ -710,6 +792,8 @@ TESTS = (test_a1_measure_only_no_uv, test_a2_union_coverage, test_c_stacked_and_
          test_s_shared_mesh_unwrap, test_s_lightmap_only_rerun, test_s_edit_mode_and_selection_restored,
          test_s_margin_px_enforced, test_s_run_id_in_returned_result, test_s_scatter_reuses_old_mesh,
          test_s_scatter_refuses_foreign_mesh,
+         test_s_coverage_counts_only_covered_tiles, test_s_loops_outside_counts_polygon_loops,
+         test_s_scatter_refuses_same_vertices_other_topology, test_s_scatter_preflight_keeps_previous_props,
          test_a5_emission_default, test_a16_scatter_uvs)
 
 
