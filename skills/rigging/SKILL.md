@@ -35,7 +35,7 @@ Skeleton Design → Bone Placement → Hierarchy → Constraints/IK
 ## Armature Naming
 
 Prefix: `ARM_[AssetName]`
-Bones: `[side]_[region]_[name]` — e.g., `L_arm_upper`, `spine_01`, `jaw`
+Bones: `[region]_[name].L` / `.R` for sided bones (Blender's own convention, so X-axis mirror and Symmetrize work), e.g. `arm_upper.L`, `spine_01`, `jaw`. Use `.L`/`.R` everywhere: bones, shape keys, drivers. `rig_check` also understands `L_`/`R_` prefixes and `_L` suffixes in rigs you did not name.
 
 ## Bone Hierarchy
 
@@ -43,10 +43,10 @@ Bones: `[side]_[region]_[name]` — e.g., `L_arm_upper`, `spine_01`, `jaw`
 ARM_Character
 ├── root
 ├── spine_01 → spine_02 → spine_03
-│   ├── L_clavicle → L_arm_upper → L_arm_lower → L_hand
-│   └── R_clavicle → R_arm_upper → R_arm_lower → R_hand
-├── L_leg_upper → L_leg_lower → L_foot → L_toe
-└── R_leg_upper → R_leg_lower → R_foot → R_toe
+│   ├── clavicle.L → arm_upper.L → arm_lower.L → hand.L
+│   └── clavicle.R → arm_upper.R → arm_lower.R → hand.R
+├── leg_upper.L → leg_lower.L → foot.L → toe.L
+└── leg_upper.R → leg_lower.R → foot.R → toe.R
 ```
 
 ## IK vs FK
@@ -110,7 +110,7 @@ Minimum game facial: jaw open, blink L/R, brow up/down.
 1. Create armature via MCP
 2. Parent mesh with automatic weights via MCP
 3. Query bone count and hierarchy
-4. Validate weight groups via MCP if supported
+4. After skinning, run `scripts/rig_check.py` (structure and weights), then `scripts/stress_check.py` (poses the limbs and measures the deformation). Fix every FAIL before animating
 5. Export armature with mesh via export-pipeline
 
 ## Deformation Test Poses
@@ -147,14 +147,19 @@ path of this installed script and their ARGS. Don't inline or rewrite the script
 
 | Script | What it does |
 |--------|--------------|
-| `scripts/rig_check.py` | Read-only armature + skinning audit: deform bone count, .L/.R symmetry, naming, vertex groups without bones, deform bones without weights, unweighted vertices, and max influences per vertex (game engines usually cap at 4 or 8). |
+| `scripts/rig_check.py` | Read-only armature + skinning audit with a PASS/WARN/FAIL per check: zero-length bones, unapplied armature scale/rotation, `.L`/`.R` (or `L_`/`R_`) pairs and mirrored bone Z axes (3 degrees), an Armature modifier that targets this armature, non-finite weights, weight sums (0.001), unweighted vertices, influences per vertex (engines usually cap at 4 or 8). A missing or non-mesh name in `meshes` is an error. |
+| `scripts/stress_check.py` | Poses the limb bones (arms raised, elbows and knees 130, crouch, forearm twist 90 and 180) on a temporary action and measures the evaluated mesh per limb: edge stretch, twist collapse, non-finite vertices. A pose the rig cannot reach (Limit Rotation, IK) is a FAIL `NOT_REACHED`, never a pass. Restores the file's pose, action and frame, saves nothing. |
 
 ```python
 import runpy
 result = runpy.run_path("<skill_dir>/scripts/rig_check.py", init_globals={"ARGS": {...}})["result"]
 ```
 
-ARGS: `armature`, `meshes`, `max_influences`
+ARGS: `rig_check`: `armature`, `meshes`, `max_influences`. `stress_check`: `armature`, `meshes`, `bone_map` (`{"arm.L": {"upper": "arm_upper.L", "lower": "arm_lower.L", "twist": [...]}}`; default found by name), `poses`, `fk_switches` (custom properties to set to FK while posing). Both also take `result_path` and `run_id`.
+
+Stress thresholds: collapse ratio below 0.5 on a twist pose, or edge stretch p95 above 1.5 on any pose, is a FAIL. Bending and twisting about the bone's local X and Y axes. To pass a 180 degree twist, give the forearm twist bones (`..._twist_1`, `_2`, ...) and weight along them: one bone carrying the whole twist collapses the mesh (candy wrapper).
+
+Headless: `blender -b f.blend --python-exit-code 1 --python <script> -- --args-file a.json` with `result_path` and `run_id` in the args. The run counts only if the exit code is 0 or 2 (2 means a FAIL verdict) and `result_path` exists with this `run_id`; any other outcome is a failed run, never a pass.
 
 ## Reference Guide
 

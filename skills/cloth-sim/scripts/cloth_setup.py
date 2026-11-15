@@ -8,7 +8,8 @@ listed colliders, and cache range. Re-running updates the existing modifier.
 ARGS:
     cloth      (str, required) mesh object (needs enough subdivisions to fold)
     fabric     (str) cotton | silk | denim | leather | rubber | heavy_canvas
-    pin_group  (str|None) vertex group name for pinned vertices
+    pin_group  (str|None) vertex group name for pinned vertices. None keeps whatever pin the modifier already has
+               (a rerun without it does not unpin); "" clears the pin; the result reports the real group
     colliders  (list[str]) objects that get a Collision modifier
     frames     (int) cache length (default 120)
     self_collision (bool) default False (slower; enable for folds/layered cloth)
@@ -58,8 +59,8 @@ def main(cloth, fabric="cotton", pin_group=None, colliders=(), frames=120, self_
     s.bending_stiffness = bending
     s.air_damping = air
     s.quality = 8
-    if pin_group:
-        if pin_group not in obj.vertex_groups:
+    if pin_group is not None:
+        if pin_group and pin_group not in obj.vertex_groups:
             raise ValueError(f"vertex group not found: {pin_group}")
         s.vertex_group_mass = pin_group
     c = mod.collision_settings
@@ -78,7 +79,8 @@ def main(cloth, fabric="cotton", pin_group=None, colliders=(), frames=120, self_
         col_obj.collision.thickness_outer = 0.01
         added.append(col_obj.name)
     verts = len(obj.data.vertices)
-    return {"cloth": obj.name, "fabric": fabric, "pinned": bool(pin_group), "colliders": added,
+    return {"cloth": obj.name, "fabric": fabric, "pinned": bool(s.vertex_group_mass),
+            "pin_group": s.vertex_group_mass, "colliders": added,
             "frames": [mod.point_cache.frame_start, mod.point_cache.frame_end], "vertices": verts,
             "warning": "low resolution - subdivide for believable folds" if verts < 200 else ""}
 

@@ -5,8 +5,8 @@ work with a few bone or slider controls. Shape keys hold the poses; drivers conn
 
 ## Set of keys
 
-Suggested minimum: `jaw_open`, `blink_L`, `blink_R`, `brow_up_L`, `brow_up_R`, `smile`. `SKILL.md` lists a smaller game minimum (jaw open, blink L/R, brow up/down); this set adds `smile` and splits the brow by side.
-Name left/right keys with the same `_L` / `_R` suffix as the bones. Add keys only for expressions the shot needs; every key
+Suggested minimum: `jaw_open`, `blink.L`, `blink.R`, `brow_up.L`, `brow_up.R`, `smile`. `SKILL.md` lists a smaller game minimum (jaw open, blink L/R, brow up/down); this set adds `smile` and splits the brow by side.
+Name left/right keys with the same `.L` / `.R` suffix as the bones. Add keys only for expressions the shot needs; every key
 is one more morph target to export and to test.
 
 Rules:
