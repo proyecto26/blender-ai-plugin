@@ -24,6 +24,8 @@ stretches its edges):
                      limb axis there, so a section squashed flat along one axis counts as collapsed (ratio 0).
                      Gated on the twist poses only (a bend pinches a little by nature)
   non-finite verts   any NaN or infinite evaluated vertex, all poses
+  collapse coverage  fraction of the limb's weighted vertices that fell in a measured slab (4+ vertices over 3+ of 12
+                     angular sectors); below 0.9 the collapse ratio is not reported and a twist row is NOT_CHECKED
   displacement ratio total vertex move of the limb (posed vs rest) divided by the move its own bones would give those
                      vertices if each followed its dominant bone rigidly; it scales with the pose and the limb size, and a
                      reached pose that moves nothing means the skin is inert (NO_DEFORMATION, FAIL)
@@ -33,7 +35,8 @@ PASS from the other metric. A run in which no row was measured at all is FAIL (e
 Thresholds (calibrated on the fixtures in tests/blender/test_iter15_rig.py; each sits between the good and bad values
 with a margin of at least 20% of the gap, and the test re-checks this on every run):
   COLLAPSE_MIN = 0.5     FAIL below (twist poses). Measured: good limb worst 0.9239 (twist 180 spread over 4 twist
-                         bones, 45 degrees each); candy wrapper (one twist bone) 0.0000 (4.1e-08) at twist 180.
+                         bones, 45 degrees each); candy wrapper (one twist bone) 0.0000 (4.1e-08) at twist 180. A dense
+                         201-ring limb with 1 mm of loop nonplanarity scores 0.0475 (coverage 1.0).
                          Gap 0.9239; the bound sits 0.4239 below good and 0.5 above bad (20% of the gap is 0.185).
   STRETCH_P95_MAX = 1.5  FAIL above (every pose). Measured: good limb worst 1.2309 (elbows 130); unweighted ring,
                          weakest failing pose 2.0820 (elbows 130; arms raised gives 10.656). Gap 0.8511; the bound
@@ -83,6 +86,7 @@ COLLAPSE_MIN = 0.5
 STRETCH_P95_MAX = 1.5
 REACH_TOL_DEG = 5.0
 DISPLACEMENT_RATIO_MIN = 0.3
+COVERAGE_MIN = 0.9
 POSES = {  # pose -> {limb kind: [(role, local axis index, degrees)]}
     "arms_raised": {"arm": [("upper", 0, 90.0)]},
     "elbows_130": {"arm": [("lower", 0, 130.0)]},
@@ -335,7 +339,7 @@ def _limb_sets(obj, bone_names, rest, edges):
     verts = np.array([i for i, v in enumerate(obj.data.vertices)
                       if any(g.group in gidx and g.weight > 1e-4 for g in v.groups)], dtype=np.int64)
     if len(verts) < 4:
-        return verts, edges[:0], []
+        return verts, edges[:0], {"sets": [], "coverage": 0.0}
     member = np.zeros(len(rest), dtype=bool)
     member[verts] = True
     limb_edges = edges[member[edges[:, 0]] | member[edges[:, 1]]]
@@ -343,19 +347,43 @@ def _limb_sets(obj, bone_names, rest, edges):
     centred = pts - pts.mean(axis=0)
     axis = np.linalg.eigh(centred.T @ centred)[1][:, -1]
     t = centred @ axis
-    # one slab per edge loop: positions along the axis closer than half the mesh's own median axial spacing are one
-    # slab, so a collapsed ring is never averaged with its neighbours, however dense the mesh is
-    order = np.argsort(t)
-    ts = t[order]
-    span = max(float(np.ptp(t)), 1e-9)
-    gaps = np.diff(ts)
-    distinct = gaps[gaps > 1e-6 * span]
-    if not len(distinct):
-        return verts, limb_edges, []
-    tol = 0.5 * float(np.median(distinct))
-    cut = np.flatnonzero(gaps > tol) + 1
-    bins = [verts[order[g]] for g in np.split(np.arange(len(ts)), cut) if len(g) >= 4]
-    return verts, limb_edges, bins
+    # Slabs of fixed thickness along the axis, thickness = the mesh's own axial edge spacing (the median axial extent
+    # of the edges that run along the limb), so a slab holds about one edge loop whether or not the loop is planar and
+    # however dense the mesh is. Two sets of slabs, offset by half a thickness, so that a loop cut by a slab boundary
+    # in one set sits inside a slab of the other. A slab is measured when it has at least 4 vertices spread over at
+    # least 3 of 12 angular sectors around the axis; `coverage` is the fraction of the limb's vertices that fell in a
+    # measured slab in either set.
+    tfull = (rest - pts.mean(axis=0)) @ axis
+    both = member[edges[:, 0]] & member[edges[:, 1]]
+    e = edges[both]
+    length = np.linalg.norm(rest[e[:, 0]] - rest[e[:, 1]], axis=1)
+    dt = np.abs(tfull[e[:, 0]] - tfull[e[:, 1]])
+    along = (length > 1e-12) & (dt > 0.5 * length)
+    if along.any():
+        thick = float(np.median(dt[along]))
+    elif (length > 1e-12).any():
+        thick = float(np.median(length[length > 1e-12]))
+    else:
+        return verts, limb_edges, {"sets": [], "coverage": 0.0}
+    u = np.cross(axis, [1.0, 0.0, 0.0] if abs(axis[0]) < 0.9 else [0.0, 1.0, 0.0])
+    u /= np.linalg.norm(u)
+    w = np.cross(axis, u)
+    sets, covered = [], np.zeros(len(verts), dtype=bool)
+    for offset in (0.0, 0.5):
+        index = np.floor((t - t.min()) / thick + offset).astype(int)
+        slabs = []
+        for k in np.unique(index):
+            sel = np.flatnonzero(index == k)
+            if len(sel) < 4:
+                continue
+            q = pts[sel] - pts[sel].mean(axis=0)
+            sector = np.floor((np.arctan2(q @ w, q @ u) + np.pi) / (np.pi / 6)).astype(int) % 12
+            if len(np.unique(sector)) >= 3:
+                slabs.append(verts[sel])
+                covered[sel] = True
+        slabs.sort(key=lambda idx: float(t[np.searchsorted(verts, idx[0])]))
+        sets.append(slabs)
+    return verts, limb_edges, {"sets": sets, "coverage": float(covered.mean())}
 
 
 def _section_widths(co, bins):
@@ -397,10 +425,13 @@ def _measure(rest, posed, limb_edges, bins, verts=None, expected=None):
         got = float(np.linalg.norm(posed[verts] - rest[verts], axis=1).sum())
         out["displacement_ratio"] = got / want if want > 1e-12 else None
     ratios = []
-    if len(bins) >= 2:
-        for w0, w1 in zip(_section_widths(rest, bins), _section_widths(posed, bins)):
-            if w0 > 1e-9:
-                ratios.append(w1 / w0)
+    out["collapse_coverage"] = bins["coverage"]
+    if bins["coverage"] >= COVERAGE_MIN:  # too little of the limb measured: no collapse verdict, never a pass
+        for slabs in bins["sets"]:
+            if len(slabs) >= 2:
+                for w0, w1 in zip(_section_widths(rest, slabs), _section_widths(posed, slabs)):
+                    if w0 > 1e-9:
+                        ratios.append(w1 / w0)
     out["collapse_ratio"] = min(ratios) if ratios else None
     return out
 
@@ -589,7 +620,8 @@ def main(armature, meshes=None, bone_map=None, poses=None, fk_switches=None, res
             s["failures"].append(f"{r['pose']}:{r['status']}")
     result = {"armature": arm.name, "limbs": limbs, "meshes": [o.name for o in objs], "rows": rows,
               "summary": summary, "thresholds": {"collapse_min": COLLAPSE_MIN, "stretch_p95_max": STRETCH_P95_MAX,
-                                                 "reach_tolerance_deg": REACH_TOL_DEG, "displacement_ratio_min": DISPLACEMENT_RATIO_MIN},
+                                                 "reach_tolerance_deg": REACH_TOL_DEG, "displacement_ratio_min": DISPLACEMENT_RATIO_MIN,
+                                                 "collapse_coverage_min": COVERAGE_MIN},
               "notes": notes, "verdict": verdict}
     if result_path:
         tmp = result_path + ".tmp"

@@ -69,13 +69,14 @@ def make_armature(name, bones, roll=None, nodeform=()):
     return obj
 
 
-def make_cylinder(name, z_top=2.0, loops=21, seg=16, radius=0.15, x=0.0):
+def make_cylinder(name, z_top=2.0, loops=21, seg=16, radius=0.15, x=0.0, wobble=0.0):
     vs, fs = [], []
     for i in range(loops):
         z = z_top * i / (loops - 1)
         for k in range(seg):
             a = 2 * math.pi * k / seg
-            vs.append((x + radius * math.cos(a), radius * math.sin(a), z))
+            dz = wobble * (math.cos(a) + 0.2 * math.sin(2 * a) + 0.1 * math.sin(3 * a)) if 0 < i < loops - 1 else 0.0
+            vs.append((x + radius * math.cos(a), radius * math.sin(a), z + dz))
     for i in range(loops - 1):
         for k in range(seg):
             a, b = i * seg + k, i * seg + (k + 1) % seg
@@ -131,7 +132,7 @@ LEG_KNOTS = {"upper_leg.L": 0.85, "lower_leg.L": 1.15}
 CTL_BONE = ("forearm_ctl.L", (0.3, 0, 1), (0.3, 0, 1.25), "upper_arm.L")
 
 
-def limb(kind="good", radius=0.15, loops=21):
+def limb(kind="good", radius=0.15, loops=21, wobble=0.0):
     fresh()
     bones = {"candy": CANDY_BONES, "dense": CANDY_BONES, "leg": LEG_BONES, "leg_limit": LEG_BONES}.get(kind, GOOD_BONES)
     if kind == "arm_unweighted_leg":
@@ -140,7 +141,7 @@ def limb(kind="good", radius=0.15, loops=21):
     if kind in ("ctl", "ctl_deform"):
         bones = GOOD_BONES + [CTL_BONE]
     arm = make_armature("ARM_Limb", bones, nodeform=("forearm_ctl.L",) if kind == "ctl" else ())
-    cyl = make_cylinder("SK_Limb", radius=radius, loops=loops)
+    cyl = make_cylinder("SK_Limb", radius=radius, loops=loops, wobble=wobble)
     knots = {"candy": CANDY_KNOTS, "leg": LEG_KNOTS, "leg_limit": LEG_KNOTS}.get(kind, GOOD_KNOTS)
     if kind == "dense":  # 201 rings; the whole blend sits between two neighbouring rings
         knots = {"upper_arm.L": 0.99, "forearm.L": 1.01}
@@ -656,6 +657,39 @@ def test_w2_separate_arm_meshes_pair_only_with_their_own_limb():
     return {"pairs": sorted(pairs)}
 
 
+def test_x1_nonplanar_loops_cannot_hide_collapse():
+    out = {}
+    for wobble in (0.0, 0.001):  # 1 mm of loop nonplanarity on 201 rings, the interior rings only
+        limb("dense", loops=201, wobble=wobble)
+        res = run("rigging", "stress_check.py", armature="ARM_Limb", poses=["twist_180"])
+        row = res["rows"][0]
+        assert res["verdict"] == "FAIL" and row["status"] == "COLLAPSE" and row["collapse_ratio"] < 0.3, (wobble, row)
+        out[f"wobble_{wobble}"] = {"collapse": row["collapse_ratio"], "coverage": row.get("collapse_coverage")}
+    assert all(v["coverage"] is not None and v["coverage"] >= 0.9 for v in out.values()), out
+    return out
+
+
+def test_x2_low_coverage_collapse_is_not_checked():
+    arm, cyl = limb("good")
+    g = _globals()
+    import numpy as np
+    n = len(cyl.data.vertices)
+    rest = np.empty(n * 3)
+    cyl.data.vertices.foreach_get("co", rest)
+    rest = rest.reshape(-1, 3)
+    edges = np.empty(len(cyl.data.edges) * 2, dtype=np.int64)
+    cyl.data.edges.foreach_get("vertices", edges)
+    edges = edges.reshape(-1, 2)
+    verts, limb_edges, bins = g["_limb_sets"](cyl, set(GOOD_KNOTS), rest, edges)
+    m = g["_measure"](rest, rest, limb_edges, bins)
+    assert m["collapse_coverage"] >= 0.9 and m["collapse_ratio"] is not None, m
+    thin = dict(bins, coverage=0.5)  # pretend half of the limb's vertices fell in no measured slab
+    m = g["_measure"](rest, rest, limb_edges, thin)
+    assert m["collapse_ratio"] is None and m["collapse_coverage"] == 0.5, m
+    assert g["_gate"]("twist_180", m)[1] == "NOT_CHECKED", g["_gate"]("twist_180", m)
+    return {"coverage_good": 1.0}
+
+
 def test_u2_slender_limbs_are_judged_fairly():
     out = {}
     limb("good", radius=0.02)
@@ -765,7 +799,8 @@ def main():
              test_s5_restore_after_mid_run_failure, test_s6_leg_fixture_knees_and_crouch,
              test_t1_inert_skin_is_not_a_pass, test_t2_empty_inputs_are_not_a_pass,
              test_u1_role_detection_ignores_controls_and_refuses_ambiguity, test_v1_unweighted_limb_is_reported,
-             test_u2_slender_limbs_are_judged_fairly, test_w1_dense_limb_collapse_is_found,
+             test_u2_slender_limbs_are_judged_fairly, test_w1_dense_limb_collapse_is_found, test_x1_nonplanar_loops_cannot_hide_collapse,
+             test_x2_low_coverage_collapse_is_not_checked,
              test_w2_separate_arm_meshes_pair_only_with_their_own_limb, test_e2_thresholds_margin,
              test_b1_result_contract_and_exit_codes]
     checks, failed = {}, []
