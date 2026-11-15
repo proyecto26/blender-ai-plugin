@@ -123,12 +123,22 @@ def _same_shape(me, bm):
         return False
     if [tuple(p.vertices) for p in me.polygons] != [tuple(v.index for v in f.verts) for f in bm.faces]:
         return False
-    # the earlier script left Blender's default UVs: anything else is authored data
+    # the earlier script left Blender's default UVs, no material indices and at most its one material slot:
+    # anything else is authored data
+    if any(p.material_index != 0 for p in me.polygons):
+        return False
+    if len(me.materials) > 1 or (len(me.materials) == 1 and (
+            me.materials[0] is None or not me.materials[0].name.startswith("MAT_Prop_"))):
+        return False
     ref = bpy.data.meshes.new("_scatter_ref")
     try:
         bm.to_mesh(ref)
         ref.uv_layers.new(name="UVMap")
         if len(ref.loops) != len(me.loops):
+            return False
+        extra = {a.name for a in me.attributes if not a.name.startswith(".")} - \
+                {a.name for a in ref.attributes if not a.name.startswith(".")}
+        if extra:
             return False
         return all(abs(a.vector[0] - b.vector[0]) <= 1e-6 and abs(a.vector[1] - b.vector[1]) <= 1e-6
                    for a, b in zip(me.uv_layers[0].uv, ref.uv_layers[0].uv)) and _same_verts(me, bm)

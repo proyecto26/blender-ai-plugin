@@ -38,7 +38,10 @@ corners do not count) and WARN on texel-density spread > 1.3 (max/min over islan
 (per tile, averaged over occupied tiles) or stretch p95 > 1.2 (triangle UV/3D singular-value ratio).
 `allow_overlap` skips only the overlap rule, and never for the lightmap channel. Object verdict is FAIL if any
 check FAILs, else WARN if any WARNs or is NOT_CHECKED, else PASS; overall is the worst object.
-Coverage is sampled on a 512 x 512 grid per tile (about +/-1 %).
+Coverage is exact along U and sampled along V: 512 scanline rows per tile at jittered (stratified, seeded)
+positions, so it is an unbiased estimate (typically within about 1 %), not a worst-case bound.
+A non-finite UV (NaN/inf) fails the `uv_finite` check; its faces are excluded from the other measurements
+and the result never contains NaN (null instead).
 
 Reading UVs yourself in Blender 5.x: `mesh.uv_layers[i].uv[k].vector` (the per-loop value is a
 Float2AttributeValue with `.vector`, not `.uv`), or `loop[bm.loops.layers.uv.active].uv` in bmesh.
@@ -56,7 +59,7 @@ LIGHTMAP_NAME = "UVMap_Lightmap"
 COLLAPSED_AREA = 1e-12
 SAT_EPS = 1e-7
 SPREAD_WARN, COVERAGE_WARN, STRETCH_WARN = 1.3, 0.75, 1.2
-RASTER_N = 512
+ROWS = 512
 PAIR_CAP = 3_000_000
 METHODS = ("smart", "seams", "min_stretch")
 
@@ -303,50 +306,52 @@ def _stretch(p3, uvt):
     return ratio[ok & np.isfinite(ratio)]
 
 
-def _raster(tris, n=RASTER_N):
-    """Sample counts per cell of an n x n grid over [0,1)^2 for triangles (T,3,2) in tile-local UV.
-    Scanline: one horizontal span per (triangle, row), so cost follows triangle height, not area."""
-    jx, jy = 0.0137, 0.0291  # offset the sample points so exact ties on shared edges are rare
-    plus = np.zeros(n * (n + 1), np.int64)
-    minus = np.zeros(n * (n + 1), np.int64)
-    if len(tris):
-        ymin, ymax = tris[:, :, 1].min(axis=1), tris[:, :, 1].max(axis=1)
-        j0 = np.clip(np.ceil(ymin * n - 0.5 - jy), 0, n).astype(np.int64)
-        j1 = np.clip(np.ceil(ymax * n - 0.5 - jy), 0, n).astype(np.int64)  # exclusive
-        rows = np.maximum(j1 - j0, 0)
-        ids = np.nonzero(rows)[0]
-        per = 1_000_000
-        s = 0
-        while s < len(ids):
-            e, tot = s, 0
-            while e < len(ids) and (tot == 0 or tot + rows[ids[e]] <= per):
-                tot += rows[ids[e]]
-                e += 1
-            sel = ids[s:e]
-            s = e
-            reps = rows[sel]
-            t = np.repeat(sel, reps)
-            j = np.repeat(j0[sel], reps) + (np.arange(len(t)) - np.repeat(np.cumsum(reps) - reps, reps))
-            py = (j + 0.5 + jy) / n
-            xlo = np.full(len(t), np.inf)
-            xhi = np.full(len(t), -np.inf)
-            for k in range(3):
-                A, B = tris[t, k], tris[t, (k + 1) % 3]
-                dy = B[:, 1] - A[:, 1]
-                ok = (np.minimum(A[:, 1], B[:, 1]) <= py) & (py < np.maximum(A[:, 1], B[:, 1])) & (dy != 0)
-                with np.errstate(all="ignore"):
-                    x = A[:, 0] + (py - A[:, 1]) * (B[:, 0] - A[:, 0]) / dy
-                xlo = np.where(ok, np.minimum(xlo, x), xlo)
-                xhi = np.where(ok, np.maximum(xhi, x), xhi)
-            good = np.isfinite(xlo) & np.isfinite(xhi)
-            i0 = np.clip(np.ceil(xlo[good] * n - 0.5 - jx), 0, n).astype(np.int64)
-            i1 = np.clip(np.floor(xhi[good] * n - 0.5 - jx), -1, n - 1).astype(np.int64)
-            keep = i1 >= i0
-            base = j[good][keep] * (n + 1)
-            plus += np.bincount(base + i0[keep], minlength=n * (n + 1))
-            minus += np.bincount(base + i1[keep] + 1, minlength=n * (n + 1))
-    grid = np.cumsum((plus - minus).reshape(n, n + 1), axis=1)[:, :n]
-    return grid.T.astype(np.int32)  # indexed [u cell, v cell] like before
+def _scan(tris, rows=ROWS):
+    """(union length, summed length) averaged over `rows` jittered scanlines across the unit tile, for
+    triangles (T,3,2) in tile-local UV. Spans are exact along U; the union is merged per row."""
+    union_sum = total_sum = 0.0
+    if len(tris) == 0:
+        return 0.0, 0.0
+    ys = (np.arange(rows) + np.random.default_rng(12345).random(rows)) / rows  # one stratified sample per row
+    ymin, ymax = tris[:, :, 1].min(axis=1), tris[:, :, 1].max(axis=1)
+    j0 = np.clip(np.floor(ymin * rows), 0, rows - 1).astype(np.int64)
+    j1 = np.clip(np.floor(ymax * rows), 0, rows - 1).astype(np.int64)
+    r0 = 0
+    while r0 < rows:
+        # grow the row block while the entry count stays moderate
+        r1 = r0
+        while r1 < rows:
+            r1 = min(rows, r1 + 32)
+            sel = np.nonzero((j1 >= r0) & (j0 < r1))[0]
+            if int((np.minimum(j1[sel], r1 - 1) - np.maximum(j0[sel], r0) + 1).sum()) > 1_500_000:
+                break
+        reps = np.minimum(j1[sel], r1 - 1) - np.maximum(j0[sel], r0) + 1
+        t = np.repeat(sel, reps)
+        j = np.repeat(np.maximum(j0[sel], r0), reps) + (np.arange(len(t)) - np.repeat(np.cumsum(reps) - reps, reps))
+        py = ys[j]
+        xlo = np.full(len(t), np.inf)
+        xhi = np.full(len(t), -np.inf)
+        for k in range(3):
+            A, B = tris[t, k], tris[t, (k + 1) % 3]
+            dy = B[:, 1] - A[:, 1]
+            ok = (np.minimum(A[:, 1], B[:, 1]) <= py) & (py < np.maximum(A[:, 1], B[:, 1])) & (dy != 0)
+            with np.errstate(all="ignore"):
+                x = A[:, 0] + (py - A[:, 1]) * (B[:, 0] - A[:, 0]) / dy
+            xlo = np.where(ok, np.minimum(xlo, x), xlo)
+            xhi = np.where(ok, np.maximum(xhi, x), xhi)
+        good = np.isfinite(xlo) & np.isfinite(xhi)
+        xlo, xhi, jj = np.clip(xlo[good], 0, 1), np.clip(xhi[good], 0, 1), j[good].astype(np.float64)
+        keep = xhi > xlo
+        xlo, xhi, jj = xlo[keep], xhi[keep], jj[keep]
+        if len(xlo):
+            order = np.lexsort((xlo, jj))
+            xlo, xhi, jj = xlo[order], xhi[order], jj[order]
+            kl, kh = jj * 4 + xlo, jj * 4 + xhi
+            prev = np.concatenate(([-1.0], np.maximum.accumulate(kh)[:-1]))
+            union_sum += float(np.maximum(0.0, kh - np.maximum(kl, prev)).sum())
+            total_sum += float((xhi - xlo).sum())
+        r0 = r1
+    return union_sum / rows, total_sum / rows
 
 
 def _tile_of(uvt):
@@ -376,7 +381,7 @@ def _clipped_area(tri, u, v):
 
 
 def _coverage(uvt):
-    """({tile: union coverage}, overlap area from sampled cells with two or more triangles).
+    """({tile: union coverage}, overlap area = summed minus union area).
     A triangle is rasterised into every tile its bounding box touches and clipped to each."""
     lo = np.floor(uvt.min(axis=1)).astype(np.int64)
     hi = np.floor(uvt.max(axis=1) - 1e-9).astype(np.int64)
@@ -389,7 +394,7 @@ def _coverage(uvt):
             for u in np.unique(tu[ok]):
                 for v in np.unique(tv[ok & (tu == u)]):
                     tiles.setdefault((int(u), int(v)), []).append(np.nonzero(ok & (tu == u) & (tv == v))[0])
-    cov, overlap_cells = {}, 0
+    cov, overlap_area = {}, 0.0
     for (u, v), parts in sorted(tiles.items()):
         idx = np.concatenate(parts)
         # Occupancy is exact: a triangle whose box spans several tiles must have clipped area > 0 in this one.
@@ -401,10 +406,10 @@ def _coverage(uvt):
         if not keep.any():
             continue
         idx = idx[keep]
-        g = _raster(uvt[idx] - np.array([u, v], np.float64))
-        cov[1001 + u + 10 * v] = float((g > 0).sum()) / g.size
-        overlap_cells += int((g > 1).sum())
-    return cov, overlap_cells / (RASTER_N * RASTER_N)
+        union, total = _scan(uvt[idx] - np.array([u, v], np.float64))
+        cov[1001 + u + 10 * v] = union
+        overlap_area += max(0.0, total - union)
+    return cov, overlap_area
 
 
 def _sat_overlap(A, B):
@@ -502,10 +507,26 @@ def _measure(obj, layer, texture_px, lightmap_rules, allow_overlap, target_px_pe
     if len(uvt) == 0:
         return {"uv_layer": layer.name, "verdict": "FAIL", "error": "mesh has no faces; nothing measured",
                 "checks": {}}
-    a_uv, a_3d = _tri_area_uv(uvt), _tri_area_3d(p3)
+    tri_ok = np.isfinite(uvt).all(axis=(1, 2)) & np.isfinite(p3).all(axis=(1, 2))
+    loop_ok = np.isfinite(d["loop_uv"]).all(axis=1)
+    bad_loops = int((~loop_ok).sum())
+    bad_polys = np.unique(np.concatenate([poly[~tri_ok], np.repeat(np.arange(d["n_poly"]), d["poly_total"])[~loop_ok]]))
+    excluded_faces = len(bad_polys)
+    finite_check = (_check("FAIL", value=bad_loops, excluded_faces=excluded_faces,
+                           note="non-finite UV or position; those faces are excluded from the other checks")
+                    if (bad_loops or excluded_faces) else _check("PASS", value=0))
+    if not tri_ok.any():
+        return {"uv_layer": layer.name, "verdict": "FAIL", "non_finite_loops": bad_loops,
+                "excluded_faces": excluded_faces, "error": "no finite UV triangle; nothing measured",
+                "checks": {"uv_finite": finite_check}}
+    uvt = np.where(tri_ok[:, None, None], uvt, 0.0)
+    p3 = np.where(tri_ok[:, None, None], p3, 0.0)
+    a_uv, a_3d = _tri_area_uv(uvt), _tri_area_3d(p3)  # excluded triangles measure 0
     area_3d, area_uv = float(a_3d.sum()), float(a_uv.sum())
     poly_uv = np.bincount(poly, weights=a_uv, minlength=d["n_poly"])
-    collapsed = int((poly_uv < COLLAPSED_AREA).sum())
+    collapsed_mask = poly_uv < COLLAPSED_AREA
+    collapsed_mask[bad_polys] = False
+    collapsed = int(collapsed_mask.sum())
     islands = _islands(d)
     n_islands = int(islands.max()) + 1 if len(islands) else 0
     tri_island = islands[poly]
@@ -513,7 +534,7 @@ def _measure(obj, layer, texture_px, lightmap_rules, allow_overlap, target_px_pe
     isl_3d = np.bincount(tri_island, weights=a_3d, minlength=n_islands)
     good = (isl_uv > COLLAPSED_AREA) & (isl_3d > 0)
     dens = np.sqrt(isl_uv[good] / isl_3d[good]) * texture_px
-    live = a_uv > COLLAPSED_AREA
+    live = (a_uv > COLLAPSED_AREA) & tri_ok
     live_uv = uvt[live]
     pairs, truncated = _overlap_pairs(live_uv)
     cov, overlap_area = _coverage(live_uv) if len(live_uv) else ({}, 0.0)
@@ -522,7 +543,7 @@ def _measure(obj, layer, texture_px, lightmap_rules, allow_overlap, target_px_pe
     stretch_p95 = float(np.percentile(str_ratio, 95)) if len(str_ratio) else None
     spread = float(dens.max() / dens.min()) if len(dens) else None
     flat = d["loop_uv"]  # polygon loops, not triangle corners
-    oob = int(((flat < -1e-4) | (flat > 1.0001)).any(axis=1).sum())
+    oob = int((((flat < -1e-4) | (flat > 1.0001)).any(axis=1) & loop_ok).sum())
     density = math.sqrt(area_uv / area_3d) * texture_px if area_3d > 0 else 0.0
 
     entry = {
@@ -536,11 +557,14 @@ def _measure(obj, layer, texture_px, lightmap_rules, allow_overlap, target_px_pe
         "island_density_max": round(float(dens.max()), 1) if len(dens) else None,
         "density_spread": round(spread, 3) if spread is not None else None,
         "stretch_p95": round(stretch_p95, 3) if stretch_p95 is not None else None,
+        "non_finite_loops": bad_loops, "excluded_faces": excluded_faces,
+        "excluded_face_indices": [int(i) for i in bad_polys[:50]],
         "uv_area_sum": round(area_uv, 4), "surface_m2": round(area_3d, 4), "loops_outside_0_1": oob,
         "udim_tiles": sorted(cov),
     }
     unique_rules = lightmap_rules or not allow_overlap
-    checks = {"collapsed_faces": _check("FAIL" if collapsed else "PASS", value=collapsed)}
+    checks = {"uv_finite": finite_check,
+              "collapsed_faces": _check("FAIL" if collapsed else "PASS", value=collapsed)}
     if allow_overlap and not lightmap_rules:
         checks["overlap"] = _check("PASS", value=pairs, note="allow_overlap declared; rule skipped")
     elif pairs:
@@ -562,6 +586,17 @@ def _measure(obj, layer, texture_px, lightmap_rules, allow_overlap, target_px_pe
     entry["checks"] = checks
     entry["verdict"] = _worst(c["status"] for c in checks.values())
     return entry
+
+
+def _json_safe(x):
+    """NaN/inf become None, recursively, so the result is valid JSON."""
+    if isinstance(x, float):
+        return x if math.isfinite(x) else None
+    if isinstance(x, dict):
+        return {k: _json_safe(v) for k, v in x.items()}
+    if isinstance(x, (list, tuple)):
+        return [_json_safe(v) for v in x]
+    return x
 
 
 def _worst(statuses):
@@ -663,10 +698,11 @@ def main(objects, unwrap=False, angle_deg=66.0, texture_px=2048, target_px_per_m
     result = {"verdict": verdict, "run_id": run_id, "texture_px": texture_px, "objects": out}
     if note:
         result["note"] = note
+    result = _json_safe(result)
     if result_path:
         tmp = result_path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(result, fh, indent=2)
+            json.dump(result, fh, indent=2, allow_nan=False)
         os.replace(tmp, result_path)
     return result
 
