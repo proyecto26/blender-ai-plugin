@@ -8,8 +8,10 @@ rest orientations or bone rolls can be compared):
   rotation     the armature-space rotation of (pose @ rest^-1); FAIL above ROT_MAX_DEG
   translation  the head's displacement from rest, the source one scaled by the ratio of rig heights (so proportions
                may differ); FAIL above TRANS_MAX_FRAC of the target rig height
-  scale        the local scale relative to rest (Y, the bone axis, exactly; X and Z as an unordered pair, so a bone
-               roll may swap them); FAIL when any differs by more than SCALE_MAX_REL
+  scale        the stretch relative to rest as a matrix in armature space (the bone's local scale carried through
+               its rest orientation), so the same stretch in space matches whatever the bone roll, while an X
+               stretch never matches a Z stretch; FAIL when any element differs by more than SCALE_MAX_REL
+A cyclic check that cannot run (fewer than 3 frames) is NOT_CHECKED, so the overall verdict is at least WARN.
 A mapped bone with no keys in the baked action is still measured (it simply stays at rest); when NO mapped bone has
 keys the run is a FAIL ("measured nothing") and nothing is evaluated. The rig height is the Z extent of the rest
 bones (the largest extent when flat). Armature objects are assumed to share orientation: the comparison is in
@@ -31,12 +33,16 @@ Each is bracketed by boundary fixtures at 0.5x and 1.5x of the limit, so it sits
 rule asks at least 20%). Measured: a correct bake scores 0.0 on every metric.
   ROT_MAX_DEG = 2.0         boundary 1.0001 (PASS) / 3.0 (FAIL); rotation lost 40 and 80 degrees
   TRANS_MAX_FRAC = 0.01     boundary 0.005 / 0.015; piston bake without location keys 0.1 of the rig height
-  SCALE_MAX_REL = 0.01      boundary 0.005 / 0.015; hydraulic (Stretch To, Y x2) bake without scale keys 0.5
+  SCALE_MAX_REL = 0.01      boundary 0.005 / 0.015; hydraulic (Stretch To, Y x2) bake without scale keys 1.0
+                            (stretch-matrix element difference); an X stretch against a Z stretch 1.0
   LOOP_ROT_DEG = 1.0        boundary 0.4973 / 1.4998; a ramp that never returns 90.0
   LOOP_LOC_FRAC = 0.005     boundary 0.0025 / 0.0075; a pop of 0.2 of the rig height 0.2
   VEL_REL = 0.25, VEL_ROT_FLOOR_DEG = 0.2, VEL_LOC_FLOOR_FRAC = 0.001
                             sine loop seam velocity difference 0.0; half-sine seam (equal poses, flipped direction)
-                            15.66 degrees against an allowed 2.2; root travel half-sine 0.104 of the height
+                            15.66 degrees against an allowed 2.2. Boundary fixtures (difference of the two seam steps,
+                            inside PASS / outside FAIL): rotation, steps near 10 deg/frame, 2.7 / 5.4 (allowed 3.6);
+                            rotation floor, 0.15 / 0.5 (allowed 0.27); location, steps near 0.1 height/frame,
+                            0.026 / 0.06 (allowed 0.035); location floor, 0.0008 / 0.002 (allowed 0.0013)
 
     import runpy
     result = runpy.run_path("<skill_dir>/scripts/bake_check.py", init_globals={"ARGS": {
@@ -230,12 +236,14 @@ class _Isolation:
         bpy.context.view_layer.update()
 
 
-def _pair_scale_off(a, b):
-    """Largest relative difference of two local scale vectors: Y exactly, X and Z as an unordered pair."""
-    def rel(x, y):
-        return abs(x - y) / max(abs(y), 1e-9)
-    xz_a, xz_b = sorted((a[0], a[2])), sorted((b[0], b[2]))
-    return max(rel(a[1], b[1]), rel(xz_a[0], xz_b[0]), rel(xz_a[1], xz_b[1]))
+def _stretch(rest, posed):
+    """Armature-space stretch matrix: the local scale of (rest^-1 @ posed) carried through the rest orientation."""
+    r3 = _rot3(rest)
+    return r3 @ Matrix.Diagonal((rest.inverted() @ posed).to_scale()) @ r3.transposed()
+
+
+def _stretch_off(a, b):
+    return max(abs(a[i][j] - b[i][j]) for i in range(3) for j in range(3))
 
 
 def _loop_checks(bones, series, height, root, root_motion):
@@ -317,7 +325,7 @@ def main(source, target, action, bone_map=None, frames=None, cyclic=None, root_m
         _measure(scene, src, tgt, act, pairs, frames, cyclic, root_motion, root_bone, result, notes)
     verdicts = [b["verdict"] for b in result["bones"].values()]
     if result["loop"]:
-        verdicts += [b["verdict"] for b in result["loop"]["bones"].values()]
+        verdicts.append(result["loop"]["verdict"])
     verdict = _worst(verdicts)
     if not result["bones"]:
         verdict = "FAIL"
@@ -373,12 +381,12 @@ def _measure(scene, src, tgt, act, pairs, frames, cyclic, root_motion, root_bone
                     m = ev.pose.bones[bn].matrix.copy()
                     r[kq].append((_rot3(m) @ _rot3(rest).inverted()).to_quaternion())
                     r[kd].append(m.translation - rest.translation)
-                    r[ks].append((rest.inverted() @ m).to_scale())
+                    r[ks].append(_stretch(rest, m))
         tgt_to_src = {t: s for s, t in pairs.items()}
         for tn, r in rows.items():
             rot = max(_quat_deg(a, b) for a, b in zip(r["q_s"], r["q_t"]))
             trans = max((dt - ds * ratio).length for ds, dt in zip(r["d_s"], r["d_t"])) / h_t
-            scale = max(_pair_scale_off(a, b) for a, b in zip(r["sc_t"], r["sc_s"]))
+            scale = max(_stretch_off(a, b) for a, b in zip(r["sc_t"], r["sc_s"]))
             vals = {"rotation": (rot, ROT_MAX_DEG), "translation": (trans, TRANS_MAX_FRAC),
                     "scale": (scale, SCALE_MAX_REL)}
             entry = {"source_bone": tgt_to_src[tn], "keyed": tn in keyed}
@@ -390,7 +398,8 @@ def _measure(scene, src, tgt, act, pairs, frames, cyclic, root_motion, root_bone
         do_loop = act.use_cyclic if cyclic is None else bool(cyclic)
         if do_loop:
             if f1 - f0 < 2:
-                result["loop"] = {"verdict": "WARN", "bones": {}, "note": "fewer than 3 frames: seam not checked"}
+                result["loop"] = {"verdict": "NOT_CHECKED", "bones": {},
+                                  "note": "fewer than 3 frames: seam not checked"}
                 notes.append("loop check NOT_CHECKED: the frame range is shorter than 3 frames")
                 return
             names = list(rows)

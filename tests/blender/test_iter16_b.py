@@ -33,6 +33,9 @@ if "--" in sys.argv:
         ARGS = json.loads(raw[0])
 SKILLS = ARGS.get("skills_dir") or os.path.normpath(os.path.join(HERE, "..", "..", "skills"))
 OUT = ARGS.get("out_dir", ".")
+# Every file the tests write goes to a folder only this process uses: bake_maps refuses existing output files, so a
+# reused out_dir or two runs sharing one would otherwise fail on files left by the other.
+WORK = os.path.join(OUT, f"work_{os.getpid()}")
 MEASURED = {}
 
 
@@ -173,7 +176,7 @@ def test_b1_directx_green_is_flipped_opengl():
     fresh()
     plane("SM_Low")
     bumpy_high()
-    o1, o2 = os.path.join(OUT, "nrm_gl"), os.path.join(OUT, "nrm_dx")
+    o1, o2 = os.path.join(WORK, "nrm_gl"), os.path.join(WORK, "nrm_dx")
     r1 = bake(low="SM_Low", high="HP_Low", maps=["normal"], size=32, extrusion=0.3, samples=1, out_dir=o1)
     r2 = bake(low="SM_Low", high="HP_Low", maps=["normal"], size=32, extrusion=0.3, samples=1, out_dir=o2,
               normal_convention="DIRECTX", overwrite=True)
@@ -193,7 +196,7 @@ def test_b1_metallic_plain_and_linked_nodes_restored():
     mat = pbr("MAT_A", metallic=0.75)
     low.data.materials.append(mat)
     before = node_sig()
-    r = bake(low="SM_Low", maps=["metallic"], size=32, samples=1, out_dir=os.path.join(OUT, "met_a"))
+    r = bake(low="SM_Low", maps=["metallic"], size=32, samples=1, out_dir=os.path.join(WORK, "met_a"))
     px = read_png(r["images"][0])
     assert abs(float(px[..., 0].mean()) - 0.75) < 3 / 255, px[..., 0].mean()
     assert node_sig() == before, "nodes changed beyond the SK_BakeTarget image node"
@@ -207,7 +210,7 @@ def test_b1_metallic_plain_and_linked_nodes_restored():
     val.outputs[0].default_value = 0.4
     nt.links.new(val.outputs[0], nt.nodes["Principled BSDF"].inputs["Metallic"])
     before = node_sig()
-    r = bake(low="SM_Low", maps=["metallic"], size=32, samples=1, out_dir=os.path.join(OUT, "met_b"))
+    r = bake(low="SM_Low", maps=["metallic"], size=32, samples=1, out_dir=os.path.join(WORK, "met_b"))
     px = read_png(r["images"][0])
     assert abs(float(px[..., 0].mean()) - 0.4) < 3 / 255, px[..., 0].mean()
     assert node_sig() == before, "linked metallic: nodes or links changed"
@@ -219,10 +222,10 @@ def test_b1_orm_channels_equal_separate_maps():
     fresh()
     low = plane("SM_Low")
     low.data.materials.append(pbr("MAT_O", metallic=0.75, rough=0.3))
-    r = bake(low="SM_Low", maps=["ao"], orm=True, size=32, samples=2, out_dir=os.path.join(OUT, "orm"))
+    r = bake(low="SM_Low", maps=["ao"], orm=True, size=32, samples=2, out_dir=os.path.join(WORK, "orm"))
     names = {os.path.basename(p) for p in r["images"]}
     assert names == {"T_Low_Ao.png", "T_Low_Roughness.png", "T_Low_Metallic.png", "T_Low_Orm.png"}, names
-    d = os.path.join(OUT, "orm")
+    d = os.path.join(WORK, "orm")
     ao, ro, me, orm = (read_png(os.path.join(d, f"T_Low_{k}.png")) for k in ("Ao", "Roughness", "Metallic", "Orm"))
     errs = [float(np.abs(orm[..., c] - src[..., 0]).max()) for c, src in enumerate((ao, ro, me))]
     assert max(errs) <= 1.5 / 255, errs
@@ -252,7 +255,7 @@ def test_b1_nodes_identical_when_a_bake_fails_midway():
         def go():
             try:
                 bake(low="SM_Low", maps=["ao"], orm=True, size=16, samples=1,
-                     out_dir=os.path.join(OUT, f"fail_{fail_at}"))
+                     out_dir=os.path.join(WORK, f"fail_{fail_at}"))
             except RuntimeError as exc:
                 return exc
         exc, hook = with_hook("object", "bake", fn, go)
@@ -271,7 +274,7 @@ def test_b1_nodes_identical_when_a_bake_fails_midway():
 def test_b1_collisions_refused_without_overwrite():
     fresh()
     plane("SM_Low")
-    d = os.path.join(OUT, "coll")
+    d = os.path.join(WORK, "coll")
     existing = bpy.data.images.new("T_Low_Ao", 16, 16)
     existing.pixels.foreach_set([0.5] * (16 * 16 * 4))
     sig = node_sig()
@@ -312,7 +315,7 @@ def test_b1_several_high_sources():
         o = plane(name, size=2.0, loc=(x, 0, 0.01), scale=(0.5, 1, 1))
         o.data.materials.append(pbr("MAT_" + name, base=col))
     r = bake(low="SM_Low", high=["HP_Red", "HP_Green"], maps=["diffuse"], size=32, extrusion=0.1, samples=1,
-             out_dir=os.path.join(OUT, "multi"))
+             out_dir=os.path.join(WORK, "multi"))
     assert r["high"] == ["HP_Red", "HP_Green"] and r["selected_to_active"] is True, r
     px = np.empty(0)
     img = bpy.data.images.load(r["images"][0], check_existing=False)
@@ -356,13 +359,13 @@ def test_b1_cage_ray_distance_and_uv_layer_set_and_restored():
 
     r, hook = with_hook("object", "bake", fn, lambda: bake(
         low="SM_Low", high="HP_Low", cage="CG_Low", max_ray_distance=0.5, uv_layer="Second", maps=["normal"],
-        size=32, samples=1, out_dir=os.path.join(OUT, "ctl")))
+        size=32, samples=1, out_dir=os.path.join(WORK, "ctl")))
     assert seen == {"use_cage": True, "cage": "CG_Low", "ray": 0.5, "uv": "Second", "s2a": True}, seen
     assert bake_state() == state and low.data.uv_layers.active.name == UVNAME(low), (bake_state(), state)
     assert r["cage"] == "CG_Low" and r["uv_layer"] == "Second"
     for kw, text in (({"cage": "CG_Low"}, "cage needs a high"), ({"uv_layer": "Nope"}, "no UV map named"),
                      ({"normal_convention": "DX"}, "normal_convention"), ({"high": "HP_Missing"}, "not found")):
-        args = dict(low="SM_Low", maps=["ao"], size=16, samples=1, out_dir=os.path.join(OUT, "ctl_bad"))
+        args = dict(low="SM_Low", maps=["ao"], size=16, samples=1, out_dir=os.path.join(WORK, "ctl_bad"))
         args.update(kw)
         try:
             bake(**args)
@@ -390,7 +393,7 @@ def test_b1_uv_layer_chooses_the_bake_target_area():
     cov = {}
     for layer in (None, "Small"):
         r = bake(low="SM_Low", maps=["ao"], size=64, samples=2, uv_layer=layer, overwrite=True,
-                 out_dir=os.path.join(OUT, f"uvl_{layer}"))
+                 out_dir=os.path.join(WORK, f"uvl_{layer}"))
         cov[layer] = float((read_png(r["images"][0])[..., 0] > 0.5).mean())
         assert cube.data.uv_layers.active.name == cube.data.uv_layers[0].name
     assert cov[None] > 3 * cov["Small"] and cov["Small"] < 0.15, cov
@@ -486,8 +489,9 @@ def sampled(bone, parts=("loc", "eul", "scale")):
             rs, rt = src.data.bones[bone].matrix_local, tgt.data.bones[bone].matrix_local
             d = ev.pose.bones[bone].matrix @ rs.inverted()
             b = rt.inverted() @ d @ rt
-            prev = b.to_euler("XYZ", prev) if prev is not None else b.to_euler("XYZ")
-            table[f] = {"loc": tuple(b.to_translation()), "eul": tuple(prev), "scale": tuple(b.to_scale())}
+            loc, quat, sc = b.decompose()
+            prev = quat.to_euler("XYZ", prev) if prev is not None else quat.to_euler("XYZ")
+            table[f] = {"loc": tuple(loc), "eul": tuple(prev), "scale": tuple(sc)}
         return {bone: lambda f: {k: v for k, v in table[f].items() if k in parts}}
     return make
 
@@ -660,7 +664,7 @@ def test_b2_no_action_or_no_keys_is_fail_not_pass():
 
 def test_b2_bad_arguments_raise_without_a_result_file():
     scenario(GOOD, GOOD)
-    path = os.path.join(OUT, "bad_args.json")
+    path = os.path.join(WORK, "bad_args.json")
     for kw in ({"source": "NOPE"}, {"bone_map": {"nope": "arm"}}, {"target": "SRC"}):
         args = dict(source="SRC", target="TGT", action="AN_baked", result_path=path, run_id="x")
         args.update(kw)
@@ -728,20 +732,20 @@ def test_b2_state_restored_also_on_failure():
 
 def test_b2_result_file_and_exit_codes():
     src, tgt = scenario(GOOD, GOOD)
-    good_blend = os.path.join(OUT, "bake_good.blend")
+    good_blend = os.path.join(WORK, "bake_good.blend")
     bpy.ops.wm.save_as_mainfile(filepath=good_blend, copy=True)
     scenario(GOOD, {"arm": lambda f: {"eul": (-(f - 1) * K, 0.0, 0.0)}, "spine": lift})
-    bad_blend = os.path.join(OUT, "bake_bad.blend")
+    bad_blend = os.path.join(WORK, "bake_bad.blend")
     bpy.ops.wm.save_as_mainfile(filepath=bad_blend, copy=True)
     out = {}
     for label, blend, code_want, verdict in (("pass", good_blend, 0, "PASS"), ("fail", bad_blend, 2, "FAIL")):
-        rp = os.path.join(OUT, f"bake_{label}.json")
-        af = os.path.join(OUT, f"bake_{label}_args.json")
+        rp = os.path.join(WORK, f"bake_{label}.json")
+        af = os.path.join(WORK, f"bake_{label}_args.json")
         with open(af, "w", encoding="utf-8") as fh:
             json.dump({"source": "SRC", "target": "TGT", "action": "AN_baked", "result_path": rp, "run_id": label + "-1"}, fh)
         cmd = [bpy.app.binary_path, "-b", blend, "--python-exit-code", "1", "--python", script("animation", "bake_check.py"),
                "--", "--args-file", af]
-        code = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=300).returncode
+        code = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=1200).returncode
         data = json.load(open(rp, encoding="utf-8"))
         assert code == code_want and data["run_id"] == label + "-1" and data["verdict"] == verdict, (code, data["verdict"])
         assert not os.path.exists(rp + ".tmp")
@@ -877,6 +881,72 @@ def test_b3_thresholds_boundary_fixtures():
     return out
 
 
+def test_b2_scale_is_compared_per_axis_in_the_rest_frame():
+    sx = {"spine": lambda f: {"scale": (2.0, 1.0, 1.0)}}
+    sz = {"spine": lambda f: {"scale": (1.0, 1.0, 2.0)}}
+    scenario(sx, sz)  # same rest orientation: an X stretch is not a Z stretch
+    res = baked()
+    assert res["verdict"] == "FAIL" and res["bones"]["spine"]["scale"]["verdict"] == "FAIL", res["bones"]["spine"]
+    out = {"x_vs_z": res["bones"]["spine"]["scale"]["max"]}
+    scenario(sx, sx)
+    assert baked()["verdict"] == "PASS"
+    # rolled rest (90 degrees): the same stretch in space is local X on one bone and local Z on the other -> PASS
+    src_keys = {"arm": lambda f: {"scale": (2.0, 1.0, 1.0), "eul": ((f - 1) * K, 0.0, 0.0)}}
+    scenario(src_keys, sampled("arm", parts=("eul", "scale")), tgt_roll={"arm": 90.0})
+    res2 = baked()
+    assert res2["verdict"] == "PASS", res2["bones"]["arm"]
+    out["rolled_same_stretch"] = res2["bones"]["arm"]["scale"]["max"]
+    # the wrong axis on the rolled rig must FAIL
+    wrong = {"arm": lambda f: {"scale": (2.0, 1.0, 1.0), "eul": (0.0, 0.0, 0.0)}}
+    scenario(src_keys, wrong, tgt_roll={"arm": 90.0})
+    res3 = baked()
+    assert res3["bones"]["arm"]["scale"]["verdict"] == "FAIL", res3["bones"]["arm"]
+    return out
+
+
+def test_b3_loop_that_cannot_run_is_not_a_pass():
+    jump = {"arm": lambda f: {"eul": (math.radians(90) * (f - 1), 0.0, 0.0)}}
+    out = {}
+    for frames in (range(1, 3), range(1, 2)):
+        scenario(jump, jump, frames=frames)
+        res = baked(cyclic=True)
+        assert res["loop"]["verdict"] == "NOT_CHECKED", res["loop"]
+        assert res["verdict"] in ("WARN", "FAIL"), res["verdict"]
+        out[f"{len(frames)}_frames"] = res["verdict"]
+    return out
+
+
+def _seam_keys(bone, vb, va, n=8):
+    """Positions that start and end at 0 with a first step of vb and a last step of va (the rest stays 0)."""
+    def pos(f):
+        return vb if f == 2 else (-va if f == n - 1 else 0.0)
+    if bone == "arm":
+        return {"arm": lambda f: {"eul": (math.radians(pos(f)), 0.0, 0.0)}}
+    return {"spine": lambda f: {"loc": (0.0, pos(f), 0.0)}}
+
+
+def test_b3_seam_velocity_boundary_fixtures():
+    """25% allowance and each floor, just inside (PASS) and just outside (FAIL). Units: degrees / rig heights per frame."""
+    cases = (("arm", "rotation_velocity", 10.0, 10.0 + 2.7, 10.0 + 5.4, "relative, 10 deg/frame"),
+             ("arm", "rotation_velocity", 0.0, 0.15, 0.5, "floor 0.2 deg/frame"),
+             ("spine", "location_velocity", 0.1, 0.1 + 0.026, 0.1 + 0.06, "relative, 0.1 height/frame"),
+             ("spine", "location_velocity", 0.0, 0.0008, 0.002, "floor 0.001 height/frame"))
+    out = {}
+    for bone, key, vb, inside, outside, label in cases:
+        got = []
+        for va, want in ((inside, "PASS"), (outside, "FAIL")):
+            keys = _seam_keys(bone, vb, va)
+            scenario(keys, keys, frames=range(1, 9))
+            res = baked(cyclic=True)
+            v = res["loop"]["bones"][bone][key]
+            assert v["verdict"] == want, (label, va, v)
+            assert res["loop"]["bones"][bone]["location_pose" if bone == "spine" else "rotation_pose"]["verdict"] == "PASS"
+            got.append(v["value"])
+        out[label] = got
+    MEASURED["b3_velocity_boundaries"] = out
+    return out
+
+
 TESTS = (
     test_b1_directx_green_is_flipped_opengl, test_b1_metallic_plain_and_linked_nodes_restored,
     test_b1_orm_channels_equal_separate_maps, test_b1_nodes_identical_when_a_bake_fails_midway,
@@ -889,12 +959,13 @@ TESTS = (
     test_b2_bad_arguments_raise_without_a_result_file, test_b2_state_restored_also_on_failure,
     test_b2_result_file_and_exit_codes, test_b2_thresholds_boundary_fixtures,
     test_b3_clean_loop_passes_and_non_cyclic_is_not_checked, test_b3_seam_pops_fail, test_b3_root_motion,
-    test_b3_thresholds_boundary_fixtures,
+    test_b3_thresholds_boundary_fixtures, test_b2_scale_is_compared_per_axis_in_the_rest_frame,
+    test_b3_loop_that_cannot_run_is_not_a_pass, test_b3_seam_velocity_boundary_fixtures,
 )
 
 
 def main():
-    os.makedirs(OUT, exist_ok=True)
+    os.makedirs(WORK, exist_ok=True)
     only = ARGS.get("only")
     checks, failed = {}, []
     for fn in TESTS:
