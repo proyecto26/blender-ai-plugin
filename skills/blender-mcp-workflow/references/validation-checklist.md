@@ -2,6 +2,14 @@
 
 Run before marking any asset complete. Query scene via Blender MCP when available.
 
+Most boxes below are measured by a script; tick them from its result, not by eye:
+- `scripts/validate_asset.py`: scale, transforms, loose and non-manifold geometry, degenerate faces and edges,
+  inconsistent winding, inside-out closed shells, collapsed and overlapping UVs, empty slots, naming, budget.
+- the `uv-workflow` skill → `scripts/uv_unwrap_check.py`: islands, overlap, coverage, density spread, stretch, per
+  channel (`uv_layer`), lightmap channel.
+- the `rigging` skill → `scripts/rig_check.py` and `scripts/stress_check.py` for anything skinned.
+A check reported `NOT_CHECKED` stays unticked.
+
 ## Scale & Transform
 
 - [ ] Correct real-world scale (1 unit = 1 meter unless project specifies otherwise)
