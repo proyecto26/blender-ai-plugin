@@ -151,6 +151,8 @@ result = runpy.run_path("<skill_dir>/scripts/optimize_mesh.py", init_globals={"A
 
 ARGS: `objects`, `merge_distance`, `limited_dissolve`, `triangulate`, `backup`
 
+A mesh shared with other objects is made single-user first, so the other users keep their geometry (`made_single_user` in the result).
+
 ## Reference Guide
 
 | Topic | Reference | Load When |

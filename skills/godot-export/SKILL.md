@@ -106,6 +106,8 @@ result = runpy.run_path("<skill_dir>/scripts/export_godot.py", init_globals={"AR
 
 ARGS: `objects`, `out_path`, `animation`
 
+A name in `objects` that is not in the file raises `ValueError` naming every missing object, before anything is exported.
+
 The export uses the active scene only and reads the file back: check `verify.ok` after export (`missing`, `no_geometry` and `leaked` list mismatches). `verify.checked: false` means NOT_CHECKED, never a pass.
 
 ## Reference Guide

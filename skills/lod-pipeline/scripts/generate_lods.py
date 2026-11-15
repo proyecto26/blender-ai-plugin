@@ -10,6 +10,8 @@ ARGS:
     object   (str, required) source mesh (LOD0)
     ratios   (list[float])   decimate ratios for LOD1..N (default [0.5, 0.25, 0.12])
     apply    (bool) apply the Decimate modifier on copies (default True - engines need real geometry)
+    An existing <base>_LOD<i> is replaced only if this script made it (custom property bap_lod_source);
+    any other object with that name makes the run raise ValueError before anything changes.
     rename_source (bool) rename source to <base>_LOD0 (default False)
     offset_x (float) spacing between LODs for side-by-side review (default 0 = stacked; stacked
                      copies get hide_render so renders show LOD0 only - exports are unaffected)
@@ -45,11 +47,19 @@ def _tris(obj):
     return count
 
 
+TAG = "bap_lod_source"  # custom property on every object this script makes: the base name of its source
+
+
 def main(object, ratios=(0.5, 0.25, 0.12), apply=True, rename_source=False, offset_x=0.0):
     src = bpy.data.objects.get(object)
     if src is None or src.type != "MESH":
         raise ValueError(f"mesh not found: {object}")
     base = src.name[:-5] if src.name.endswith("_LOD0") else src.name
+    for i in range(1, len(ratios) + 1):  # refuse before touching anything
+        clash = bpy.data.objects.get(f"{base}_LOD{i}")
+        if clash is not None and clash.get(TAG) is None:
+            raise ValueError(f"{clash.name} exists and was not made by generate_lods.py (no {TAG} property): "
+                             "rename or delete it yourself, then run again. Nothing was changed.")
     if rename_source and not src.name.endswith("_LOD0"):
         src.name = base + "_LOD0"
     col = bpy.data.collections.get("COL_LODs")
@@ -68,6 +78,7 @@ def main(object, ratios=(0.5, 0.25, 0.12), apply=True, rename_source=False, offs
         lod = src.copy()
         lod.data = src.data.copy()
         lod.name = lod.data.name = name
+        lod[TAG] = base
         lod.location.x += offset_x * i
         lod.hide_render = offset_x == 0  # stacked LODs export with LOD0 but must not render over it
         col.objects.link(lod)

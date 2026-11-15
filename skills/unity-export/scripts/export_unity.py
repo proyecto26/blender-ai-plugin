@@ -7,7 +7,8 @@ and axis/scale conversion so the asset imports at scale (1,1,1) with no -90 X ro
         "objects": ["SM_Crate_01"], "out_path": "/tmp/unity/SM_Crate_01.fbx"}})["result"]
 
 ARGS:
-    objects  (list[str], required) meshes (+ optional armature/empties)
+    objects  (list[str], required) meshes (+ optional armature/empties); a name not in the file raises
+             ValueError naming every missing object, before anything is exported
     out_path (str, required) .fbx path
     animation (bool) include animation (default False)
     strict   (bool) refuse to export on FAIL (default True)
@@ -67,7 +68,10 @@ def _restore_state(camera, active, mode):
 
 
 def main(objects, out_path, animation=False, strict=True):
-    targets = [bpy.data.objects[n] for n in objects if n in bpy.data.objects]
+    missing = [n for n in objects if n not in bpy.data.objects]
+    if missing:  # fail before exporting: a silently dropped name would also escape the read-back check
+        raise ValueError(f"objects not found: {missing}")
+    targets = [bpy.data.objects[n] for n in objects]
     if not targets:
         raise ValueError("no valid objects")
     checks = {}

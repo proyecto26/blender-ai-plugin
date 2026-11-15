@@ -1,6 +1,7 @@
 """Add the standard non-destructive hard-surface finishing stack:
 Bevel (angle-limited, harden normals) -> Weighted Normal (keep sharp) -> optional Triangulate.
-Existing modifiers with the same names are updated, not duplicated.
+Existing modifiers with the same names are updated, not duplicated and moved in place into that order
+(modifiers you added yourself are left where they are).
 
     import runpy
     result = runpy.run_path("<skill_dir>/scripts/bevel_stack.py",
@@ -40,6 +41,22 @@ def _modifier(obj, name, kind):
     return mod if mod and mod.type == kind else obj.modifiers.new(name, kind)
 
 
+def _move_to(obj, mod, index):
+    obj.modifiers.move(list(obj.modifiers).index(mod), index)
+
+
+def _order_owned(obj, bevel, wn, tri):
+    """Put the owned modifiers in bevel -> weighted normal -> triangulate order, moving only them (modifiers
+    the user added stay where they are)."""
+    mods = list(obj.modifiers)
+    if mods.index(bevel) > mods.index(wn):
+        _move_to(obj, bevel, mods.index(wn))
+    if tri is not None:
+        mods = list(obj.modifiers)
+        if mods.index(tri) < mods.index(wn):
+            _move_to(obj, tri, mods.index(wn))
+
+
 def main(objects, width=0.003, segments=2, angle_deg=30.0, triangulate=False):
     report = {}
     for name in objects:
@@ -59,9 +76,11 @@ def main(objects, width=0.003, segments=2, angle_deg=30.0, triangulate=False):
         wn.keep_sharp = True
         wn.weight = 50
         wn.mode = "FACE_AREA"
+        tri = None
         if triangulate:
             tri = _modifier(obj, "HS_Triangulate", "TRIANGULATE")
             tri.keep_custom_normals = True
+        _order_owned(obj, bevel, wn, tri if triangulate else obj.modifiers.get("HS_Triangulate"))
         # Smooth shading is required for weighted normals to take effect.
         for poly in obj.data.polygons:
             poly.use_smooth = True

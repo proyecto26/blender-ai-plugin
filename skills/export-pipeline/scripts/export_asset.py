@@ -14,6 +14,9 @@ ARGS:
     evidence_path (str|None) write this run's result there (script-evidence/1: script, time, verdict, summary) so
                   run_manifest.py can back an `export` PASS with it. Use a path inside the run folder.
 
+An export only counts if the exporter returns FINISHED and the file at out_path is new or changed in this call
+(mtime and size differ from before); otherwise RuntimeError. An older file there is never deleted.
+
 glTF/GLB exports use the active scene only and return `verify` (the file is read back):
 {checked, nodes, joints, missing, no_geometry, leaked, ok}. Other formats return {"checked": False}.
 The scene camera and the mode the active object was in are restored (the glTF exporter changes both).
@@ -171,6 +174,8 @@ def main(out_path, objects=None, engine="generic", animation=False, evidence_pat
             raise ValueError(clash)
         before = _stamp(evidence_path)
     targets = _targets(objects)
+    file_before = _stamp(out_path)  # an old file at out_path must not pass for this call's export
+    status = None
     for o in targets:
         if o.type == "MESH" and o.data.is_editmode:
             o.update_from_editmode()  # exporters read obj.data, the pre-edit mesh: load the live edit mesh into it first
@@ -191,18 +196,18 @@ def main(out_path, objects=None, engine="generic", animation=False, evidence_pat
                                        selected_editable_objects=targets):
             if ext == ".fbx":
                 preset = FBX_PRESETS.get(engine, FBX_PRESETS["generic"])
-                bpy.ops.export_scene.fbx(filepath=out_path, use_selection=True, use_mesh_modifiers=True,
+                status = bpy.ops.export_scene.fbx(filepath=out_path, use_selection=True, use_mesh_modifiers=True,
                                          object_types={"MESH", "ARMATURE", "EMPTY"}, bake_anim=animation,
                                          path_mode="COPY", embed_textures=False, **preset)
             elif ext in (".glb", ".gltf"):
-                bpy.ops.export_scene.gltf(filepath=out_path, use_selection=True, use_active_scene=True, export_apply=True,
+                status = bpy.ops.export_scene.gltf(filepath=out_path, use_selection=True, use_active_scene=True, export_apply=True,
                                           export_format="GLB" if ext == ".glb" else "GLTF_SEPARATE",
                                           export_yup=True, export_animations=animation)
             elif ext in (".usd", ".usdc", ".usda"):
-                bpy.ops.wm.usd_export(filepath=out_path, selected_objects_only=True,
+                status = bpy.ops.wm.usd_export(filepath=out_path, selected_objects_only=True,
                                       export_animation=animation, evaluation_mode="RENDER")
             elif ext == ".obj":
-                bpy.ops.wm.obj_export(filepath=out_path, export_selected_objects=True, apply_modifiers=True,
+                status = bpy.ops.wm.obj_export(filepath=out_path, export_selected_objects=True, apply_modifiers=True,
                                       forward_axis="NEGATIVE_Z", up_axis="Y")
             else:
                 raise ValueError(f"unsupported extension {ext}")
@@ -214,7 +219,15 @@ def main(out_path, objects=None, engine="generic", animation=False, evidence_pat
                 o.select_set(True)
         view_layer.objects.active = prev_active
         _restore_state(prev_camera, prev_active, prev_mode)
-    ok = os.path.exists(out_path)
+    if status != {"FINISHED"}:
+        raise RuntimeError(f"export did not finish (operator returned {status}); {out_path} was not trusted"
+                           + (" and an older file there was left in place" if file_before else ""))
+    file_after = _stamp(out_path)
+    if file_after is None or file_after == file_before:
+        raise RuntimeError(f"export reported FINISHED but {out_path} "
+                           + ("does not exist" if file_after is None else "is unchanged (same mtime and size)")
+                           + "; an older file there was left in place and not counted as this export")
+    ok = True
     report = {"path": out_path, "exists": ok, "bytes": os.path.getsize(out_path) if ok else 0,
               "engine": engine, "objects": [o.name for o in targets],
               "verify": _verify(out_path, targets)}

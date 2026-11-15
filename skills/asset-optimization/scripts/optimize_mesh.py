@@ -13,6 +13,9 @@ ARGS:
     limited_dissolve (float|None) angle in degrees for planar dissolve (e.g. 1.0); None skips
     triangulate      (bool) default False
     backup           (bool) keep an untouched hidden copy named <name>_BAK (default True)
+
+A mesh shared with other objects is made single-user first (this object gets its own copy), so the
+other users keep their geometry. The result reports made_single_user per object.
 """
 import json
 import math
@@ -48,6 +51,9 @@ def main(objects, merge_distance=0.0001, limited_dissolve=None, triangulate=Fals
         if obj is None or obj.type != "MESH":
             out[name] = {"error": "not a mesh"}
             continue
+        shared = obj.data.users > 1
+        if shared:  # editing shared data would change every other object that uses the mesh
+            obj.data = obj.data.copy()
         if backup and not bpy.data.objects.get(f"{name}_BAK"):
             bak = obj.copy()
             bak.data = obj.data.copy()
@@ -75,7 +81,8 @@ def main(objects, merge_distance=0.0001, limited_dissolve=None, triangulate=Fals
         bm.to_mesh(obj.data)
         bm.free()
         obj.data.update()
-        out[name] = {"before": before, "after": after, "backup": f"{name}_BAK" if backup else None}
+        out[name] = {"before": before, "after": after, "backup": f"{name}_BAK" if backup else None,
+                     "made_single_user": shared}
     return {"objects": out}
 
 

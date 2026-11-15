@@ -143,6 +143,8 @@ import runpy
 result = runpy.run_path("<skill_dir>/scripts/gn_curve_profile.py", init_globals={"ARGS": {"name": "GEO_Pipe", "points": [[0, -5, 0.5], [0, 5, 0.5]], "radius": 0.15}})["result"]
 ```
 
+For `gn_curve_profile.py`, `points` are world space and are converted with the object's inverse world matrix, so a rerun on a moved or rotated pipe keeps its world path.
+
 Terrain: ARGS `name`, `size`, `resolution`, `seed`, `height`, `frequency`, `octaves`, `center`, `corridor`
 (`{"curve", "half_width", "falloff", "offset"}`), `collection`, `replace`. The same seed gives the same mesh; inside
 `half_width` of the curve the terrain height equals the curve height (both checked by the test). See

@@ -106,6 +106,8 @@ result = runpy.run_path("<skill_dir>/scripts/generate_lods.py", init_globals={"A
 
 ARGS: `object`, `ratios`, `apply`, `rename_source`, `offset_x`
 
+A `<base>_LOD<i>` object is replaced only if this script made it (it carries the `bap_lod_source` custom property); a hand-made object with that name stops the run before anything changes.
+
 ## Reference Guide
 
 | Topic | Reference | Load When |

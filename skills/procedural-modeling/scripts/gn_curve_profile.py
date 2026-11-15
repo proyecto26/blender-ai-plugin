@@ -14,11 +14,15 @@ ARGS:
     cyclic      (bool)  close the curve (default False)
     fill_caps   (bool)  cap open ends (default True)
     collection  (str)   collection to link into (default: scene collection)
+
+Points are world space: they are converted with the inverse of the object's world matrix, so a rerun on a
+moved, rotated or scaled object keeps the pipe on the same world path. Radius stays in the object's local units.
 """
 import json
 import sys
 
 import bpy
+from mathutils import Vector
 
 GROUP_NAME = "GN_CurveProfile"
 
@@ -109,11 +113,14 @@ def main(points, name="GEO_Pipe", radius=0.1, resolution=16, cyclic=False, fill_
             raise ValueError(f"collection not found: {collection}")
         target.objects.link(obj)
     curve = obj.data
+    bpy.context.view_layer.update()  # matrix_world of a moved object is stale until the depsgraph runs
+    to_local = obj.matrix_world.inverted()  # the points are world space; curve points are object-local
     curve.splines.clear()
     spline = curve.splines.new("POLY")
     spline.points.add(len(points) - 1)
     for p, co in zip(spline.points, points):
-        p.co = (co[0], co[1], co[2], 1.0)
+        loc = to_local @ Vector((co[0], co[1], co[2]))
+        p.co = (loc.x, loc.y, loc.z, 1.0)
     spline.use_cyclic_u = bool(cyclic)
 
     mod = obj.modifiers.get("GN_Pipe") or obj.modifiers.new("GN_Pipe", "NODES")

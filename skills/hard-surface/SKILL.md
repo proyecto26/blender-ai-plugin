@@ -173,6 +173,8 @@ result = runpy.run_path("<skill_dir>/scripts/bevel_stack.py", init_globals={"ARG
 
 ARGS: `objects`, `width`, `segments`, `angle_deg`, `triangulate`
 
+Existing `HS_` modifiers are moved in place into bevel, weighted normal, triangulate order; modifiers you added yourself stay where they are.
+
 ## Reference Guide
 
 | Topic | Reference | Load When |
