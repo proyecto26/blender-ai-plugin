@@ -1,6 +1,7 @@
 """Unwrap (optional) and measure UVs per object: islands, collapsed faces, overlap, union coverage
 per UDIM tile, per-island texel density spread, stretch, out-of-range loops. Measure only unless
-`unwrap=True`: a mesh with no UV channel is reported as an error and left unchanged.
+`unwrap=True` or `lightmap=True`: a mesh with no UV channel is reported as an error and left
+unchanged otherwise (unwrap creates "UVMap"; lightmap=True creates the missing channels).
 
     import runpy
     result = runpy.run_path("<skill_dir>/scripts/uv_unwrap_check.py", init_globals={"ARGS": {
@@ -24,7 +25,9 @@ ARGS:
     make_single_user (bool)  unwrap/lightmap on a mesh shared with other objects is refused (it would change
                              them too); True gives this object its own copy first ("made_single_user")
     lightmap         (bool)  also build a second, non-overlapping "UVMap_Lightmap" channel with Lightmap
-                             Pack and measure it under the lightmap rules (result key "lightmap"); the first
+                             Pack and measure it under the lightmap rules: result key "lightmap" when another
+                             channel is the one measured, measured directly in the object entry when the lightmap
+                             channel is the one measured (uv_layer names it, or it is the only channel). The first
                              channel stays the active render UV. Rerunning repacks the same channel
     result_path      (str)   write the result (plus run_id) as JSON here, atomically, on success
     run_id           (str)   copied into the result and the file
@@ -351,6 +354,27 @@ def _tile_of(uvt):
     return np.floor(c[:, 0]).astype(np.int64), np.floor(c[:, 1]).astype(np.int64)
 
 
+def _clipped_area(tri, u, v):
+    """Area of the triangle (3,2) inside the unit tile [u,u+1] x [v,v+1] (Sutherland-Hodgman)."""
+    poly = [(float(x), float(y)) for x, y in tri]
+    for axis, bound, keep_ge in ((0, u, True), (0, u + 1, False), (1, v, True), (1, v + 1, False)):
+        out = []
+        for i, a in enumerate(poly):
+            b = poly[(i + 1) % len(poly)]
+            ina = a[axis] >= bound if keep_ge else a[axis] <= bound
+            inb = b[axis] >= bound if keep_ge else b[axis] <= bound
+            if ina != inb:
+                t = (bound - a[axis]) / (b[axis] - a[axis])
+                out.append((a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])))
+            if inb:
+                out.append(b)
+        poly = out
+        if not poly:
+            return 0.0
+    return abs(sum(poly[i][0] * poly[(i + 1) % len(poly)][1] - poly[(i + 1) % len(poly)][0] * poly[i][1]
+                   for i in range(len(poly)))) / 2
+
+
 def _coverage(uvt):
     """({tile: union coverage}, overlap area from sampled cells with two or more triangles).
     A triangle is rasterised into every tile its bounding box touches and clipped to each."""
@@ -368,10 +392,17 @@ def _coverage(uvt):
     cov, overlap_cells = {}, 0
     for (u, v), parts in sorted(tiles.items()):
         idx = np.concatenate(parts)
+        # Occupancy is exact: a triangle whose box spans several tiles must have clipped area > 0 in this one.
+        # (the raster below only measures the fraction, and cannot see a strip narrower than one sample)
+        multi = (hi[idx, 0] > lo[idx, 0]) | (hi[idx, 1] > lo[idx, 1])
+        keep = np.ones(len(idx), bool)
+        for k in np.nonzero(multi)[0]:
+            keep[k] = _clipped_area(uvt[idx[k]], u, v) > 1e-12
+        if not keep.any():
+            continue
+        idx = idx[keep]
         g = _raster(uvt[idx] - np.array([u, v], np.float64))
-        covered = float((g > 0).sum()) / g.size
-        if covered > 0:  # a tile only the bounding box touches is not an occupied tile
-            cov[1001 + u + 10 * v] = covered
+        cov[1001 + u + 10 * v] = float((g > 0).sum()) / g.size
         overlap_cells += int((g > 1).sum())
     return cov, overlap_cells / (RASTER_N * RASTER_N)
 

@@ -123,6 +123,20 @@ def _same_shape(me, bm):
         return False
     if [tuple(p.vertices) for p in me.polygons] != [tuple(v.index for v in f.verts) for f in bm.faces]:
         return False
+    # the earlier script left Blender's default UVs: anything else is authored data
+    ref = bpy.data.meshes.new("_scatter_ref")
+    try:
+        bm.to_mesh(ref)
+        ref.uv_layers.new(name="UVMap")
+        if len(ref.loops) != len(me.loops):
+            return False
+        return all(abs(a.vector[0] - b.vector[0]) <= 1e-6 and abs(a.vector[1] - b.vector[1]) <= 1e-6
+                   for a, b in zip(me.uv_layers[0].uv, ref.uv_layers[0].uv)) and _same_verts(me, bm)
+    finally:
+        bpy.data.meshes.remove(ref)
+
+
+def _same_verts(me, bm):
     mine = sorted(tuple(round(c, 4) for c in v.co) for v in me.vertices)
     ours = sorted(tuple(round(c, 4) for c in v.co) for v in bm.verts)
     return mine == ours

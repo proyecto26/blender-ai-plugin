@@ -475,7 +475,15 @@ def test_a16_scatter_uvs():
         assert e["collapsed_faces"] == 0 and e["overlap_pairs"] == 0, (n, e)
         assert e["verdict"] != "FAIL", (n, e)
         per[e["uv_layer"] + ":" + n.split("_")[2]] = [e["islands"], e["uv_coverage"]]
-    return {"kinds": sorted(kinds), "per": per}
+    gaps = {}
+    for kind in kinds:
+        obj = next(bpy.data.objects[p["name"]] for p in r["props"] if p["kind"] == kind)
+        e = chk["objects"][obj.name]
+        assert e["islands"] == len(obj.data.polygons), (kind, e["islands"], len(obj.data.polygons))
+        gap = _min_island_gap(obj)
+        assert gap >= 0.004 - 1e-6, (kind, gap)
+        gaps[kind] = round(gap, 5)
+    return {"kinds": sorted(kinds), "per": per, "min_gap": gaps}
 
 
 # ------------------------------------------------------------------------------------------ Seldon fixes
@@ -524,6 +532,35 @@ def test_s_loops_outside_counts_polygon_loops():
     e = uvc(objects=["Out"], allow_overlap=True)["objects"]["Out"]
     assert e["loops_outside_0_1"] == 4, e["loops_outside_0_1"]
     return {"loops": e["loops_outside_0_1"]}
+
+
+def test_s_coverage_sub_sample_strip():
+    reset()
+    quads("Strip", [sq(0, 0, 1)], {"UVMap": [[(0, 0), (1.0005, 0), (1.0005, 1), (0, 1)]]})
+    e = uvc(objects=["Strip"])["objects"]["Strip"]
+    assert e["udim_tiles"] == [1001, 1002], e["udim_tiles"]
+    assert e["uv_coverage"] < 0.6 and e["checks"]["coverage"]["status"] == "WARN", e["checks"]["coverage"]
+    return {"tiles": e["udim_tiles"], "mean": e["uv_coverage"]}
+
+
+def test_s_lightmap_docs_match_behaviour():
+    root = os.path.normpath(os.path.join(SKILLS, "uv-workflow"))
+    skill = open(os.path.join(root, "SKILL.md"), encoding="utf8").read()
+    doc = open(os.path.join(root, "scripts", "uv_unwrap_check.py"), encoding="utf8").read().split('"""')[1]
+    for label, text in (("SKILL.md", skill), ("docstring", doc)):
+        assert "creates the missing" in text, f"{label}: lightmap=True creating channels is not documented"
+        assert "measured directly" in text, f"{label}: where a sole lightmap channel is reported is not documented"
+    reset()
+    quads("LM", [sq(0, 0, 1)], {"UVMap_Lightmap": [uvsq(0.1, 0.1, 0.5)]})
+    e = uvc(objects=["LM"], lightmap=True)["objects"]["LM"]
+    assert e["rules"] == "lightmap" and "lightmap" not in e, e.keys()
+    reset()
+    bpy.ops.mesh.primitive_cube_add()
+    o = bpy.context.object
+    o.data.uv_layers.remove(o.data.uv_layers[0])
+    e = uvc(objects=[o.name], lightmap=True)["objects"][o.name]
+    assert [l.name for l in o.data.uv_layers] == ["UVMap", "UVMap_Lightmap"] and "lightmap" in e, e.keys()
+    return {"ok": True}
 
 
 def test_s_shared_mesh_unwrap():
@@ -756,6 +793,20 @@ def test_s_scatter_refuses_same_vertices_other_topology():
     return out
 
 
+def test_s_scatter_refuses_authored_uvs():
+    _scatter_setup()
+    foreign = _cube_like_foreign("ME_Prop_box")
+    for d in foreign.uv_layers[0].uv:
+        d.vector = (0.25 + 0.1 * d.vector[0], 0.5 + 0.1 * d.vector[1])  # authored coordinates, same layer name
+    uv0 = [tuple(d.vector) for d in foreign.uv_layers[0].uv]
+    try:
+        run("set-dressing", "scatter_props.py", {"target": "SM_T", "count": 2, "kinds": ["box"], "ground": "Ground"})
+    except ValueError as exc:
+        assert [tuple(d.vector) for d in foreign.uv_layers[0].uv] == uv0, "authored UVs were rewritten"
+        return {"refused": str(exc)[:60]}
+    raise AssertionError("a mesh with authored UVs was adopted and rewritten")
+
+
 def test_s_scatter_preflight_keeps_previous_props():
     _scatter_setup()
     r1 = run("set-dressing", "scatter_props.py", {"target": "SM_T", "count": 3, "kinds": ["box"], "ground": "Ground"})
@@ -792,6 +843,7 @@ TESTS = (test_a1_measure_only_no_uv, test_a2_union_coverage, test_c_stacked_and_
          test_s_shared_mesh_unwrap, test_s_lightmap_only_rerun, test_s_edit_mode_and_selection_restored,
          test_s_margin_px_enforced, test_s_run_id_in_returned_result, test_s_scatter_reuses_old_mesh,
          test_s_scatter_refuses_foreign_mesh,
+         test_s_coverage_sub_sample_strip, test_s_lightmap_docs_match_behaviour, test_s_scatter_refuses_authored_uvs,
          test_s_coverage_counts_only_covered_tiles, test_s_loops_outside_counts_polygon_loops,
          test_s_scatter_refuses_same_vertices_other_topology, test_s_scatter_preflight_keeps_previous_props,
          test_a5_emission_default, test_a16_scatter_uvs)
