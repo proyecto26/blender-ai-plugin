@@ -50,6 +50,10 @@ ARGS:
                        objects (named `<object>#1`, `<object>#2`), so floating parts, crossing islands and coplanar
                        overlap (surfaces within `min_depth_m`, 1 mm by default) inside one mesh are found. A floating
                        island fails like a floating object, under `require_connected`
+                       The coplanar test is exact (triangles clipped onto one plane) but has an area floor: overlap below
+                       1e-6 m2 (a 1 mm sliver of a 1 m edge) is not reported. Faces that face the same way always count;
+                       opposed faces count only when at least one of the two islands is an open shell (two closed solids
+                       touching face to face are normal)
     result_path        (str|None) write the result dict plus "run_id" there as JSON (temp file, then replace) at the end
                        of a successful run; a run that raised writes nothing
     run_id             (str|None) echoed into that file so a caller can tell this run's file from an older one
@@ -314,8 +318,10 @@ def _clip_area(subject, clip):
 
 def _coplanar_overlap_area(a, b, tol):
     """Exact area (m2) where triangles of a and b lie on the same plane (every corner within tol of the other's plane,
-    normals within ~8 degrees and the same way round) and overlap: z-fighting, however narrow the strip. Opposed faces
-    (two solids touching face to face) and merely adjacent faces contribute nothing."""
+    normals within ~8 degrees, same way round, or opposed when at least one of the two islands is an open shell) and
+    overlap: z-fighting, however narrow the strip. Opposed faces of two closed solids (touching face to face) and merely
+    adjacent faces contribute nothing."""
+    opposed_ok = not (a.closed and b.closed)
     # broad phase: triangle boxes padded by tol (BVHTree.overlap tests exact triangle intersection, which two sheets
     # 0.5 mm apart never have)
     ta_all, tb_all = a.verts[a.tris], b.verts[b.tris]
@@ -333,7 +339,8 @@ def _coplanar_overlap_area(a, b, tol):
         if la == 0 or lb == 0:
             continue
         na, nb = na / la, nb / lb
-        if float(na @ nb) < 0.99:
+        d = float(na @ nb)
+        if d < 0.99 and not (opposed_ok and d < -0.99):
             continue
         if np.abs((tb - ta[0]) @ na).max() > tol or np.abs((ta - tb[0]) @ nb).max() > tol:
             continue

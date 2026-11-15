@@ -517,14 +517,15 @@ def test_f1_active_render_layer():
 
 def test_f2_partial_coplanar_overlap():
     """Review finding 2: squares offset 0.5 m sideways and 0.5 mm up overlap on half their area: coincident, not PASS."""
-    def pair(name, dx, dz, flip=False):
-        v = [(-.5, -.5, 0), (.5, -.5, 0), (.5, .5, 0), (-.5, .5, 0)]
+    def pair(name, dx, dz, flip=False, sz=1.0):
+        v = [(-.5 * sz, -.5 * sz, 0), (.5 * sz, -.5 * sz, 0), (.5 * sz, .5 * sz, 0), (-.5 * sz, .5 * sz, 0)]
         v = v + [(x + dx, y, z + dz) for x, y, z in v]
         second = (4, 7, 6, 5) if flip else (4, 5, 6, 7)
         return mesh_obj(name, v, [(0, 1, 2, 3), second], None, material=False)
     out = {}
     try:
         for name, args in (("half", (0.5, 0.0005)), ("quarter", (0.7, 0.0005)), ("narrow", (0.9, 0.0005)),("apart_2mm", (0.5, 0.002)),
+                           ("opposed_open", (0.5, 0.0005, True)), ("sliver_below_floor", (0.00995, 0.0005, False, 0.01)),
                            ("side_by_side", (1.5, 0.0))):
             ob = pair("pc_" + name, *args)
             r = run("clash_audit.py", {"objects": [ob.name], "within_mesh": True})
@@ -534,6 +535,8 @@ def test_f2_partial_coplanar_overlap():
     assert out["half"]["verdict"] == "FAIL" and out["half"]["kinds"] == ["coincident"], out
     assert out["quarter"]["verdict"] == "FAIL", out
     assert out["narrow"]["verdict"] == "FAIL" and out["narrow"]["kinds"] == ["coincident"], out  # a 10% strip
+    assert out["opposed_open"]["verdict"] == "FAIL" and out["opposed_open"]["kinds"] == ["coincident"], out
+    assert out["sliver_below_floor"]["verdict"] == "PASS", out  # 5e-7 m2 overlap: under the documented 1e-6 m2 floor
     assert out["apart_2mm"]["verdict"] == "PASS" and out["side_by_side"]["verdict"] == "FAIL", out  # side_by_side: floating
     return out
 
