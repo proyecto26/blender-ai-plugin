@@ -1,14 +1,16 @@
 """Read-only armature + skinning audit. Run it after skinning, then run `stress_check.py`.
 
 Per-check verdicts are PASS, WARN, FAIL or NOT_CHECKED. A mesh is FAIL if any check FAILs, else WARN if any check
-WARNs or is NOT_CHECKED, else PASS; the overall verdict is the worst mesh/armature check. Measuring nothing is FAIL.
+WARNs or is NOT_CHECKED, else PASS; the overall verdict is the worst mesh/armature check. Measuring nothing is FAIL: an armature with no bones (`bones_present`) or a mesh with no vertices
+(`vertices_present`) fails.
 
 Checks on the armature: `zero_length_bones` (FAIL: shorter than 0.1 mm), `armature_transform` (WARN: unapplied scale or rotation, which
 breaks exports and constraints), `side_pairs` (WARN: a bone named for one side with no partner; prefixes `L_`/`R_`
 and `Left_`, and suffixes `.L`/`_L`/`-L`/`.Left` are all accepted), `mirrored_z_axes` (FAIL: a position-mirrored pair
 whose bone Z axes are more than 3 degrees apart once mirrored; pairs that are not position-mirrored are listed as
 `asymmetric_pairs` and never fail), `naming` (WARN).
-Checks per skinned mesh: `armature_modifier` (FAIL: needs an enabled Armature modifier whose object is THIS armature),
+Checks per skinned mesh: `armature_modifier` (FAIL: needs an enabled Armature modifier whose object is THIS armature and that binds by
+vertex groups or bone envelopes; one with both off deforms nothing),
 `non_finite_weights` (FAIL), `weight_sums` (FAIL: sum over deform groups off from 1 by more than 0.001 on any
 weighted vertex), `unweighted_vertices` (WARN), `influences` (WARN: more than `max_influences`),
 `vertex_groups_without_bone` (WARN), `deform_bones_without_weights` (WARN).
@@ -89,6 +91,7 @@ def _worst(checks):
 def _armature_checks(arm, max_influences):
     bones = arm.data.bones
     checks = {}
+    checks["bones_present"] = _check("PASS" if len(bones) else "FAIL", count=len(bones))
     zero = sorted(b.name for b in bones if b.length < 1e-4)
     checks["zero_length_bones"] = _check("FAIL" if zero else "PASS", bones=zero)
     scale = tuple(arm.scale)
@@ -135,7 +138,7 @@ def _mesh_checks(obj, arm, max_influences):
     deform = {b.name for b in bones if b.use_deform}
     groups = {vg.index: vg.name for vg in obj.vertex_groups}
     mods = [md for md in obj.modifiers if md.type == "ARMATURE" and md.object == arm]
-    enabled = [md for md in mods if md.show_viewport]
+    enabled = [md for md in mods if md.show_viewport and (md.use_vertex_groups or md.use_bone_envelopes)]
     unweighted = over = nonfinite = bad_sum = 0
     weighted_groups = set()
     worst_sum = 0.0
@@ -161,8 +164,10 @@ def _mesh_checks(obj, arm, max_influences):
                 over += 1
     no_bone = sorted(set(groups.values()) - {b.name for b in bones})
     checks = {
+        "vertices_present": _check("PASS" if len(obj.data.vertices) else "FAIL", count=len(obj.data.vertices)),
         "armature_modifier": _check("PASS" if enabled else "FAIL", modifiers_targeting_this_armature=len(mods),
-                                    enabled=len(enabled)),
+                                    enabled_and_binding=len(enabled),
+                                    note="a modifier needs show_viewport and vertex groups or bone envelopes on"),
         "non_finite_weights": _check("FAIL" if nonfinite else "PASS", count=nonfinite),
         "weight_sums": _check("FAIL" if bad_sum else "PASS", vertices_off=bad_sum,
                               worst_deviation=round(worst_sum, 5), tolerance=WEIGHT_SUM_TOL),
