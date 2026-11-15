@@ -6,7 +6,8 @@ overlapping UVs, empty material slots, naming prefix, origin placement, and scal
 WARN, FAIL or NOT_CHECKED (it could not measure; the reason is in `detail`).
 
 Verdict rule: an object is FAIL if any check fails, else WARN if any check warns or was NOT_CHECKED, else PASS;
-the overall verdict is the worst object. A run that measured no mesh is FAIL.
+the overall verdict is the worst object. A mesh with no faces fails `geometry_present`, and a run that measured
+no geometry is FAIL.
 
 Geometry checks use the evaluated mesh in world space, and lengths and areas are converted to metres with the
 scene `unit_settings.scale_length` first, so the same physical asset gets the same verdict at scale 1.0 and 0.01.
@@ -272,6 +273,9 @@ def _check(obj, tri_budget, prefix, max_size_m, depsgraph, allow_overlap=False):
                     u, v = loop[uv_layer].uv
                     if u < -1e-4 or u > 1.0001 or v < -1e-4 or v > 1.0001:
                         uv_oob += 1
+        add("geometry_present", "PASS" if len(bm.faces) else "FAIL",
+            f"{len(bm.faces)} face(s), {len(bm.verts)} vert(s)" + ("" if len(bm.faces) else
+                                                                    ": an empty mesh is never a pass"))
         _geometry(bm, obj.matrix_world, scale_length, add)
         if uv_layer and len(bm.faces):
             _uv_checks(bm, uv_layer, allow_overlap, add)
@@ -356,12 +360,14 @@ def main(objects=None, tri_budget=None, prefix="SM_", max_size_m=50.0, evidence_
                             "not_checked": [n for n, c in checks.items() if c["status"] == "NOT_CHECKED"]}
         if RANK[worst] > RANK[overall]:
             overall = worst
-    verdict = overall if report else "FAIL"
+    measured = any(r["checks"]["geometry_present"]["status"] == "PASS" for r in report.values())
+    verdict = overall if measured else "FAIL"  # nothing measured is FAIL: counts geometry, not report entries
     if evidence_path:
         _write_evidence(evidence_path, verdict, {"objects": {n: r["verdict"] for n, r in report.items()},
                                                  "tris": sum(r["tris"] for r in report.values())})
     result = {"verdict": verdict, "objects": report,
-              "note": "" if report else "no mesh objects to validate"}
+              "note": "" if measured else ("no mesh objects to validate" if not report
+                                           else "no mesh geometry was measured (every mesh has no faces)")}
     if result_path:
         _write_result(result_path, result, run_id)
     return result

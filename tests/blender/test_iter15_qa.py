@@ -689,6 +689,32 @@ def test_i_fix_asset_edit_mode_entry():
     return out
 
 
+def test_j_empty_mesh_fails():
+    """Closing finding: a mesh with no vertices, edges or faces is never a pass, alone or beside a good mesh."""
+    empty_me = bpy.data.meshes.new("SM_Empty")
+    mat = bpy.data.materials.new("MAT_SM_Empty")
+    empty_me.materials.append(mat)
+    empty_me.uv_layers.new(name="UVMap")
+    empty = bpy.data.objects.new("SM_Empty", empty_me)
+    bpy.context.scene.collection.objects.link(empty)
+    CREATED["objects"].append(empty)
+    CREATED["meshes"].append(empty_me)
+    CREATED["materials"].append(mat)
+    good = mesh_obj("SM_JGood", CUBE_V, CUBE_F, cube_uvs())
+    try:
+        alone = run("validate_asset.py", {"objects": [empty.name]})
+        both = run("validate_asset.py", {"objects": [empty.name, good.name]})
+        solo_good = run("validate_asset.py", {"objects": [good.name]})
+    finally:
+        cleanup()
+    assert alone["verdict"] == "FAIL" and alone["objects"]["SM_Empty"]["checks"]["geometry_present"]["status"] == "FAIL", alone
+    assert alone["note"], alone
+    assert both["verdict"] == "FAIL" and both["objects"]["SM_Empty"]["verdict"] == "FAIL", both
+    assert both["objects"]["SM_JGood"]["verdict"] == "PASS", both["objects"]["SM_JGood"]
+    assert solo_good["verdict"] == "PASS" and solo_good["note"] == "", solo_good
+    return {"alone": alone["verdict"], "with_good_mesh": both["verdict"], "good_alone": solo_good["verdict"]}
+
+
 def test_g3_smart_uv_cleanup_failure_restores_active():
     """Round 2 finding 3: when the cleanup mode switch is CANCELLED, the active object is still put back, then it raises."""
     ob = mesh_obj("cf_target", CUBE_V, CUBE_F, None, material=False)
@@ -751,7 +777,8 @@ def main():
              test_f1_active_render_layer, test_f2_partial_coplanar_overlap, test_f3_empty_audit_result_file,
              test_f4_smart_uv_entry_mode, test_f5_doc_examples_check_results,
              test_g2_clash_scale_length, test_g3_smart_uv_cleanup_failure_restores_active,
-             test_h_within_mesh_names, test_i_fix_asset_edit_mode_entry)
+             test_h_within_mesh_names, test_i_fix_asset_edit_mode_entry,
+             test_j_empty_mesh_fails)
     for fn in tests:
         try:
             checks[fn.__name__] = {"ok": True, "data": fn()}
