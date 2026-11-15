@@ -619,8 +619,9 @@ def test_g2_clash_scale_length():
             # two separate objects: a cube pair 3 mm apart is floating at 1 mm contact tolerance, touching at 5 mm
             a = mesh_obj(f"sl_a{int(s * 100)}", CUBE_V, CUBE_F, None, k=k, material=False)
             b = mesh_obj(f"sl_b{int(s * 100)}", [(x + 1.003, y, z) for x, y, z in CUBE_V], CUBE_F, None, k=k, material=False)
-            row["gap_3mm_default"] = run("clash_audit.py", {"objects": [a.name, b.name]})["verdict"]
-            row["gap_3mm_wide"] = run("clash_audit.py", {"objects": [a.name, b.name], "gap_max_m": 0.01})["verdict"]
+            # the 3 mm gap crosses the contact threshold between 1 mm (floating) and 5 mm (touching), at either scale
+            row["gap_3mm_limit_1mm"] = run("clash_audit.py", {"objects": [a.name, b.name], "gap_max_m": 0.001})["verdict"]
+            row["gap_3mm_limit_5mm"] = run("clash_audit.py", {"objects": [a.name, b.name], "gap_max_m": 0.005})["verdict"]
             seen[s] = row
             cleanup()
     finally:
@@ -628,8 +629,40 @@ def test_g2_clash_scale_length():
         cleanup()
     assert seen[1.0] == seen[0.01], seen
     assert seen[1.0]["flat_0.5mm"] == "FAIL" and seen[1.0]["flat_2mm"] == "PASS", seen
-    assert seen[1.0]["gap_3mm_default"] == "PASS" and seen[1.0]["gap_3mm_wide"] == "PASS", seen
+    assert seen[1.0]["gap_3mm_limit_1mm"] == "FAIL" and seen[1.0]["gap_3mm_limit_5mm"] == "PASS", seen
     return seen
+
+
+def test_h_within_mesh_names():
+    """With within_mesh the records are `Object#n`; ignore_pairs and anchor still match the original object names."""
+    def cube_at(dx):
+        return [(x + dx, y, z) for x, y, z in CUBE_V]
+    two = lambda name, dxs: mesh_obj(name, sum((cube_at(d) for d in dxs), []),  # noqa: E731
+                                     [tuple(i + 8 * n for i in f) for n in range(len(dxs)) for f in CUBE_F], None,
+                                     material=False)
+    out = {}
+    try:
+        a = mesh_obj("nm_A", CUBE_V, CUBE_F, None, material=False)
+        b = two("nm_B", (0.5, -0.5))               # two islands, each crossing A, touching each other face to face
+        plain = run("clash_audit.py", {"objects": [a.name, b.name], "within_mesh": True})
+        ignored = run("clash_audit.py", {"objects": [a.name, b.name], "within_mesh": True,
+                                         "ignore_pairs": [[a.name, b.name]]})
+        out["ignore"] = {"without": plain["verdict"], "with": ignored["verdict"], "clashes_left": len(ignored["clashes"])}
+        cleanup()
+        x1 = mesh_obj("nm_X1", CUBE_V, CUBE_F, None, material=False)
+        x2 = mesh_obj("nm_X2", cube_at(1.0), CUBE_F, None, material=False)     # touches X1: a 2-object group
+        y = two("nm_Y", (10.0, 20.0))                                           # two islands far from everything
+        default = run("clash_audit.py", {"objects": [x1.name, x2.name, y.name], "within_mesh": True,
+                                         "require_connected": False})
+        anchored = run("clash_audit.py", {"objects": [x1.name, x2.name, y.name], "within_mesh": True,
+                                          "require_connected": False, "anchor": y.name})
+        out["anchor"] = {"default_main": default["main_group"], "anchored_main": anchored["main_group"]}
+    finally:
+        cleanup()
+    assert out["ignore"]["without"] == "FAIL" and out["ignore"]["with"] == "PASS", out
+    assert out["anchor"]["default_main"] == ["nm_X1", "nm_X2"], out
+    assert out["anchor"]["anchored_main"][0].startswith("nm_Y#"), out
+    return out
 
 
 def test_g3_smart_uv_cleanup_failure_restores_active():
@@ -693,7 +726,8 @@ def main():
              test_d_clash_within_mesh, test_b1_result_file, test_a13_fix_asset, test_b2_rows, test_docs_headless,
              test_f1_active_render_layer, test_f2_partial_coplanar_overlap, test_f3_empty_audit_result_file,
              test_f4_smart_uv_entry_mode, test_f5_doc_examples_check_results,
-             test_g2_clash_scale_length, test_g3_smart_uv_cleanup_failure_restores_active)
+             test_g2_clash_scale_length, test_g3_smart_uv_cleanup_failure_restores_active,
+             test_h_within_mesh_names)
     for fn in tests:
         try:
             checks[fn.__name__] = {"ok": True, "data": fn()}

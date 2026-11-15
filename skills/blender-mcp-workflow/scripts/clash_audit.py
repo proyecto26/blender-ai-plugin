@@ -43,8 +43,9 @@ ARGS:
     gap_max_m          (float) largest gap that still counts as contact for the floating-part grouping (default 0.005)
     min_depth_m        (float) penetration at or below this is touching, not a clash (default 0.001)
     require_connected  (bool)  more than one contact group fails the audit (default True)
-    anchor             (str|None) object whose group is the main one; default = the group with most objects, then tris
-    ignore_pairs       (list[[str, str]]) pairs allowed to overlap (a bolt in its hole); they still join a group
+    anchor             (str|None) object whose group is the main one (with within_mesh, any island of it); default = the group with most objects, then tris
+    ignore_pairs       (list[[str, str]]) pairs allowed to overlap (a bolt in its hole); they still join a group.
+                       With within_mesh a name covers every island of that object (or one island, `Object#2`)
     max_samples        (int) cap on sample points per object and direction (default 4000; sets `sampled` when hit)
     within_mesh        (bool)  opt-in (default False): treat the vertex-connected islands of each mesh like separate
                        objects (named `<object>#1`, `<object>#2`), so floating parts, crossing islands and coplanar
@@ -534,6 +535,11 @@ def main(objects=None, gap_max_m=0.005, min_depth_m=0.001, require_connected=Tru
     if gap_max_m < 0 or tol < 0 or cap < 100:
         raise ValueError("gap_max_m and min_depth_m must be >= 0 and max_samples >= 100")
     ignore = {frozenset(p) for p in (ignore_pairs or [])}
+
+    def is_ignored(a, b):
+        # a pair may name the audited object or one island of it (`Object#2`); an object covers all its islands
+        return bool({frozenset((a.name, b.name)), frozenset((a.src, b.src))} & ignore)
+
     objs = _targets(objects)
     editing = [o.name for o in objs if o.type == "MESH" and o.data.is_editmode]
     if editing:
@@ -621,7 +627,7 @@ def main(objects=None, gap_max_m=0.005, min_depth_m=0.001, require_connected=Tru
                                 depth, how = d, src.name
                         if depth > tol:
                             break
-                    if frozenset((a.name, b.name)) in ignore:
+                    if is_ignored(a, b):
                         pass
                     elif not measurable:
                         clashes.append({"a": a.name, "b": b.name, "depth_m": None, "depth": "not_measured",
@@ -636,12 +642,12 @@ def main(objects=None, gap_max_m=0.005, min_depth_m=0.001, require_connected=Tru
                 elif min(_on_surface_fraction(a, b, dup_tol, cap, rng),
                          _on_surface_fraction(b, a, dup_tol, cap, rng)) >= 0.9:
                     joined = True  # duplicate geometry in the same place: nothing crosses, nothing is inside
-                    if frozenset((a.name, b.name)) not in ignore:
+                    if not is_ignored(a, b):
                         clashes.append({"a": a.name, "b": b.name, "depth_m": None, "depth": "coincident",
                                         "reason": "the two meshes occupy the same surface: duplicate geometry"})
                 elif a.src == b.src and _coplanar_overlap_area(a, b, tol) >= COPLANAR_MIN_AREA_M2:
                     joined = True  # islands of one mesh whose faces overlap on the same plane, even partly (z-fighting)
-                    if frozenset((a.name, b.name)) not in ignore:
+                    if not is_ignored(a, b):
                         clashes.append({"a": a.name, "b": b.name, "depth_m": None, "depth": "coincident",
                                         "reason": "faces of the two islands overlap on the same plane "
                                                   f"(within {tol:g} m, same orientation): coplanar overlap"})
@@ -658,7 +664,7 @@ def main(objects=None, gap_max_m=0.005, min_depth_m=0.001, require_connected=Tru
                         sampled_any = sampled_any or s
                         if count:
                             joined = True
-                            if frozenset((a.name, b.name)) not in ignore:
+                            if not is_ignored(a, b):
                                 contained.append({"inner": inner.name, "outer": outer.name, "depth_m": round(depth, 5),
                                                   "fraction_inside": round(count / total, 3)})
             if not joined:
@@ -674,7 +680,7 @@ def main(objects=None, gap_max_m=0.005, min_depth_m=0.001, require_connected=Tru
         groups.setdefault(find(i), []).append(r)
     glist = sorted(groups.values(), key=lambda g: (-len(g), -sum(len(r.tris) for r in g), g[0].name))
     if anchor:
-        glist.sort(key=lambda g: anchor not in [r.name for r in g])
+        glist.sort(key=lambda g: anchor not in [r.src for r in g])
     main_group = glist[0]
     floating = []
     for g in glist[1:]:
