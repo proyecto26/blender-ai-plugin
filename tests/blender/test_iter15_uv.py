@@ -543,6 +543,53 @@ def test_s_coverage_sub_sample_strip():
     return {"tiles": e["udim_tiles"], "mean": e["uv_coverage"]}
 
 
+def test_s_coverage_no_grid_aliasing():
+    reset()
+    faces, uvs = [], []
+    for i in range(512):
+        u = (i + 0.5137) / 512
+        faces.append([(u - 5e-5, 0, 0), (u + 5e-5, 0, 0), (u + 5e-5, 1, 0), (u - 5e-5, 1, 0)])
+        uvs.append([(u - 5e-5, 0), (u + 5e-5, 0), (u + 5e-5, 1), (u - 5e-5, 1)])
+    quads("Comb", faces, {"UVMap": uvs})
+    e = uvc(objects=["Comb"])["objects"]["Comb"]
+    assert abs(e["uv_coverage"] - 0.0512) < 0.005, e["uv_coverage"]
+    assert e["checks"]["coverage"]["status"] == "WARN", e["checks"]["coverage"]
+    # horizontal combs too (sampled direction): jittered rows keep the estimate unbiased
+    reset()
+    faces, uvs = [], []
+    for i in range(512):
+        v = (i + 0.5137) / 512
+        faces.append([(0, v - 5e-5, 0), (1, v - 5e-5, 0), (1, v + 5e-5, 0), (0, v + 5e-5, 0)])
+        uvs.append([(0, v - 5e-5), (1, v - 5e-5), (1, v + 5e-5), (0, v + 5e-5)])
+    quads("CombH", faces, {"UVMap": uvs})
+    h = uvc(objects=["CombH"])["objects"]["CombH"]
+    assert abs(h["uv_coverage"] - 0.0512) < 0.03 and h["checks"]["coverage"]["status"] == "WARN", h["uv_coverage"]
+    return {"vertical": e["uv_coverage"], "horizontal": h["uv_coverage"]}
+
+
+def test_s_non_finite_uvs():
+    reset()
+    nan = float("nan")
+    bm = bmesh.new()
+    uv = bm.loops.layers.uv.new("UVMap")
+    q = bm.faces.new([bm.verts.new(p) for p in sq(0, 0, 1)])
+    for l, c in zip(q.loops, uvsq(0, 0, 1)):
+        l[uv].uv = c
+    t = bm.faces.new([bm.verts.new(p) for p in ((3, 0, 0), (4, 0, 0), (3, 1, 0))])
+    for l, c in zip(t.loops, ((nan, 0), (0, 0), (0, 1))):
+        l[uv].uv = c
+    me = bpy.data.meshes.new("Nan")
+    bm.to_mesh(me)
+    bm.free()
+    make_obj("Nan", me)
+    r = uvc(objects=["Nan"])
+    e = r["objects"]["Nan"]
+    assert r["verdict"] == "FAIL" and e["checks"]["uv_finite"]["status"] == "FAIL", e["checks"]
+    assert e["non_finite_loops"] == 1 and e["excluded_faces"] == 1, e
+    json.dumps(r, allow_nan=False)  # no NaN / Infinity tokens anywhere in the result
+    return {"non_finite_loops": e["non_finite_loops"], "excluded": e["excluded_faces"]}
+
+
 def test_s_lightmap_docs_match_behaviour():
     root = os.path.normpath(os.path.join(SKILLS, "uv-workflow"))
     skill = open(os.path.join(root, "SKILL.md"), encoding="utf8").read()
@@ -807,6 +854,49 @@ def test_s_scatter_refuses_authored_uvs():
     raise AssertionError("a mesh with authored UVs was adopted and rewritten")
 
 
+def test_s_scatter_refuses_authored_face_data():
+    out = {}
+    for label in ("material_index", "extra_slots", "attribute"):
+        _scatter_setup()
+        foreign = _old_style_prop_mesh("ME_Prop_box", (0.6, 0.6, 0.6))
+        m1 = bpy.data.materials.new("Authored1")
+        m2 = bpy.data.materials.new("Authored2")
+        if label == "material_index":
+            foreign.materials.append(m1)
+            foreign.materials.append(m2)
+            foreign.polygons[0].material_index = 1
+        elif label == "extra_slots":
+            foreign.materials.append(m1)
+            foreign.materials.append(m2)
+        else:
+            foreign.attributes.new("authored", "FLOAT", "FACE")
+        make_obj("Holder", foreign)
+        slots0 = [m.name if m else None for m in foreign.materials]
+        idx0 = [p.material_index for p in foreign.polygons]
+        attrs0 = sorted(a.name for a in foreign.attributes)
+        try:
+            run("set-dressing", "scatter_props.py", {"target": "SM_T", "count": 2, "kinds": ["box"], "ground": "Ground"})
+        except ValueError as exc:
+            assert [m.name if m else None for m in foreign.materials] == slots0
+            assert [p.material_index for p in foreign.polygons] == idx0
+            assert sorted(a.name for a in foreign.attributes) == attrs0
+            out[label] = str(exc)[:40]
+            continue
+        raise AssertionError(f"{label}: authored face data was adopted and rewritten")
+    return out
+
+
+def test_s_scatter_adopts_legacy_with_its_material():
+    _scatter_setup()
+    old = _old_style_prop_mesh("ME_Prop_box", (0.6, 0.6, 0.6))
+    mat = bpy.data.materials.new("MAT_Prop_box")  # what the legacy script appended
+    old.materials.append(mat)
+    r = run("set-dressing", "scatter_props.py", {"target": "SM_T", "count": 2, "kinds": ["box"], "ground": "Ground"})
+    me = bpy.data.objects[r["props"][0]["name"]].data
+    assert me.name == "ME_Prop_box" and [m.name for m in me.materials] == ["MAT_Prop_box"]
+    return {"slots": [m.name for m in me.materials]}
+
+
 def test_s_scatter_preflight_keeps_previous_props():
     _scatter_setup()
     r1 = run("set-dressing", "scatter_props.py", {"target": "SM_T", "count": 3, "kinds": ["box"], "ground": "Ground"})
@@ -843,6 +933,8 @@ TESTS = (test_a1_measure_only_no_uv, test_a2_union_coverage, test_c_stacked_and_
          test_s_shared_mesh_unwrap, test_s_lightmap_only_rerun, test_s_edit_mode_and_selection_restored,
          test_s_margin_px_enforced, test_s_run_id_in_returned_result, test_s_scatter_reuses_old_mesh,
          test_s_scatter_refuses_foreign_mesh,
+         test_s_coverage_no_grid_aliasing, test_s_non_finite_uvs, test_s_scatter_refuses_authored_face_data,
+         test_s_scatter_adopts_legacy_with_its_material,
          test_s_coverage_sub_sample_strip, test_s_lightmap_docs_match_behaviour, test_s_scatter_refuses_authored_uvs,
          test_s_coverage_counts_only_covered_tiles, test_s_loops_outside_counts_polygon_loops,
          test_s_scatter_refuses_same_vertices_other_topology, test_s_scatter_preflight_keeps_previous_props,
