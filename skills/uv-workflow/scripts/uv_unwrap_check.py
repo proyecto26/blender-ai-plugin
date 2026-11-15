@@ -103,11 +103,11 @@ def _edit_ops(obj, fn):
     prev_active = view_layer.objects.active
     selected = [o for o in view_layer.objects if o.select_get()]
     saved = _get_selection(obj.data)
-    for o in selected:
-        o.select_set(False)  # Edit Mode would otherwise take every selected object along
-    obj.select_set(True)
-    view_layer.objects.active = obj
     try:
+        for o in selected:
+            o.select_set(False)  # Edit Mode would otherwise take every selected object along
+        obj.select_set(True)
+        view_layer.objects.active = obj
         with bpy.context.temp_override(active_object=obj, object=obj, selected_objects=[obj],
                                        selected_editable_objects=[obj]):
             bpy.ops.object.mode_set(mode="EDIT")
@@ -120,7 +120,8 @@ def _edit_ops(obj, fn):
             if obj.mode != "OBJECT":
                 bpy.ops.object.mode_set(mode="OBJECT")
         _set_selection(obj.data, saved)
-        obj.select_set(False)
+        if obj.name in view_layer.objects:
+            obj.select_set(False)
         for o in selected:
             o.select_set(True)
         view_layer.objects.active = prev_active
@@ -629,6 +630,11 @@ def _users(me):
 def _object_in_object_mode(obj, a):
     me = obj.data
     entry = {}
+    bpy.context.view_layer.update()  # objects linked a moment ago only join the view layer after an update
+    if (a["unwrap"] or a["lightmap"]) and obj.name not in bpy.context.view_layer.objects:
+        return {"error": f"{obj.name} is not in the active view layer (its collection is excluded); "
+                         "UV operators cannot edit it. Include the collection or measure only",
+                "verdict": "FAIL"}
     if (a["unwrap"] or a["lightmap"]) and len(_users(me)) > 1:
         others = [n for n in _users(me) if n != obj.name]
         if not a["make_single_user"]:
