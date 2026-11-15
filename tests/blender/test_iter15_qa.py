@@ -665,6 +665,30 @@ def test_h_within_mesh_names():
     return out
 
 
+def test_i_fix_asset_edit_mode_entry():
+    """Closing finding: an object already in Edit Mode is flushed to Object Mode before any data change, so applying
+    the scale keeps the world size (the stale Edit Mode mesh used to overwrite the baked one), and Edit Mode comes back."""
+    out = {}
+    try:
+        for uv in ("smart", "box", ""):
+            ob = mesh_obj(f"em_{uv or 'none'}", CUBE_V, CUBE_F, None, scale=(2, 1, 1), material=False)
+            bpy.context.view_layer.objects.active = ob
+            assert bpy.ops.object.mode_set(mode="EDIT") == {"FINISHED"}
+            r = run("fix_asset.py", {"objects": [ob.name], "uv": uv})["objects"][ob.name]
+            mode_after = ob.mode
+            assert bpy.ops.object.mode_set(mode="OBJECT") == {"FINISHED"}
+            dims = [round(d, 4) for d in ob.dimensions]
+            out[uv or "none"] = {"mode_after": mode_after, "world_dims": dims, "scale": [round(s, 4) for s in ob.scale],
+                                 "applied": r["applied"], "uv_added": r["uv_added"]}
+            assert dims == [2.0, 1.0, 1.0] and out[uv or "none"]["scale"] == [1.0, 1.0, 1.0], out
+            assert mode_after == "EDIT" and r["applied"] is True, out
+    finally:
+        if bpy.context.object and bpy.context.object.mode != "OBJECT":
+            bpy.ops.object.mode_set(mode="OBJECT")
+        cleanup()
+    return out
+
+
 def test_g3_smart_uv_cleanup_failure_restores_active():
     """Round 2 finding 3: when the cleanup mode switch is CANCELLED, the active object is still put back, then it raises."""
     ob = mesh_obj("cf_target", CUBE_V, CUBE_F, None, material=False)
@@ -727,7 +751,7 @@ def main():
              test_f1_active_render_layer, test_f2_partial_coplanar_overlap, test_f3_empty_audit_result_file,
              test_f4_smart_uv_entry_mode, test_f5_doc_examples_check_results,
              test_g2_clash_scale_length, test_g3_smart_uv_cleanup_failure_restores_active,
-             test_h_within_mesh_names)
+             test_h_within_mesh_names, test_i_fix_asset_edit_mode_entry)
     for fn in tests:
         try:
             checks[fn.__name__] = {"ok": True, "data": fn()}
