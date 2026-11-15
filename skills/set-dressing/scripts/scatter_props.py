@@ -2,7 +2,9 @@
 around a target object. Props sit on the ground via raycast, never intersect the target's
 bounding box or each other, share one mesh per kind, and are named PROP_<Cluster>_<kind>_NN.
 Placement retries until the requested count is reached (or raises), so the count is exact.
-Re-running removes only the props this script made in the same collection.
+Re-running removes only the props this script made in the same collection. A mesh named
+ME_Prop_<kind> that lacks this script's tag is refused before anything is removed (rename or delete it by hand);
+meshes that carry the tag are rebuilt in place when the UV layout is out of date.
 
     import runpy
     result = runpy.run_path("<skill_dir>/scripts/scatter_props.py", init_globals={"ARGS": {
@@ -114,55 +116,13 @@ def _shape(kind):
     return bm
 
 
-def _same_shape(me, bm):
-    """True when mesh `me` is what an earlier version of this script generated: same vertices, the same
-    faces (vertex indices) and only the one "UVMap" channel it wrote."""
-    if len(me.vertices) != len(bm.verts) or len(me.polygons) != len(bm.faces):
-        return False
-    if [l.name for l in me.uv_layers] != ["UVMap"]:
-        return False
-    if [tuple(p.vertices) for p in me.polygons] != [tuple(v.index for v in f.verts) for f in bm.faces]:
-        return False
-    # the earlier script left Blender's default UVs, no material indices and at most its one material slot:
-    # anything else is authored data
-    if any(p.material_index != 0 for p in me.polygons):
-        return False
-    if len(me.materials) > 1 or (len(me.materials) == 1 and (
-            me.materials[0] is None or not me.materials[0].name.startswith("MAT_Prop_"))):
-        return False
-    ref = bpy.data.meshes.new("_scatter_ref")
-    try:
-        bm.to_mesh(ref)
-        ref.uv_layers.new(name="UVMap")
-        if len(ref.loops) != len(me.loops):
-            return False
-        extra = {a.name for a in me.attributes if not a.name.startswith(".")} - \
-                {a.name for a in ref.attributes if not a.name.startswith(".")}
-        if extra:
-            return False
-        return all(abs(a.vector[0] - b.vector[0]) <= 1e-6 and abs(a.vector[1] - b.vector[1]) <= 1e-6
-                   for a, b in zip(me.uv_layers[0].uv, ref.uv_layers[0].uv)) and _same_verts(me, bm)
-    finally:
-        bpy.data.meshes.remove(ref)
-
-
-def _same_verts(me, bm):
-    mine = sorted(tuple(round(c, 4) for c in v.co) for v in me.vertices)
-    ours = sorted(tuple(round(c, 4) for c in v.co) for v in bm.verts)
-    return mine == ours
-
-
 def _preflight(kind):
-    """Refuse (before anything is changed) a mesh named ME_Prop_<kind> that this script did not make."""
+    """Refuse, before anything is changed, a mesh named ME_Prop_<kind> that does not carry this script's tag.
+    The script never adopts, rewrites or deletes a mesh it did not make."""
     me = bpy.data.meshes.get(f"ME_Prop_{kind}")
-    if me is None or me.get("set_dressing"):
-        return
-    bm = _shape(kind)
-    ok = _same_shape(me, bm)
-    bm.free()
-    if not ok:
-        raise ValueError(f"mesh {me.name!r} already exists and was not made by this script; "
-                         "rename or remove it, or dress with a different kind")
+    if me is not None and not me.get("set_dressing"):
+        raise ValueError(f"mesh {me.name!r} already exists and this script did not make it; rename it, or delete "
+                         "it by hand (the script never deletes it), then run again")
 
 
 def _mesh(kind):

@@ -796,18 +796,38 @@ def _scatter_setup():
     bpy.context.object.name = "SM_T"
 
 
-def test_s_scatter_reuses_old_mesh():
+def test_s_scatter_refuses_untagged_legacy_mesh():
+    """An untagged ME_Prop_<kind> is refused even when it is exactly what the old script made."""
     _scatter_setup()
     old = _old_style_prop_mesh("ME_Prop_box", (0.6, 0.6, 0.6))
-    probe = make_obj("Probe", old)
+    make_obj("Probe", old)
     pre = uvc(objects=["Probe"])["objects"]["Probe"]
-    assert pre["overlap_pairs"] > 0, f"fixture is not an old-style defective mesh: {pre['overlap_pairs']}"
-    r = run("set-dressing", "scatter_props.py", {"target": "SM_T", "count": 3, "kinds": ["box"], "ground": "Ground"})
-    names = [p["name"] for p in r["props"]]
-    e = uvc(objects=names)["objects"][names[0]]
-    assert e["overlap_pairs"] == 0 and e["collapsed_faces"] == 0 and e["islands"] == 6, e
-    assert bpy.data.objects[names[0]].data.name == "ME_Prop_box", "the old mesh was replaced by a new name"
-    return {"rebuilt_islands": e["islands"]}
+    assert pre["overlap_pairs"] > 0, f"fixture is not an old-style mesh: {pre['overlap_pairs']}"
+    uv0 = [tuple(d.vector) for d in old.uv_layers[0].uv]
+    try:
+        run("set-dressing", "scatter_props.py", {"target": "SM_T", "count": 3, "kinds": ["box"], "ground": "Ground"})
+    except ValueError as exc:
+        msg = str(exc)
+        assert "ME_Prop_box" in msg and "rename" in msg and "delete" in msg, msg
+        assert [tuple(d.vector) for d in old.uv_layers[0].uv] == uv0 and "ME_Prop_box" in bpy.data.meshes
+        assert not [o for o in bpy.data.objects if o.name.startswith("PROP_")]
+        return {"refused": msg[:90]}
+    raise AssertionError("an untagged legacy mesh was adopted")
+
+
+def test_s_scatter_rebuilds_own_tagged_mesh():
+    """A mesh carrying the script's own tag from an older UV layout is rebuilt in place."""
+    _scatter_setup()
+    r1 = run("set-dressing", "scatter_props.py", {"target": "SM_T", "count": 2, "kinds": ["box"], "ground": "Ground"})
+    me = bpy.data.meshes["ME_Prop_box"]
+    me["set_dressing_uv"] = 0  # pretend an older layout
+    for d in me.uv_layers[0].uv:
+        d.vector = (0.5, 0.5)  # collapsed, as a defective older layout would be
+    r2 = run("set-dressing", "scatter_props.py", {"target": "SM_T", "count": 2, "kinds": ["box"], "ground": "Ground"})
+    e = uvc(objects=[r2["props"][0]["name"]])["objects"][r2["props"][0]["name"]]
+    assert bpy.data.meshes["ME_Prop_box"] is me and me["set_dressing_uv"] == 1
+    assert e["collapsed_faces"] == 0 and e["overlap_pairs"] == 0 and e["islands"] == 6, e
+    return {"islands": e["islands"]}
 
 
 def _cube_like_foreign(name, triangulate=False, extra_uv=False):
@@ -886,15 +906,63 @@ def test_s_scatter_refuses_authored_face_data():
     return out
 
 
-def test_s_scatter_adopts_legacy_with_its_material():
+def test_s_scatter_refuses_legacy_with_its_material():
     _scatter_setup()
     old = _old_style_prop_mesh("ME_Prop_box", (0.6, 0.6, 0.6))
-    mat = bpy.data.materials.new("MAT_Prop_box")  # what the legacy script appended
-    old.materials.append(mat)
-    r = run("set-dressing", "scatter_props.py", {"target": "SM_T", "count": 2, "kinds": ["box"], "ground": "Ground"})
-    me = bpy.data.objects[r["props"][0]["name"]].data
-    assert me.name == "ME_Prop_box" and [m.name for m in me.materials] == ["MAT_Prop_box"]
-    return {"slots": [m.name for m in me.materials]}
+    old.materials.append(bpy.data.materials.new("MAT_Prop_box"))
+    try:
+        run("set-dressing", "scatter_props.py", {"target": "SM_T", "count": 2, "kinds": ["box"], "ground": "Ground"})
+    except ValueError:
+        assert [m.name for m in old.materials] == ["MAT_Prop_box"]
+        return {"refused": True}
+    raise AssertionError("an untagged mesh with the legacy material was adopted")
+
+
+def test_s_scatter_refuses_vertex_groups():
+    _scatter_setup()
+    old = _old_style_prop_mesh("ME_Prop_box", (0.6, 0.6, 0.6))
+    holder = make_obj("Crate", old)
+    vg = holder.vertex_groups.new(name="BevelMask")
+    vg.add([0, 1, 2, 3], 0.7, "REPLACE")
+    weights0 = [(v.index, [(g.group, round(g.weight, 4)) for g in v.groups]) for v in old.vertices]
+    try:
+        run("set-dressing", "scatter_props.py", {"target": "SM_T", "count": 2, "kinds": ["box"], "ground": "Ground"})
+    except ValueError:
+        weights = [(v.index, [(g.group, round(g.weight, 4)) for g in v.groups]) for v in old.vertices]
+        assert weights == weights0 and holder.vertex_groups["BevelMask"].weight(0) > 0.69
+        return {"weights_kept": sum(1 for _i, g in weights if g)}
+    raise AssertionError("a mesh with vertex-group weights was adopted and rewritten")
+
+
+def test_s_edit_ops_restores_when_target_is_excluded():
+    reset()
+    bpy.ops.mesh.primitive_cube_add(location=(0, 0, 0))
+    a = bpy.context.object
+    a.name = "InHidden"
+    bpy.ops.mesh.primitive_cube_add(location=(5, 0, 0))
+    other = bpy.context.object
+    other.name = "Other"
+    hidden = bpy.data.collections.new("Hidden")
+    bpy.context.scene.collection.children.link(hidden)
+    bpy.context.scene.collection.objects.unlink(a)
+    hidden.objects.link(a)
+    bpy.context.view_layer.layer_collection.children["Hidden"].exclude = True
+    for o in bpy.context.view_layer.objects:
+        o.select_set(o.name == "Other")
+    bpy.context.view_layer.objects.active = other
+    g = runpy.run_path(os.path.join(SKILLS, "uv-workflow", "scripts", "uv_unwrap_check.py"),
+                       init_globals={"ARGS": {"objects": []}}, run_name="__skill_test__")
+    try:
+        g["_edit_ops"](a, lambda: {"FINISHED"})
+    except Exception:
+        pass
+    else:
+        raise AssertionError("an object outside the view layer was edited")
+    assert [o.name for o in bpy.context.view_layer.objects if o.select_get()] == ["Other"], "selection lost"
+    assert bpy.context.view_layer.objects.active is other, "active object lost"
+    e = uvc(objects=["InHidden"], unwrap=True)["objects"]["InHidden"]
+    assert "error" in e and "view layer" in e["error"], e
+    return {"selection": "kept"}
 
 
 def test_s_scatter_preflight_keeps_previous_props():
@@ -931,10 +999,11 @@ TESTS = (test_a1_measure_only_no_uv, test_a2_union_coverage, test_c_stacked_and_
          test_c_result_file_contract, test_c_speed_20k, test_a3_bake_size_mismatch, test_a4_bake_cancelled,
          test_bake_restores_state, test_bake_restores_material_nodes, test_s_cross_tile_coverage,
          test_s_shared_mesh_unwrap, test_s_lightmap_only_rerun, test_s_edit_mode_and_selection_restored,
-         test_s_margin_px_enforced, test_s_run_id_in_returned_result, test_s_scatter_reuses_old_mesh,
+         test_s_margin_px_enforced, test_s_run_id_in_returned_result, test_s_scatter_refuses_untagged_legacy_mesh, test_s_scatter_rebuilds_own_tagged_mesh,
          test_s_scatter_refuses_foreign_mesh,
          test_s_coverage_no_grid_aliasing, test_s_non_finite_uvs, test_s_scatter_refuses_authored_face_data,
-         test_s_scatter_adopts_legacy_with_its_material,
+         test_s_scatter_refuses_legacy_with_its_material, test_s_scatter_refuses_vertex_groups,
+         test_s_edit_ops_restores_when_target_is_excluded,
          test_s_coverage_sub_sample_strip, test_s_lightmap_docs_match_behaviour, test_s_scatter_refuses_authored_uvs,
          test_s_coverage_counts_only_covered_tiles, test_s_loops_outside_counts_polygon_loops,
          test_s_scatter_refuses_same_vertices_other_topology, test_s_scatter_preflight_keeps_previous_props,
