@@ -10,20 +10,25 @@ armature's pose position, every pose bone's transform and the IK/FK switch value
 action is removed with `bpy.data.actions.remove` (datablock removal, no file is deleted). It never saves the file.
 
 Per (pose, limb) row the status is OK, NOT_REACHED, STRETCH, COLLAPSE, NON_FINITE, MISSING_ROLE, NO_ARMATURE_MODIFIER
-or NOT_CHECKED. Each pose is checked before measuring: the evaluated bone must reach the requested angle within
-5 degrees, else the row is NOT_REACHED (a FAIL naming the bone and the angle reached), so a constraint that blocks a
-pose (Limit Rotation, IK) can never look like a healthy rest mesh. Measures on the evaluated mesh, per limb (the
+or NOT_CHECKED. Each pose is checked before measuring: the evaluated bone's rotation must be within 5 degrees of the
+requested rotation (same axis, same direction, same angle), else the row is NOT_REACHED (a FAIL naming the bone,
+the angle reached and how far it is from the request), so a constraint that blocks or redirects a pose (Limit
+Rotation, IK) can never look like a healthy rest mesh. Measures on the evaluated mesh, per limb (the
 vertices weighted to the limb's bones, and every edge touching one of them, so an unweighted ring that stays behind
 stretches its edges):
   edge stretch p95   95th percentile of (posed edge length / rest edge length), all poses
-  collapse ratio     minimum over cross-sections of the mean distance to the section centre, posed / rest;
-                     gated on the twist poses only (a bend pinches a little by nature)
+  collapse ratio     minimum over cross-sections of the section's minimum width, posed / rest. The width is the
+                     narrower principal spread of the section's points, projected onto the plane perpendicular to the
+                     limb axis there, so a section squashed flat along one axis counts as collapsed (ratio 0).
+                     Gated on the twist poses only (a bend pinches a little by nature)
   non-finite verts   any NaN or infinite evaluated vertex, all poses
+A row whose required metric could not be measured (stretch always; collapse too on twist poses) is NOT_CHECKED, never a
+PASS from the other metric. A run in which no row was measured at all is FAIL (exit 2), not a WARN.
 
 Thresholds (calibrated on the fixtures in tests/blender/test_iter15_rig.py; each sits between the good and bad values
 with a margin of at least 20% of the gap, and the test re-checks this on every run):
   COLLAPSE_MIN = 0.5     FAIL below (twist poses). Measured: good limb worst 0.9239 (twist 180 spread over 4 twist
-                         bones, 45 degrees each); candy wrapper (one twist bone) 0.0000 (3.6e-08) at twist 180.
+                         bones, 45 degrees each); candy wrapper (one twist bone) 0.0000 (4.1e-08) at twist 180.
                          Gap 0.9239; the bound sits 0.4239 below good and 0.5 above bad (20% of the gap is 0.185).
   STRETCH_P95_MAX = 1.5  FAIL above (every pose). Measured: good limb worst 1.2309 (elbows 130); unweighted ring,
                          weakest failing pose 2.0820 (elbows 130; arms raised gives 10.656). Gap 0.8511; the bound
@@ -60,7 +65,7 @@ import sys
 
 import bpy
 import numpy as np
-from mathutils import Matrix
+from mathutils import Matrix, Quaternion
 
 COLLAPSE_MIN = 0.5
 STRETCH_P95_MAX = 1.5
@@ -210,8 +215,10 @@ def _coords(obj, dg):
     return arr.reshape(-1, 3)
 
 
-def _reached(arm_eval, arm, name):
-    """Rotation magnitude (degrees) of the evaluated bone relative to its rest pose, constraints included."""
+def _reached(arm_eval, arm, name, axis, degrees):
+    """(rotation magnitude, distance from the requested rotation), both in degrees. The evaluated bone's rotation
+    relative to its rest pose, constraints included, is compared with the requested rotation about the local axis,
+    so a rotation about another axis or in the opposite direction is far from it even at the same magnitude."""
     bone = arm.data.bones[name]
     pb = arm_eval.pose.bones[name]
     if bone.parent:
@@ -220,7 +227,11 @@ def _reached(arm_eval, arm, name):
     else:
         rest_local, parent_pose = bone.matrix_local, Matrix.Identity(4)
     basis = rest_local.inverted() @ parent_pose.inverted() @ pb.matrix
-    return math.degrees(basis.to_quaternion().angle)
+    q = basis.to_quaternion()
+    v = [0.0, 0.0, 0.0]
+    v[axis] = 1.0
+    want = Quaternion(v, math.radians(degrees))
+    return math.degrees(q.angle), math.degrees(q.rotation_difference(want).angle)
 
 
 def _limb_sets(obj, bone_names, rest, edges):
@@ -243,9 +254,24 @@ def _limb_sets(obj, bone_names, rest, edges):
     return verts, limb_edges, bins
 
 
-def _section_radius(co, idx):
-    pts = co[idx]
-    return float(np.linalg.norm(pts - pts.mean(axis=0), axis=1).mean())
+def _section_widths(co, bins):
+    """Minimum width of each cross-section: the section's points are projected onto the plane perpendicular to the
+    limb axis there (the line through the neighbouring section centres), and the narrower principal spread of that
+    2D point cloud is the width. A circle gives r/sqrt(2); a section squashed flat along one axis gives 0."""
+    centres = np.array([co[idx].mean(axis=0) for idx in bins])
+    out = []
+    for k, idx in enumerate(bins):
+        axis = centres[min(k + 1, len(bins) - 1)] - centres[max(k - 1, 0)]
+        norm = np.linalg.norm(axis)
+        if norm < 1e-12:
+            out.append(0.0)
+            continue
+        axis /= norm
+        q = co[idx] - centres[k]
+        q = q - np.outer(q @ axis, axis)
+        s = np.linalg.svd(q, compute_uv=False)
+        out.append(float(s[1] / math.sqrt(len(idx))))
+    return out
 
 
 def _measure(rest, posed, limb_edges, bins):
@@ -262,10 +288,10 @@ def _measure(rest, posed, limb_edges, bins):
     else:
         out["edge_stretch_p95"] = None
     ratios = []
-    for idx in bins:
-        r0 = _section_radius(rest, idx)
-        if r0 > 1e-9:
-            ratios.append(_section_radius(posed, idx) / r0)
+    if len(bins) >= 2:
+        for w0, w1 in zip(_section_widths(rest, bins), _section_widths(posed, bins)):
+            if w0 > 1e-9:
+                ratios.append(w1 / w0)
     out["collapse_ratio"] = min(ratios) if ratios else None
     return out
 
@@ -278,7 +304,8 @@ def _gate(pose, m):
         return "STRETCH", "FAIL"
     if pose in TWIST_POSES and m["collapse_ratio"] is not None and m["collapse_ratio"] < COLLAPSE_MIN:
         return "COLLAPSE", "FAIL"
-    if m["edge_stretch_p95"] is None and m["collapse_ratio"] is None:
+    # a metric the pose needs but could not be measured is never a pass on the strength of the other one
+    if m["edge_stretch_p95"] is None or (pose in TWIST_POSES and m["collapse_ratio"] is None):
         return "NOT_CHECKED", "NOT_CHECKED"
     return "OK", "PASS"
 
@@ -377,9 +404,10 @@ def main(armature, meshes=None, bone_map=None, poses=None, fk_switches=None, res
                         bones = lspec.get(role) or []
                         for bn in bones:
                             want = deg / len(bones)
-                            got = _reached(arm_eval, arm, bn)
-                            reach.append({"bone": bn, "requested_deg": round(want, 2), "reached_deg": round(got, 2)})
-                            if abs(got - want) > REACH_TOL_DEG:
+                            got, off = _reached(arm_eval, arm, bn, axis, want)
+                            reach.append({"bone": bn, "axis": "XYZ"[axis], "requested_deg": round(want, 2),
+                                          "reached_deg": round(got, 2), "off_requested_deg": round(off, 2)})
+                            if off > REACH_TOL_DEG:
                                 blocked = True
                     if blocked:
                         rows.append({"pose": pose, "limb": ln, "mesh": None, "status": "NOT_REACHED",
@@ -404,14 +432,16 @@ def main(armature, meshes=None, bone_map=None, poses=None, fk_switches=None, res
                         rows.append(row)
     finally:
         _restore(arm, scene, snap, tmp_action, [(h, p, old) for h, p, old, _v in switches])
-    if not rows:
-        notes.append("measured nothing")
     verdict = "FAIL" if not rows else "PASS"
     for r in rows:
         if RANK[r["verdict"]] > RANK[verdict]:
             verdict = r["verdict"]
     if verdict == "NOT_CHECKED":
         verdict = "WARN"
+    if not any(r["status"] in ("OK", "STRETCH", "COLLAPSE", "NON_FINITE") for r in rows):
+        verdict = "FAIL"
+        if "measured nothing" not in notes:
+            notes.append("measured nothing: no pose produced a measurement, so the verdict is FAIL")
     if not objs or not limbs:
         verdict = "FAIL"
     summary = {}

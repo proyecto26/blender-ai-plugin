@@ -91,10 +91,10 @@ def _armature_checks(arm, max_influences):
     checks = {}
     zero = sorted(b.name for b in bones if b.length < 1e-4)
     checks["zero_length_bones"] = _check("FAIL" if zero else "PASS", bones=zero)
-    scale, rot = tuple(arm.scale), tuple(arm.rotation_euler)
+    scale = tuple(arm.scale)
+    rot = tuple(arm.matrix_basis.to_euler())  # the rotation the object really has, in any rotation mode
     bad_scale = any(abs(s - 1.0) > 1e-4 for s in scale)
-    bad_rot = arm.rotation_mode == "QUATERNION" and (abs(arm.rotation_quaternion.w - 1.0) > 1e-5) or \
-        (arm.rotation_mode not in ("QUATERNION", "AXIS_ANGLE") and any(abs(r) > 1e-5 for r in rot))
+    bad_rot = any(abs(r) > 1e-5 for r in rot)
     checks["armature_transform"] = _check("WARN" if bad_scale or bad_rot else "PASS", scale=[round(s, 5) for s in scale],
                                           rotation_euler=[round(r, 5) for r in rot],
                                           fix="apply scale and rotation (Ctrl+A) on the armature and its meshes")
