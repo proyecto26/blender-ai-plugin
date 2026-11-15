@@ -68,7 +68,8 @@ for field in ("name", "version", "description"):
 if root.get("$schema") != "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json":
     errors.append("plugin.json $schema is not the Agent Plugins 1.0.0 schema URL")
 
-portable_allowed = {"$schema", "name", "version", "description", "author", "homepage",
+# no "homepage": the project has none, so a manifest that adds one fails here
+portable_allowed = {"$schema", "name", "version", "description", "author",
                     "repository", "license", "keywords", "extensions"}
 extra = set(root) - portable_allowed
 if extra:
