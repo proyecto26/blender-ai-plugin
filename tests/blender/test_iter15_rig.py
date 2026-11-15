@@ -46,7 +46,7 @@ def fresh():
 
 
 # ---------------------------------------------------------------- fixtures
-def make_armature(name, bones, roll=None):
+def make_armature(name, bones, roll=None, nodeform=()):
     """bones: [(name, head, tail, parent|None)]. Returns the armature object."""
     data = bpy.data.armatures.new(name)
     obj = bpy.data.objects.new(name, data)
@@ -58,6 +58,7 @@ def make_armature(name, bones, roll=None):
     for bn, head, tail, parent in bones:
         b = data.edit_bones.new(bn)
         b.head, b.tail = head, tail
+        b.use_deform = bn not in nodeform
         if roll and bn in roll:
             b.roll = math.radians(roll[bn])
         if parent:
@@ -127,16 +128,23 @@ LEG_BONES = [("upper_leg.L", (0, 0, 0), (0, 0, 1), None), ("lower_leg.L", (0, 0,
 LEG_KNOTS = {"upper_leg.L": 0.85, "lower_leg.L": 1.15}
 
 
-def limb(kind="good"):
+CTL_BONE = ("forearm_ctl.L", (0.3, 0, 1), (0.3, 0, 1.25), "upper_arm.L")
+
+
+def limb(kind="good", radius=0.15):
     fresh()
     bones = {"candy": CANDY_BONES, "leg": LEG_BONES, "leg_limit": LEG_BONES}.get(kind, GOOD_BONES)
-    arm = make_armature("ARM_Limb", bones)
-    cyl = make_cylinder("SK_Limb")
+    if kind in ("ctl", "ctl_deform"):
+        bones = GOOD_BONES + [CTL_BONE]
+    arm = make_armature("ARM_Limb", bones, nodeform=("forearm_ctl.L",) if kind == "ctl" else ())
+    cyl = make_cylinder("SK_Limb", radius=radius)
     knots = {"candy": CANDY_KNOTS, "leg": LEG_KNOTS, "leg_limit": LEG_KNOTS}.get(kind, GOOD_KNOTS)
     skin(cyl, arm, knots, skip=(lambda z: 0.75 < z < 1.25) if kind == "ring" else (lambda z: False))
     if kind == "limit":
         c = arm.pose.bones["forearm.L"].constraints.new("LIMIT_ROTATION")
         c.use_limit_x, c.min_x, c.max_x, c.owner_space = True, math.radians(-30), math.radians(30), "LOCAL"
+    if kind == "ctl_deform":  # a second, deforming and weighted forearm-named bone that is not in the chain
+        cyl.vertex_groups.new(name="forearm_ctl.L").add(list(range(160, 176)), 1.0, "REPLACE")
     if kind == "few_weights":  # only 3 vertices keep any weight: nothing can be measured
         for vg in cyl.vertex_groups:
             vg.remove(list(range(3, len(cyl.data.vertices))))
@@ -288,7 +296,7 @@ def test_e2_good_limb_passes():
     twist_rows = {"rows": [r for r in res["rows"] if r["pose"] in ("twist_90", "twist_180")]}
     MEASURED["good_collapse"] = _worst(twist_rows, "collapse_ratio", min)
     MEASURED["good_stretch"] = _worst(res, "edge_stretch_p95", max)
-    MEASURED["good_displacement"] = _worst(res, "displacement", min)
+    MEASURED["good_displacement"] = _worst(res, "displacement_ratio", min)
     return {"collapse_min_twist": MEASURED["good_collapse"], "stretch_p95_max": MEASURED["good_stretch"],
             "reach": [r["reach"] for r in res["rows"] if r["pose"] == "twist_180"][0]}
 
@@ -386,8 +394,9 @@ def test_e2_thresholds_margin():
     assert MEASURED["candy_collapse"] + 0.2 * c_gap <= th["collapse_min"] <= MEASURED["good_collapse"] - 0.2 * c_gap, (MEASURED, th)
     s_gap = MEASURED["ring_stretch"] - MEASURED["good_stretch"]
     assert MEASURED["good_stretch"] + 0.2 * s_gap <= th["stretch_p95_max"] <= MEASURED["ring_stretch"] - 0.2 * s_gap, (MEASURED, th)
+    MEASURED["good_displacement"] = min(MEASURED["good_displacement"], MEASURED["slender_displacement"])
     d_gap = MEASURED["good_displacement"] - MEASURED["inert_displacement"]
-    assert MEASURED["inert_displacement"] + 0.2 * d_gap <= th["displacement_min"] <= MEASURED["good_displacement"] - 0.2 * d_gap, (MEASURED, th)
+    assert MEASURED["inert_displacement"] + 0.2 * d_gap <= th["displacement_ratio_min"] <= MEASURED["good_displacement"] - 0.2 * d_gap, (MEASURED, th)
     return {"measured": MEASURED, "thresholds": th}
 
 
@@ -547,8 +556,8 @@ def test_t1_inert_skin_is_not_a_pass():
     res = run("rigging", "stress_check.py", armature="ARM_Limb")
     assert res["verdict"] == "FAIL" and res["rows"], res
     assert all(x["status"] == "NO_DEFORMATION" and x["verdict"] == "FAIL" for x in res["rows"]), res["rows"]
-    MEASURED["inert_displacement"] = max(x["displacement"] for x in res["rows"])
-    out["zero_envelopes"] = {"status": res["rows"][0]["status"], "displacement": res["rows"][0]["displacement"]}
+    MEASURED["inert_displacement"] = max(x["displacement_ratio"] for x in res["rows"])
+    out["zero_envelopes"] = {"status": res["rows"][0]["status"], "displacement": res["rows"][0]["displacement_ratio"]}
     return out
 
 
@@ -569,6 +578,55 @@ def test_t2_empty_inputs_are_not_a_pass():
     r = run("rigging", "rig_check.py", armature="ARM_One")
     assert r["verdict"] == "FAIL" and r["meshes"]["SK_Empty"]["checks"]["vertices_present"]["verdict"] == "FAIL", r
     return {"verdicts": r["verdict"]}
+
+
+# ---------------------------------------------------------------- Seldon round 3
+def test_u1_role_detection_ignores_controls_and_refuses_ambiguity():
+    out = {}
+    limb("ctl")  # forearm_ctl.L is a non-deforming control: it must not take part in the role
+    res = run("rigging", "stress_check.py", armature="ARM_Limb", poses=["elbows_130"])
+    assert res["limbs"]["arm.L"]["lower"] == ["forearm.L"], res["limbs"]
+    row = res["rows"][0]
+    assert row["status"] == "OK" and row["reach"][0]["bone"] == "forearm.L" and row["reach"][0]["requested_deg"] == 130.0, row
+    assert abs(row["reach"][0]["reached_deg"] - 130.0) < 1.0
+    out["control_skipped"] = res["limbs"]["arm.L"]["lower"]
+    limb("ctl_deform")  # two deforming, weighted, unrelated candidates: refuse and name them
+    res = run("rigging", "stress_check.py", armature="ARM_Limb", poses=["elbows_130"])
+    assert res["verdict"] == "FAIL" and res["rows"][0]["status"] == "MISSING_ROLE", res["rows"]
+    msg = " ".join(res["rows"][0]["problems"])
+    assert "forearm.L" in msg and "forearm_ctl.L" in msg and "ambiguous" in msg, msg
+    out["ambiguous"] = res["rows"][0]["problems"]
+    # an explicit chain is split and its total is validated
+    limb("good")
+    res = run("rigging", "stress_check.py", armature="ARM_Limb", poses=["elbows_130"],
+              bone_map={"arm.L": {"upper": "upper_arm.L", "lower": ["forearm.L", "forearm_twist_1.L"]}})
+    row = res["rows"][0]
+    chain = [x for x in row["reach"] if "chain" in x][0]
+    assert row["status"] == "OK" and chain["off_requested_deg"] < 1.0 and [x["requested_deg"] for x in row["reach"] if "bone" in x] == [65.0, 65.0], row
+    out["chain_total_off_deg"] = chain["off_requested_deg"]
+    return out
+
+
+def test_u2_slender_limbs_are_judged_fairly():
+    out = {}
+    limb("good", radius=0.02)
+    res = run("rigging", "stress_check.py", armature="ARM_Limb")
+    assert res["verdict"] == "PASS" and {r["pose"] for r in res["rows"]} == {"arms_raised", "elbows_130", "twist_90", "twist_180"}, \
+        json.dumps([(r["pose"], r["status"], r.get("displacement_ratio")) for r in res["rows"]])
+    MEASURED["slender_displacement"] = min(r["displacement_ratio"] for r in res["rows"])
+    out["good_slender_min_ratio"] = MEASURED["slender_displacement"]
+    limb("candy", radius=0.02)
+    res = run("rigging", "stress_check.py", armature="ARM_Limb")
+    assert res["verdict"] == "FAIL" and any(r["status"] == "COLLAPSE" and r["pose"] == "twist_180" for r in res["rows"]), res["rows"]
+    arm, cyl = limb("good", radius=0.02)
+    md = cyl.modifiers["Armature"]
+    md.use_vertex_groups, md.use_bone_envelopes = False, True
+    for b in arm.data.bones:
+        b.envelope_distance, b.head_radius, b.tail_radius, b.envelope_weight = 0.0, 0.0, 0.0, 0.0
+    res = run("rigging", "stress_check.py", armature="ARM_Limb")
+    assert res["verdict"] == "FAIL" and all(r["status"] == "NO_DEFORMATION" for r in res["rows"]), res["rows"]
+    out["inert_slender"] = "NO_DEFORMATION"
+    return out
 
 
 # ---------------------------------------------------------------- B1: result_path / run_id / exit codes
@@ -656,7 +714,8 @@ def main():
              test_e2_missing_role_fails, test_e2_restores_state, test_s1_flattened_section_fails_collapse,
              test_s2_reach_checks_axis_and_direction, test_s3_unmeasured_is_not_pass, test_s4_axis_angle_armature_rotation,
              test_s5_restore_after_mid_run_failure, test_s6_leg_fixture_knees_and_crouch,
-             test_t1_inert_skin_is_not_a_pass, test_t2_empty_inputs_are_not_a_pass, test_e2_thresholds_margin,
+             test_t1_inert_skin_is_not_a_pass, test_t2_empty_inputs_are_not_a_pass,
+             test_u1_role_detection_ignores_controls_and_refuses_ambiguity, test_u2_slender_limbs_are_judged_fairly, test_e2_thresholds_margin,
              test_b1_result_contract_and_exit_codes]
     checks, failed = {}, []
     for fn in tests:
