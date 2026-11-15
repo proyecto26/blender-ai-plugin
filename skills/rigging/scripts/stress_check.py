@@ -9,8 +9,8 @@ Safety: the poses are set on a temporary action. In `finally` the original actio
 armature's pose position, every pose bone's transform and the IK/FK switch values are restored, and the temporary
 action is removed with `bpy.data.actions.remove` (datablock removal, no file is deleted). It never saves the file.
 
-Per (pose, limb) row the status is OK, NOT_REACHED, STRETCH, COLLAPSE, NON_FINITE, MISSING_ROLE, NO_ARMATURE_MODIFIER
-or NOT_CHECKED. Each pose is checked before measuring: the evaluated bone's rotation must be within 5 degrees of the
+Per (pose, limb) row the status is OK, NOT_REACHED, STRETCH, COLLAPSE, NON_FINITE, MISSING_ROLE, NO_ARMATURE_MODIFIER (no enabled Armature modifier that binds by vertex groups or envelopes),
+NO_DEFORMATION (the pose was reached but the limb's vertices did not move: an inert skin) or NOT_CHECKED. Each pose is checked before measuring: the evaluated bone's rotation must be within 5 degrees of the
 requested rotation (same axis, same direction, same angle), else the row is NOT_REACHED (a FAIL naming the bone,
 the angle reached and how far it is from the request), so a constraint that blocks or redirects a pose (Limit
 Rotation, IK) can never look like a healthy rest mesh. Measures on the evaluated mesh, per limb (the
@@ -22,6 +22,8 @@ stretches its edges):
                      limb axis there, so a section squashed flat along one axis counts as collapsed (ratio 0).
                      Gated on the twist poses only (a bend pinches a little by nature)
   non-finite verts   any NaN or infinite evaluated vertex, all poses
+  displacement       largest vertex move of the limb, posed vs rest, as a fraction of the limb's bounding diagonal;
+                     a reached pose that moves nothing means the skin is inert (NO_DEFORMATION, FAIL)
 A row whose required metric could not be measured (stretch always; collapse too on twist poses) is NOT_CHECKED, never a
 PASS from the other metric. A run in which no row was measured at all is FAIL (exit 2), not a WARN.
 
@@ -33,6 +35,8 @@ with a margin of at least 20% of the gap, and the test re-checks this on every r
   STRETCH_P95_MAX = 1.5  FAIL above (every pose). Measured: good limb worst 1.2309 (elbows 130); unweighted ring,
                          weakest failing pose 2.0820 (elbows 130; arms raised gives 10.656). Gap 0.8511; the bound
                          sits 0.2691 above good and 0.5820 below bad (20% of the gap is 0.170).
+  DISPLACEMENT_MIN = 0.03  FAIL below (every pose). Measured: good limb smallest 0.1038; inert skin (zero envelopes) 0.0.
+                         Gap 0.1038; the bound sits 0.0738 below good and 0.03 above bad (20% of the gap is 0.021).
 
     import runpy
     result = runpy.run_path("<skill_dir>/scripts/stress_check.py", init_globals={"ARGS": {
@@ -70,6 +74,7 @@ from mathutils import Matrix, Quaternion
 COLLAPSE_MIN = 0.5
 STRETCH_P95_MAX = 1.5
 REACH_TOL_DEG = 5.0
+DISPLACEMENT_MIN = 0.03
 POSES = {  # pose -> {limb kind: [(role, local axis index, degrees)]}
     "arms_raised": {"arm": [("upper", 0, 90.0)]},
     "elbows_130": {"arm": [("lower", 0, 130.0)]},
@@ -274,7 +279,7 @@ def _section_widths(co, bins):
     return out
 
 
-def _measure(rest, posed, limb_edges, bins):
+def _measure(rest, posed, limb_edges, bins, verts=None):
     finite_all = bool(np.isfinite(posed).all())
     out = {"non_finite_vertices": int((~np.isfinite(posed).all(axis=1)).sum())}
     if not finite_all:
@@ -287,6 +292,11 @@ def _measure(rest, posed, limb_edges, bins):
         out["edge_stretch_p95"] = float(np.percentile(pl[ok] / rl[ok], 95)) if ok.any() else None
     else:
         out["edge_stretch_p95"] = None
+    out["displacement"] = None
+    if verts is not None and len(verts):
+        diag = float(np.linalg.norm(np.ptp(rest[verts], axis=0)))
+        if diag > 1e-9:
+            out["displacement"] = float(np.linalg.norm(posed[verts] - rest[verts], axis=1).max() / diag)
     ratios = []
     if len(bins) >= 2:
         for w0, w1 in zip(_section_widths(rest, bins), _section_widths(posed, bins)):
@@ -304,6 +314,8 @@ def _gate(pose, m):
         return "STRETCH", "FAIL"
     if pose in TWIST_POSES and m["collapse_ratio"] is not None and m["collapse_ratio"] < COLLAPSE_MIN:
         return "COLLAPSE", "FAIL"
+    if m.get("displacement") is not None and m["displacement"] < DISPLACEMENT_MIN:
+        return "NO_DEFORMATION", "FAIL"
     # a metric the pose needs but could not be measured is never a pass on the strength of the other one
     if m["edge_stretch_p95"] is None or (pose in TWIST_POSES and m["collapse_ratio"] is None):
         return "NOT_CHECKED", "NOT_CHECKED"
@@ -357,7 +369,8 @@ def main(armature, meshes=None, bone_map=None, poses=None, fk_switches=None, res
             dg = bpy.context.evaluated_depsgraph_get()
             base = {}
             for o in objs:
-                mods = [md for md in o.modifiers if md.type == "ARMATURE" and md.object == arm and md.show_viewport]
+                mods = [md for md in o.modifiers if md.type == "ARMATURE" and md.object == arm and md.show_viewport
+                        and (md.use_vertex_groups or md.use_bone_envelopes)]
                 rest = _coords(o, dg)
                 if not mods:
                     base[o.name] = ("NO_ARMATURE_MODIFIER", None)
@@ -426,7 +439,7 @@ def main(armature, meshes=None, bone_map=None, poses=None, fk_switches=None, res
                                 row.update(status="NOT_CHECKED", verdict="NOT_CHECKED",
                                            reason="fewer than 4 vertices are weighted to this limb's bones")
                             else:
-                                m = _measure(rest, _coords(o, dg), limb_edges, bins)
+                                m = _measure(rest, _coords(o, dg), limb_edges, bins, verts)
                                 status, verdict = _gate(pose, m)
                                 row.update(m, status=status, verdict=verdict)
                         rows.append(row)
@@ -453,7 +466,7 @@ def main(armature, meshes=None, bone_map=None, poses=None, fk_switches=None, res
             s["failures"].append(f"{r['pose']}:{r['status']}")
     result = {"armature": arm.name, "limbs": limbs, "meshes": [o.name for o in objs], "rows": rows,
               "summary": summary, "thresholds": {"collapse_min": COLLAPSE_MIN, "stretch_p95_max": STRETCH_P95_MAX,
-                                                 "reach_tolerance_deg": REACH_TOL_DEG},
+                                                 "reach_tolerance_deg": REACH_TOL_DEG, "displacement_min": DISPLACEMENT_MIN},
               "notes": notes, "verdict": verdict}
     if result_path:
         tmp = result_path + ".tmp"

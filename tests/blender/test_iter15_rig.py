@@ -288,6 +288,7 @@ def test_e2_good_limb_passes():
     twist_rows = {"rows": [r for r in res["rows"] if r["pose"] in ("twist_90", "twist_180")]}
     MEASURED["good_collapse"] = _worst(twist_rows, "collapse_ratio", min)
     MEASURED["good_stretch"] = _worst(res, "edge_stretch_p95", max)
+    MEASURED["good_displacement"] = _worst(res, "displacement", min)
     return {"collapse_min_twist": MEASURED["good_collapse"], "stretch_p95_max": MEASURED["good_stretch"],
             "reach": [r["reach"] for r in res["rows"] if r["pose"] == "twist_180"][0]}
 
@@ -385,6 +386,8 @@ def test_e2_thresholds_margin():
     assert MEASURED["candy_collapse"] + 0.2 * c_gap <= th["collapse_min"] <= MEASURED["good_collapse"] - 0.2 * c_gap, (MEASURED, th)
     s_gap = MEASURED["ring_stretch"] - MEASURED["good_stretch"]
     assert MEASURED["good_stretch"] + 0.2 * s_gap <= th["stretch_p95_max"] <= MEASURED["ring_stretch"] - 0.2 * s_gap, (MEASURED, th)
+    d_gap = MEASURED["good_displacement"] - MEASURED["inert_displacement"]
+    assert MEASURED["inert_displacement"] + 0.2 * d_gap <= th["displacement_min"] <= MEASURED["good_displacement"] - 0.2 * d_gap, (MEASURED, th)
     return {"measured": MEASURED, "thresholds": th}
 
 
@@ -523,6 +526,51 @@ def test_s6_leg_fixture_knees_and_crouch():
     return out
 
 
+# ---------------------------------------------------------------- Seldon round 2
+def test_t1_inert_skin_is_not_a_pass():
+    out = {}
+    # (a) modifier binds nothing: both vertex groups and envelopes off
+    arm, cyl = limb("good")
+    md = cyl.modifiers["Armature"]
+    md.use_vertex_groups = md.use_bone_envelopes = False
+    r = run("rigging", "rig_check.py", armature="ARM_Limb")
+    assert r["meshes"]["SK_Limb"]["checks"]["armature_modifier"]["verdict"] == "FAIL" and r["verdict"] == "FAIL", r["meshes"]
+    res = run("rigging", "stress_check.py", armature="ARM_Limb")
+    assert res["verdict"] == "FAIL" and all(x["status"] == "NO_ARMATURE_MODIFIER" for x in res["rows"]) and res["rows"], res["rows"]
+    out["binding_off"] = res["rows"][0]["status"]
+    # (b) a modifier that does bind (envelopes) but the envelopes are zero: bones reach their poses, the mesh stays put
+    arm, cyl = limb("good")
+    md = cyl.modifiers["Armature"]
+    md.use_vertex_groups, md.use_bone_envelopes = False, True
+    for b in arm.data.bones:
+        b.envelope_distance, b.head_radius, b.tail_radius, b.envelope_weight = 0.0, 0.0, 0.0, 0.0
+    res = run("rigging", "stress_check.py", armature="ARM_Limb")
+    assert res["verdict"] == "FAIL" and res["rows"], res
+    assert all(x["status"] == "NO_DEFORMATION" and x["verdict"] == "FAIL" for x in res["rows"]), res["rows"]
+    MEASURED["inert_displacement"] = max(x["displacement"] for x in res["rows"])
+    out["zero_envelopes"] = {"status": res["rows"][0]["status"], "displacement": res["rows"][0]["displacement"]}
+    return out
+
+
+def test_t2_empty_inputs_are_not_a_pass():
+    fresh()
+    arm = make_armature("ARM_Empty", [])
+    me = bpy.data.meshes.new("SK_Empty")
+    ob = bpy.data.objects.new("SK_Empty", me)
+    bpy.context.scene.collection.objects.link(ob)
+    md = ob.modifiers.new("Armature", "ARMATURE")
+    md.object = arm
+    r = run("rigging", "rig_check.py", armature="ARM_Empty")
+    assert r["verdict"] == "FAIL", r["verdict"]
+    assert r["checks"]["bones_present"]["verdict"] == "FAIL" and r["meshes"]["SK_Empty"]["checks"]["vertices_present"]["verdict"] == "FAIL", r
+    # armature with bones but a mesh with no vertices; and bones missing but a real mesh
+    arm2 = make_armature("ARM_One", [("a", (0, 0, 0), (0, 0, 1), None)])
+    md.object = arm2
+    r = run("rigging", "rig_check.py", armature="ARM_One")
+    assert r["verdict"] == "FAIL" and r["meshes"]["SK_Empty"]["checks"]["vertices_present"]["verdict"] == "FAIL", r
+    return {"verdicts": r["verdict"]}
+
+
 # ---------------------------------------------------------------- B1: result_path / run_id / exit codes
 def _blender(blend, py, args):
     args_file = os.path.join(OUT, "args_" + str(abs(hash((blend, py, json.dumps(args, sort_keys=True))))) + ".json")
@@ -607,7 +655,8 @@ def main():
              test_e2_candy_wrapper_fails_collapse, test_e2_unweighted_ring_fails_stretch, test_e2_limit_rotation_not_reached,
              test_e2_missing_role_fails, test_e2_restores_state, test_s1_flattened_section_fails_collapse,
              test_s2_reach_checks_axis_and_direction, test_s3_unmeasured_is_not_pass, test_s4_axis_angle_armature_rotation,
-             test_s5_restore_after_mid_run_failure, test_s6_leg_fixture_knees_and_crouch, test_e2_thresholds_margin,
+             test_s5_restore_after_mid_run_failure, test_s6_leg_fixture_knees_and_crouch,
+             test_t1_inert_skin_is_not_a_pass, test_t2_empty_inputs_are_not_a_pass, test_e2_thresholds_margin,
              test_b1_result_contract_and_exit_codes]
     checks, failed = {}, []
     for fn in tests:
