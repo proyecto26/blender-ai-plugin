@@ -69,13 +69,13 @@ def make_armature(name, bones, roll=None, nodeform=()):
     return obj
 
 
-def make_cylinder(name, z_top=2.0, loops=21, seg=16, radius=0.15):
+def make_cylinder(name, z_top=2.0, loops=21, seg=16, radius=0.15, x=0.0):
     vs, fs = [], []
     for i in range(loops):
         z = z_top * i / (loops - 1)
         for k in range(seg):
             a = 2 * math.pi * k / seg
-            vs.append((radius * math.cos(a), radius * math.sin(a), z))
+            vs.append((x + radius * math.cos(a), radius * math.sin(a), z))
     for i in range(loops - 1):
         for k in range(seg):
             a, b = i * seg + k, i * seg + (k + 1) % seg
@@ -131,17 +131,19 @@ LEG_KNOTS = {"upper_leg.L": 0.85, "lower_leg.L": 1.15}
 CTL_BONE = ("forearm_ctl.L", (0.3, 0, 1), (0.3, 0, 1.25), "upper_arm.L")
 
 
-def limb(kind="good", radius=0.15):
+def limb(kind="good", radius=0.15, loops=21):
     fresh()
-    bones = {"candy": CANDY_BONES, "leg": LEG_BONES, "leg_limit": LEG_BONES}.get(kind, GOOD_BONES)
+    bones = {"candy": CANDY_BONES, "dense": CANDY_BONES, "leg": LEG_BONES, "leg_limit": LEG_BONES}.get(kind, GOOD_BONES)
     if kind == "arm_unweighted_leg":
         bones = GOOD_BONES + [("upper_leg.L", (0.5, 0, 0), (0.5, 0, 1), None),
                               ("lower_leg.L", (0.5, 0, 1), (0.5, 0, 2), "upper_leg.L")]
     if kind in ("ctl", "ctl_deform"):
         bones = GOOD_BONES + [CTL_BONE]
     arm = make_armature("ARM_Limb", bones, nodeform=("forearm_ctl.L",) if kind == "ctl" else ())
-    cyl = make_cylinder("SK_Limb", radius=radius)
+    cyl = make_cylinder("SK_Limb", radius=radius, loops=loops)
     knots = {"candy": CANDY_KNOTS, "leg": LEG_KNOTS, "leg_limit": LEG_KNOTS}.get(kind, GOOD_KNOTS)
+    if kind == "dense":  # 201 rings; the whole blend sits between two neighbouring rings
+        knots = {"upper_arm.L": 0.99, "forearm.L": 1.01}
     skin(cyl, arm, knots, skip=(lambda z: 0.75 < z < 1.25) if kind == "ring" else (lambda z: False))
     if kind == "limit":
         c = arm.pose.bones["forearm.L"].constraints.new("LIMIT_ROTATION")
@@ -623,6 +625,37 @@ def test_v1_unweighted_limb_is_reported():
     return {"leg_row": leg[0]["status"], "overall": "FAIL"}
 
 
+def test_w1_dense_limb_collapse_is_found():
+    limb("dense", loops=201)
+    res = run("rigging", "stress_check.py", armature="ARM_Limb", poses=["twist_180"])
+    row = res["rows"][0]
+    assert res["verdict"] == "FAIL" and row["status"] == "COLLAPSE" and row["collapse_ratio"] < 0.1, row
+    return {"collapse_ratio": row["collapse_ratio"]}
+
+
+def test_w2_separate_arm_meshes_pair_only_with_their_own_limb():
+    fresh()
+    bones, knots_l, knots_r = [], {}, {}
+    for suffix, x in ((".L", 0.5), (".R", -0.5)):
+        for bn, head, tail, parent in GOOD_BONES:
+            name = bn.replace(".L", suffix)
+            bones.append((name, (head[0] + x, head[1], head[2]), (tail[0] + x, tail[1], tail[2]),
+                          parent.replace(".L", suffix) if parent else None))
+    arm = make_armature("ARM_Limb", bones)
+    for suffix, x in ((".L", 0.5), (".R", -0.5)):
+        cyl = make_cylinder("SK_" + suffix[1], x=x)
+        skin(cyl, arm, {k.replace(".L", suffix): v for k, v in GOOD_KNOTS.items()})
+    res = run("rigging", "stress_check.py", armature="ARM_Limb")
+    pairs = {(r["limb"], r["mesh"]) for r in res["rows"]}
+    assert pairs == {("arm.L", "SK_L"), ("arm.R", "SK_R")}, pairs
+    assert res["verdict"] == "PASS" and all(r["status"] == "OK" for r in res["rows"]), [(r["limb"], r["mesh"], r["status"]) for r in res["rows"]]
+    # a limb that no mesh carries weights for is still reported
+    bpy.data.objects["SK_R"].vertex_groups.clear()
+    res = run("rigging", "stress_check.py", armature="ARM_Limb")
+    assert res["verdict"] == "FAIL" and any(r["limb"] == "arm.R" and r["status"] == "UNWEIGHTED_LIMB" for r in res["rows"]), res["rows"]
+    return {"pairs": sorted(pairs)}
+
+
 def test_u2_slender_limbs_are_judged_fairly():
     out = {}
     limb("good", radius=0.02)
@@ -732,7 +765,8 @@ def main():
              test_s5_restore_after_mid_run_failure, test_s6_leg_fixture_knees_and_crouch,
              test_t1_inert_skin_is_not_a_pass, test_t2_empty_inputs_are_not_a_pass,
              test_u1_role_detection_ignores_controls_and_refuses_ambiguity, test_v1_unweighted_limb_is_reported,
-             test_u2_slender_limbs_are_judged_fairly, test_e2_thresholds_margin,
+             test_u2_slender_limbs_are_judged_fairly, test_w1_dense_limb_collapse_is_found,
+             test_w2_separate_arm_meshes_pair_only_with_their_own_limb, test_e2_thresholds_margin,
              test_b1_result_contract_and_exit_codes]
     checks, failed = {}, []
     for fn in tests:
