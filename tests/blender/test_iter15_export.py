@@ -193,7 +193,27 @@ def test_a15_bevel_order():
     run("hard-surface", "bevel_stack.py", {"objects": ["SM_Part2"], "triangulate": True})
     second = [m.name for m in ob2.modifiers]
     assert second == ["HS_Bevel", "HS_WeightedNormal", "HS_Triangulate"], second
-    return {"first": first, "second": second}
+    # interleaved: [WeightedNormal, User, Bevel]; the owned ones become one block where the first was
+    ob3 = cube("SM_Part3", loc=(10, 0, 0))
+    wn3 = ob3.modifiers.new("HS_WeightedNormal", "WEIGHTED_NORMAL")
+    ob3.modifiers.new("User_Array", "ARRAY")
+    bev3 = ob3.modifiers.new("HS_Bevel", "BEVEL")
+    wn3.thresh, bev3.profile = 0.07, 0.7  # settings the script does not set: they must survive
+    ids = (wn3.as_pointer(), bev3.as_pointer())
+    run("hard-surface", "bevel_stack.py", {"objects": ["SM_Part3"]})
+    third = [m.name for m in ob3.modifiers]
+    assert third == ["HS_Bevel", "HS_WeightedNormal", "User_Array"], third
+    assert (ob3.modifiers["HS_WeightedNormal"].as_pointer(), ob3.modifiers["HS_Bevel"].as_pointer()) == ids, "recreated"
+    assert abs(ob3.modifiers["HS_WeightedNormal"].thresh - 0.07) < 1e-6 and abs(ob3.modifiers["HS_Bevel"].profile - 0.7) < 1e-6
+    # a user modifier between owned ones moves after the block: [Bevel, User, WN] -> [Bevel, WN, User]
+    ob4 = cube("SM_Part4", loc=(15, 0, 0))
+    ob4.modifiers.new("HS_Bevel", "BEVEL")
+    ob4.modifiers.new("User_Array", "ARRAY")
+    ob4.modifiers.new("HS_WeightedNormal", "WEIGHTED_NORMAL")
+    run("hard-surface", "bevel_stack.py", {"objects": ["SM_Part4"]})
+    fourth = [m.name for m in ob4.modifiers]
+    assert fourth == ["HS_Bevel", "HS_WeightedNormal", "User_Array"], fourth
+    return {"first": first, "second": second, "interleaved": third, "bevel_user_wn": fourth}
 
 
 def main():

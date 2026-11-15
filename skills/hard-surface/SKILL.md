@@ -173,7 +173,7 @@ result = runpy.run_path("<skill_dir>/scripts/bevel_stack.py", init_globals={"ARG
 
 ARGS: `objects`, `width`, `segments`, `angle_deg`, `triangulate`
 
-Existing `HS_` modifiers are moved in place into bevel, weighted normal, triangulate order; modifiers you added yourself stay where they are.
+Existing `HS_` modifiers are moved (not recreated) into one contiguous block in bevel, weighted normal, triangulate order, starting where the first of them was. Your own modifiers keep their order among themselves: those before the first `HS_` one stay before the block, the rest end up after it (`[HS_WeightedNormal, Mirror, HS_Bevel]` becomes `[HS_Bevel, HS_WeightedNormal, Mirror]`).
 
 ## Reference Guide
 
