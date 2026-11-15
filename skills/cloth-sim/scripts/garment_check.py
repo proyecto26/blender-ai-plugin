@@ -399,7 +399,12 @@ def main(garment, body, armature, bone_map=None, poses=None, fk_switches=None, s
 
             def measure(pose_name):
                 dgx = bpy.context.evaluated_depsgraph_get()
-                bw, bt, _d, _n = _world_mesh(bod, dgx)
+                bw, bt, bd, bn = _world_mesh(bod, dgx)
+                if not (_closed_and_wound(bd, bn) and len(bt) > 0 and np.isfinite(bw).all()
+                        and _signed_volume(bw, bt) * sign > 0):
+                    return {"pose": pose_name, "limb": None, "status": "NOT_CHECKED", "verdict": "NOT_CHECKED",
+                            "reason": "the evaluated body is not a closed, consistently wound mesh (or its facing "
+                                      "flipped) in this pose, so 'inside the body' is undefined here"}
                 gw, _gt, _gd, _gn = _world_mesh(gar, dgx)
                 return _row_from(pose_name, _measure(gw, bw, bt, sign, tol, radius), diag)
 

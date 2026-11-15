@@ -428,7 +428,7 @@ def test_d2_unmatched_mirror_vertices_not_checked():
             kb.data[7].co.x += 0.3
     ch, o = checks(audit())
     pair = ch["mirror"]["pairs"][0]
-    assert pair["verdict"] == "NOT_CHECKED" and "no mirrored vertex" in pair["reason"], pair
+    assert pair["verdict"] == "NOT_CHECKED" and "no unique mirrored vertex" in pair["reason"], pair
     assert o["verdict"] == "WARN"
     return {"pair": pair}
 
@@ -499,6 +499,125 @@ def test_d2_result_contract():
     return {"ok": True}
 
 
+# ---------------------------------------------------------------- review round 1 (Seldon findings)
+def test_r1_posed_body_must_stay_closed():
+    arm, body, gar = scene("loose")
+    md = body.modifiers.new("Mask", "MASK")
+    md.vertex_group = "forearm.L"
+    md.threshold = 0.5
+    md.show_viewport = False
+    fc = md.driver_add("show_viewport")
+    v = fc.driver.variables.new()
+    v.type = "SINGLE_PROP"
+    v.targets[0].id = arm
+    v.targets[0].data_path = 'pose.bones["upper_arm.L"].rotation_euler[0]'
+    fc.driver.expression = "var > 0.5"
+    res = gc(poses=["arms_raised"], search_radius=5.0)
+    rest, posed = row(res, "rest")[0], row(res, "arms_raised")[0]
+    assert rest["status"] == "OK", rest
+    assert posed["status"] == "NOT_CHECKED" and "closed" in posed["reason"], posed
+    return {"posed": posed["status"]}
+
+
+def test_r2_mirror_match_is_one_to_one():
+    outcomes = []
+    for tamper in ("orig", "dup"):
+        fresh()
+        ob = grid_mesh()
+        me = ob.data
+        orig = {(round(v.co.x, 3), round(v.co.y, 3), round(v.co.z, 3)): v.index for v in me.vertices}
+        coords = [tuple(v.co) for v in me.vertices] + [(0.5, 0.0, 0.25), (-0.5, 0.0, 0.25)]
+        ob.shape_key_clear()
+        me.clear_geometry()
+        me.from_pydata(coords, [], [])
+        me.update()
+        ob.shape_key_add(name="Basis")
+        add_key(ob, "Smile.L", g_left)
+        add_key(ob, "Smile.R", g_right)
+        neg_orig = orig[(-0.5, 0.0, 0.25)]
+        neg_dup = len(coords) - 1
+        kb = ob.data.shape_keys.key_blocks["Smile.R"]
+        i = neg_orig if tamper == "orig" else neg_dup
+        kb.data[i].co = (kb.data[i].co.x + 0.3, kb.data[i].co.y, kb.data[i].co.z)
+        ch, o = checks(audit())
+        outcomes.append(ch["mirror"]["pairs"][0]["verdict"])
+    assert outcomes == ["NOT_CHECKED", "NOT_CHECKED"], outcomes
+    return {"outcomes": outcomes}
+
+
+def test_r3_context_prop_driver_is_valid():
+    ob = good_face()
+    key = ob.data.shape_keys
+    fc = key.key_blocks["Brow"].driver_add("value")
+    v = fc.driver.variables.new()
+    v.type = "CONTEXT_PROP"
+    v.targets[0].context_property = "ACTIVE_SCENE"
+    v.targets[0].data_path = "frame_current"
+    fc.driver.expression = "var * 0.01"
+    ch, o = checks(audit())
+    assert ch["drivers"]["verdict"] == "PASS", ch["drivers"]
+    return {"ok": True}
+
+
+def test_r4_nan_in_basis_is_json_safe():
+    fresh()
+    ob = grid_mesh()
+    add_key(ob, "Brow", lambda c: (0.0, 0.0, 0.1 * c.y))
+    ob.data.shape_keys.reference_key.data[3].co = (float("nan"), 0.0, 0.0)
+    res = audit()
+    ch, o = checks(res)
+    assert ch["non_finite"]["verdict"] == "FAIL" and res["verdict"] == "FAIL", res
+    json.dumps(res, allow_nan=False)
+    rp = os.path.join(OUT, "audit_nan.json")
+    audit(result_path=rp, run_id="n-1")
+
+    def bad(c):
+        raise ValueError(c)
+    json.loads(open(rp, encoding="utf-8").read(), parse_constant=bad)
+    return {"diagonal": o["diagonal"]}
+
+
+def test_r5_mid_run_failure_restores_everything():
+    arm, body, gar = scene("loose")
+    scn = bpy.context.scene
+    act = bpy.data.actions.new("Original")
+    slot = act.slots.new(id_type="OBJECT", name="Rig")
+    ad = arm.animation_data_create()
+    ad.action = act
+    ad.action_slot = slot
+    pb = arm.pose.bones["upper_arm.L"]
+    pb.rotation_mode = "QUATERNION"
+    pb.rotation_quaternion = (0.9, 0.1, 0.2, 0.3)
+    pb.location = (0.1, 0.2, 0.3)
+    arm["fk_mode"] = 0.75
+    scn.frame_set(7)
+    q0, loc0 = tuple(pb.rotation_quaternion), tuple(pb.location)
+    before = sorted(a.name for a in bpy.data.actions)
+    src = open(os.path.join(SKILLS, "cloth-sim", "scripts", "garment_check.py"), encoding="utf-8").read()
+    hook = ("_calls = [0]\n_orig_measure = _measure\n"
+            "def _measure(*a, **k):\n    _calls[0] += 1\n    if _calls[0] == 2:\n"
+            "        raise RuntimeError('boom mid-run')\n    return _orig_measure(*a, **k)\n\n")
+    marker = 'ARGS = globals().get("ARGS")'
+    assert marker in src
+    path = os.path.join(OUT, "garment_check_boom.py")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(src.replace(marker, hook + marker, 1))
+    try:
+        runpy.run_path(path, init_globals={"ARGS": {"garment": "Garment", "body": "Body", "armature": "ARM_Limb",
+                                                    "poses": ["arms_raised"],
+                                                    "fk_switches": [{"bone": "", "prop": "fk_mode", "value": 0.0}]}})
+    except RuntimeError as exc:
+        assert "boom" in str(exc)
+    else:
+        raise AssertionError("the injected failure did not happen")
+    assert arm.animation_data.action is act and arm.animation_data.action_slot == slot
+    assert scn.frame_current == 7 and arm["fk_mode"] == 0.75
+    assert sorted(a.name for a in bpy.data.actions) == before
+    assert pb.rotation_mode == "QUATERNION" and tuple(pb.rotation_quaternion) == q0 and tuple(pb.location) == loc0
+    assert arm.data.pose_position == "POSE"
+    return {"restored": True}
+
+
 def main():
     os.makedirs(OUT, exist_ok=True)
     tests = [test_d1_loose_garment_passes, test_d1_poke_through_in_one_pose_fails,
@@ -510,7 +629,10 @@ def main():
              test_d2_missing_relative_key_fails, test_d2_drivers_to_missing_targets_fail,
              test_d2_mirror_pair_that_differs_fails, test_d2_unmatched_mirror_vertices_not_checked,
              test_d2_pair_without_partner_not_checked, test_d2_nothing_to_audit_is_fail_and_bad_names_raise,
-             test_d2_read_only, test_d2_thresholds_margin, test_d2_result_contract]
+             test_d2_read_only, test_d2_thresholds_margin, test_d2_result_contract,
+             test_r1_posed_body_must_stay_closed, test_r2_mirror_match_is_one_to_one,
+             test_r3_context_prop_driver_is_valid, test_r4_nan_in_basis_is_json_safe,
+             test_r5_mid_run_failure_restores_everything]
     checks_out, failed = {}, []
     for fn in tests:
         try:

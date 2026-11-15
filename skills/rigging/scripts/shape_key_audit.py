@@ -38,6 +38,7 @@ ARGS:
     run_id       (str|None) copied into the result file
 """
 import json
+import math
 import os
 import re
 import sys
@@ -76,6 +77,17 @@ def _coords(kb):
     return arr.reshape(-1, 3)
 
 
+def _finite(x):
+    """Copy of a result with every non-finite number replaced by None (JSON-safe)."""
+    if isinstance(x, float):
+        return x if math.isfinite(x) else None
+    if isinstance(x, dict):
+        return {k: _finite(v) for k, v in x.items()}
+    if isinstance(x, (list, tuple)):
+        return [_finite(v) for v in x]
+    return x
+
+
 def _check(name, verdict, **kw):
     return {"check": name, "verdict": verdict, **kw}
 
@@ -100,6 +112,8 @@ def _driver_problems(key, obj):
                 for i, t in enumerate(var.targets):
                     if i >= (2 if var.type in ("LOC_DIFF", "ROTATION_DIFF") else 1):
                         break
+                    if t.id is None and var.type == "CONTEXT_PROP":
+                        continue  # resolved from the evaluation context, no explicit ID by design
                     if t.id is None:
                         out.append(f"driver {path} variable '{var.name}' targets a missing object or datablock")
                         continue
@@ -121,7 +135,10 @@ def _audit_object(obj):
     ref = key.reference_key
     rc = _coords(ref)
     nverts = len(obj.data.vertices)
-    diag = float(np.linalg.norm(rc.max(axis=0) - rc.min(axis=0))) if len(rc) else 0.0
+    finite_rows = np.isfinite(rc).all(axis=1)
+    ref_finite = bool(finite_rows.all())
+    fr = rc[finite_rows]
+    diag = float(np.linalg.norm(fr.max(axis=0) - fr.min(axis=0))) if len(fr) else 0.0
     nonfinite = [kb.name for kb in blocks if not np.isfinite(_coords(kb)).all()]
     checks.append(_check("non_finite", "FAIL" if nonfinite else "PASS", keys=nonfinite))
     missing_rel = [kb.name for kb in blocks if kb.relative_key is None or kb.relative_key.name not in names]
@@ -158,9 +175,11 @@ def _audit_object(obj):
         left, right = sides["L"], sides["R"]
         bad_keys = [k.name for k in (left, right) if k.name in nonfinite or k.relative_key is None
                     or k.relative_key.name not in names]
-        if diag <= 0.0 or bad_keys:
+        if diag <= 0.0 or bad_keys or not ref_finite:
             mirror.append({"pair": base, "verdict": "NOT_CHECKED",
-                           "reason": "mesh has no size" if diag <= 0.0 else f"unusable keys: {bad_keys}"})
+                           "reason": "mesh has no size" if diag <= 0.0 else
+                          ("the reference key has non-finite coordinates" if not ref_finite
+                           else f"unusable keys: {bad_keys}")})
             continue
         if match is None:
             tree = kdtree.KDTree(nverts)
@@ -168,14 +187,24 @@ def _audit_object(obj):
                 tree.insert(tuple(co), i)
             tree.balance()
             match = np.full(nverts, -1, dtype=np.int64)
+            ambiguous = 0
             for i, co in enumerate(rc):
-                _p, j, dist = tree.find((-co[0], co[1], co[2]))
-                if dist <= MATCH_REL * diag:
-                    match[i] = j
+                near = tree.find_range((-co[0], co[1], co[2]), MATCH_REL * diag)
+                if len(near) == 1:
+                    match[i] = near[0][1]
+                elif len(near) > 1:
+                    ambiguous += 1
+            used = match[match >= 0]
+            ambiguous += int(len(used) - len(np.unique(used)))
         unmatched = int((match < 0).sum())
         if unmatched:
             mirror.append({"pair": base, "verdict": "NOT_CHECKED",
-                           "reason": f"{unmatched} vertices have no mirrored vertex within {MATCH_REL} of the diagonal"})
+                           "reason": f"{unmatched} vertices have no unique mirrored vertex within {MATCH_REL} of the "
+                                     f"diagonal ({ambiguous} ambiguous: coincident vertices)"})
+            continue
+        if ambiguous:
+            mirror.append({"pair": base, "verdict": "NOT_CHECKED",
+                           "reason": "the mirror matching is not one-to-one (coincident vertices)"})
             continue
         dl = _coords(left) - _coords(left.relative_key)
         dr = _coords(right) - _coords(right.relative_key)
@@ -222,8 +251,8 @@ def main(meshes=None, result_path=None, run_id=None):
     if not any(r["checks"] for r in rows):
         verdict = "FAIL"
         notes.append("measured nothing: no mesh with shape keys was audited, so the verdict is FAIL")
-    result = {"objects": rows, "thresholds": {"no_delta_rel": NO_DELTA_REL, "mirror_rel": MIRROR_REL,
-                                              "match_rel": MATCH_REL}, "notes": notes, "verdict": verdict}
+    result = _finite({"objects": rows, "thresholds": {"no_delta_rel": NO_DELTA_REL, "mirror_rel": MIRROR_REL,
+                                              "match_rel": MATCH_REL}, "notes": notes, "verdict": verdict})
     if result_path:
         tmp = result_path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as fh:
