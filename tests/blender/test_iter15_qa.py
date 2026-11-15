@@ -648,6 +648,18 @@ def test_h_within_mesh_names():
         ignored = run("clash_audit.py", {"objects": [a.name, b.name], "within_mesh": True,
                                          "ignore_pairs": [[a.name, b.name]]})
         out["ignore"] = {"without": plain["verdict"], "with": ignored["verdict"], "clashes_left": len(ignored["clashes"])}
+        # mixed pairs: the object name on one side, one island on the other (A split too, so no plain names remain)
+        cleanup()
+        a = two("nm_A", (0.0, 9.0))                 # island 1 crosses both B islands, island 2 is far away
+        b = two("nm_B", (0.5, -0.5))
+        plain = run("clash_audit.py", {"objects": [a.name, b.name], "within_mesh": True, "require_connected": False})
+        one = run("clash_audit.py", {"objects": [a.name, b.name], "within_mesh": True, "require_connected": False,
+                                     "ignore_pairs": [[a.name, b.name + "#1"]]})
+        both = run("clash_audit.py", {"objects": [a.name, b.name], "within_mesh": True, "require_connected": False,
+                                      "ignore_pairs": [[a.name, b.name + "#1"], [b.name + "#2", a.name]]})
+        out["mixed_plain"] = (plain["verdict"], [c.get("a", c) for c in plain["clashes"]][:4])
+        out["mixed"] = {"one_island": (one["verdict"], len(one["clashes"])), "both": both["verdict"],
+                        "plain_clashes": len(plain["clashes"])}
         cleanup()
         x1 = mesh_obj("nm_X1", CUBE_V, CUBE_F, None, material=False)
         x2 = mesh_obj("nm_X2", cube_at(1.0), CUBE_F, None, material=False)     # touches X1: a 2-object group
@@ -660,6 +672,8 @@ def test_h_within_mesh_names():
     finally:
         cleanup()
     assert out["ignore"]["without"] == "FAIL" and out["ignore"]["with"] == "PASS", out
+    assert out["mixed"]["one_island"][0] == "FAIL" and out["mixed"]["one_island"][1] < out["mixed"]["plain_clashes"], out
+    assert out["mixed"]["both"] == "PASS", out
     assert out["anchor"]["default_main"] == ["nm_X1", "nm_X2"], out
     assert out["anchor"]["anchored_main"][0].startswith("nm_Y#"), out
     return out

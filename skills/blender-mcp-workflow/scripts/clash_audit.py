@@ -538,7 +538,7 @@ def main(objects=None, gap_max_m=0.005, min_depth_m=0.001, require_connected=Tru
 
     def is_ignored(a, b):
         # a pair may name the audited object or one island of it (`Object#2`); an object covers all its islands
-        return bool({frozenset((a.name, b.name)), frozenset((a.src, b.src))} & ignore)
+        return any(frozenset((x, y)) in ignore for x in {a.name, a.src} for y in {b.name, b.src})
 
     objs = _targets(objects)
     editing = [o.name for o in objs if o.type == "MESH" and o.data.is_editmode]
