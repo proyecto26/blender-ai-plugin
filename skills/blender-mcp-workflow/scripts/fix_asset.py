@@ -127,13 +127,15 @@ def _smart_uv(obj):
                     raise RuntimeError(f"{op.idname()} returned {set(result)}, not {{'FINISHED'}}: no UVs were made")
     finally:
         failing = sys.exc_info()[0] is not None
-        with bpy.context.temp_override(active_object=obj, object=obj, selected_objects=[obj],
-                                       selected_editable_objects=[obj]):
-            if obj.mode != entry_mode:
-                result = bpy.ops.object.mode_set(mode=entry_mode)
-                if result != {"FINISHED"} and not failing:
-                    raise RuntimeError(f"object.mode_set({entry_mode}) returned {set(result)}: mode not restored")
-        bpy.context.view_layer.objects.active = prev
+        try:
+            with bpy.context.temp_override(active_object=obj, object=obj, selected_objects=[obj],
+                                           selected_editable_objects=[obj]):
+                if obj.mode != entry_mode:
+                    result = bpy.ops.object.mode_set(mode=entry_mode)
+                    if result != {"FINISHED"} and not failing:
+                        raise RuntimeError(f"object.mode_set({entry_mode}) returned {set(result)}: mode not restored")
+        finally:
+            bpy.context.view_layer.objects.active = prev  # restored even when the mode switch raised or was cancelled
 
 
 def main(objects=None, apply="scale", uv="box", uv_scale=1.0):

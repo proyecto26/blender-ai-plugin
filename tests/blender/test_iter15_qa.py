@@ -524,7 +524,7 @@ def test_f2_partial_coplanar_overlap():
         return mesh_obj(name, v, [(0, 1, 2, 3), second], None, material=False)
     out = {}
     try:
-        for name, args in (("half", (0.5, 0.0005)), ("quarter", (0.7, 0.0005)), ("apart_2mm", (0.5, 0.002)),
+        for name, args in (("half", (0.5, 0.0005)), ("quarter", (0.7, 0.0005)), ("narrow", (0.9, 0.0005)),("apart_2mm", (0.5, 0.002)),
                            ("side_by_side", (1.5, 0.0))):
             ob = pair("pc_" + name, *args)
             r = run("clash_audit.py", {"objects": [ob.name], "within_mesh": True})
@@ -533,6 +533,7 @@ def test_f2_partial_coplanar_overlap():
         cleanup()
     assert out["half"]["verdict"] == "FAIL" and out["half"]["kinds"] == ["coincident"], out
     assert out["quarter"]["verdict"] == "FAIL", out
+    assert out["narrow"]["verdict"] == "FAIL" and out["narrow"]["kinds"] == ["coincident"], out  # a 10% strip
     assert out["apart_2mm"]["verdict"] == "PASS" and out["side_by_side"]["verdict"] == "FAIL", out  # side_by_side: floating
     return out
 
@@ -593,6 +594,91 @@ def test_f5_doc_examples_check_results():
     return {"checked_blocks": True}
 
 
+def test_g2_clash_scale_length():
+    """Round 2 finding 2: clash_audit tolerances are metres, so the same physical fixture gives the same verdict at
+    scale_length 1.0 and 0.01 (the unit-scale tests used to cover validate_asset only)."""
+    scene = bpy.context.scene
+    original = scene.unit_settings.scale_length
+    seen = {}
+    try:
+        for s in (1.0, 0.01):
+            scene.unit_settings.scale_length = s
+            k = 1.0 / s
+            row = {}
+            for label, dz_m in (("flat_0.5mm", 0.0005), ("flat_2mm", 0.002)):
+                v = [(-.5, -.5, 0), (.5, -.5, 0), (.5, .5, 0), (-.5, .5, 0)]
+                v = v + [(x, y, z + dz_m) for x, y, z in v]
+                ob = mesh_obj(f"sl_{label}_{int(s * 100)}", v, [(0, 1, 2, 3), (4, 5, 6, 7)], None, k=k, material=False)
+                r = run("clash_audit.py", {"objects": [ob.name], "within_mesh": True})
+                row[label] = r["verdict"]
+            # two separate objects: a cube pair 3 mm apart is floating at 1 mm contact tolerance, touching at 5 mm
+            a = mesh_obj(f"sl_a{int(s * 100)}", CUBE_V, CUBE_F, None, k=k, material=False)
+            b = mesh_obj(f"sl_b{int(s * 100)}", [(x + 1.003, y, z) for x, y, z in CUBE_V], CUBE_F, None, k=k, material=False)
+            row["gap_3mm_default"] = run("clash_audit.py", {"objects": [a.name, b.name]})["verdict"]
+            row["gap_3mm_wide"] = run("clash_audit.py", {"objects": [a.name, b.name], "gap_max_m": 0.01})["verdict"]
+            seen[s] = row
+            cleanup()
+    finally:
+        scene.unit_settings.scale_length = original
+        cleanup()
+    assert seen[1.0] == seen[0.01], seen
+    assert seen[1.0]["flat_0.5mm"] == "FAIL" and seen[1.0]["flat_2mm"] == "PASS", seen
+    assert seen[1.0]["gap_3mm_default"] == "PASS" and seen[1.0]["gap_3mm_wide"] == "PASS", seen
+    return seen
+
+
+def test_g3_smart_uv_cleanup_failure_restores_active():
+    """Round 2 finding 3: when the cleanup mode switch is CANCELLED, the active object is still put back, then it raises."""
+    ob = mesh_obj("cf_target", CUBE_V, CUBE_F, None, material=False)
+    other = mesh_obj("cf_other", CUBE_V, CUBE_F, None, material=False)
+    g = runpy.run_path(os.path.join(WF, "scripts", "fix_asset.py"), run_name="__skill_test__",
+                       init_globals={"ARGS": {"objects": [ob.name], "apply": "", "uv": ""}})
+
+    class ModeNS:
+        def __init__(self):
+            self.calls = []
+
+        def __getattr__(self, name):
+            return getattr(bpy.ops.object, name)
+
+        def mode_set(self, **kw):
+            self.calls.append(kw["mode"])
+            return bpy.ops.object.mode_set(**kw) if len(self.calls) == 1 else {"CANCELLED"}
+
+    class OpsNS:
+        def __init__(self):
+            self.object = ModeNS()
+
+        def __getattr__(self, name):
+            return getattr(bpy.ops, name)
+
+    class FakeBpy:
+        def __init__(self):
+            self.ops = OpsNS()
+
+        def __getattr__(self, name):
+            return getattr(bpy, name)
+    g["_smart_uv"].__globals__["bpy"] = fake = FakeBpy()
+    try:
+        bpy.context.view_layer.objects.active = other
+        try:
+            g["_smart_uv"](ob)
+        except RuntimeError as exc:
+            raised = str(exc)
+        else:
+            raise AssertionError("a CANCELLED cleanup did not raise")
+        active_back = bpy.context.view_layer.objects.active is other
+        assert "mode not restored" in raised and fake.ops.object.calls == ["EDIT", "OBJECT"], (raised, fake.ops.object.calls)
+        assert active_back, "active object was not restored after the failed cleanup"
+    finally:
+        g["_smart_uv"].__globals__["bpy"] = bpy
+        if ob.mode != "OBJECT":
+            bpy.context.view_layer.objects.active = ob
+            bpy.ops.object.mode_set(mode="OBJECT")
+        cleanup()
+    return {"raised": raised, "active_restored": active_back}
+
+
 def main():
     args = _cli_args()
     out_dir = args.get("out_dir", ".")
@@ -601,7 +687,8 @@ def main():
     tests = (test_d_geometry_and_scale, test_d_world_space, test_verdict_rule, test_c_uv_ratio_values,
              test_d_clash_within_mesh, test_b1_result_file, test_a13_fix_asset, test_b2_rows, test_docs_headless,
              test_f1_active_render_layer, test_f2_partial_coplanar_overlap, test_f3_empty_audit_result_file,
-             test_f4_smart_uv_entry_mode, test_f5_doc_examples_check_results)
+             test_f4_smart_uv_entry_mode, test_f5_doc_examples_check_results,
+             test_g2_clash_scale_length, test_g3_smart_uv_cleanup_failure_restores_active)
     for fn in tests:
         try:
             checks[fn.__name__] = {"ok": True, "data": fn()}
