@@ -8,6 +8,32 @@ Format: [Semantic Versioning](https://semver.org/) — `Major.Minor.Patch`
 
 ## [Unreleased]
 
+Iteration 15: checks that catch what users complain about in AI-made Blender work (scripts that fail when run, messy
+UVs, twisted rigs, fixing by hand), from a comparison with the blender-agent-skills pack. Ideas and thresholds only,
+no code was copied or run. Plan: `docs/plans/iteration-15-agent-skills-comparison.md`.
+
+- `uv_unwrap_check.py`: measure only unless `unwrap=True` (no UV layer is created); `uv_layer` picks the channel;
+  islands, collapsed faces, exact overlap, union coverage per UDIM tile, per-island texel density spread and stretch
+  p95, with PASS/WARN/FAIL/NOT_CHECKED; `method`, `margin_px` (real pixel gap) and `seams_from_angle` per object; a
+  shared mesh is refused unless `make_single_user=True`. `uv_space_used` is now `uv_area_sum`, next to `uv_coverage`.
+- `validate_asset.py`: degenerate faces and edges, inconsistent winding, inside-out closed shells (open shells are
+  NOT_CHECKED), collapsed and overlapping UVs (`allow_overlap`), all in world space with the scene unit scale.
+  `clash_audit.py`: `within_mesh=True` checks parts inside one mesh.
+- `rig_check.py`: `L_`/`R_` prefixes, missing meshes are an error, the Armature modifier must target this rig,
+  non-finite weights, weight sums, zero-length bones, unapplied armature rotation or scale (any rotation mode), mirrored
+  bone axes. New `stress_check.py`: poses arms, elbows, knees, crouch and forearm twists on a temporary action that is
+  removed, restores everything, fails a pose that is not reached (axis and direction checked), and measures twist
+  collapse (minimum section width) and edge stretch; thresholds 0.5 and 1.5, set from fixtures.
+- Headless runs: verdict scripts take `result_path` and `run_id`; a FAIL exits 2; a run counts only when that file
+  exists with that `run_id`. Docs use `--python-exit-code 1` and `--args-file`; every `bpy.ops` call checks FINISHED.
+- Fixed: `bake_maps.py` reused an image at the wrong size, saved a cancelled bake and left bake state changed;
+  `pbr_material.py` wired emission at strength 0; `scatter_props.py` props had overlapping UVs; `cloth_setup.py`
+  reported no pin while one was kept; `optimize_mesh.py` edited shared meshes; Unity and Godot exports dropped missing
+  objects; `generate_lods.py` deleted same-named objects it did not make; `export_asset.py` counted an old file as the
+  export; `fix_asset.py` changed meshes before rejecting bad arguments and left Edit Mode on failure;
+  `gn_curve_profile.py` wrote world points as local; `bevel_stack.py` did not keep its modifier order.
+- `qa-review` and the validation checklist say which script to run when.
+
 Iteration 14: three of the small open items from iteration 13.
 
 - `score_run.py`: reads Blender launches hidden in `eval`, PowerShell `Invoke-Expression`/`iex`, `$(...)`, backticks,

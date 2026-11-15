@@ -129,6 +129,32 @@ Measured limits left after the iteration 13 fixes.
   maps at margin 4.0 it was right on 174, wrong on 0 and undecided on 42, but with the red channel inverted `auto` was
   confidently wrong on 60 of 72; flat, stripe-only, noisy or weak-relief maps stay `default`
 
+## Iteration 15, from the blender-agent-skills comparison
+
+Done in iteration 15 (plan `docs/plans/iteration-15-agent-skills-comparison.md`): A1-A16 script fixes, headless result
+files and exit codes, UV measurement, geometry checks, `rig_check` additions and `stress_check.py`.
+
+Next (verified gaps, medium value):
+- [ ] `env_report.py` preflight: version, engines, add-ons, enum values, read-only
+- [ ] Material dependency checks: used empty slots, missing image files, color data on non-color sockets
+- [ ] `capture_views.py`: isolate the asset, wire view, contact sheet
+- [ ] FBX round trip in a temporary scene: dimensions within 0.1%, bone hierarchy, clip names
+- [ ] Material, texture and bone budgets
+- [ ] Bake controls: several high sources, cage, UV layer, ray distance, normal convention, metallic and ORM
+- [ ] Retarget and visual bake checked on evaluated playback; animation loop seam check
+- [ ] Garment penetration over stress poses; shape key audit
+- [ ] Modular kit check; scatter spacing, slope and height limits; GN diagnostics; sculpt preparation on a duplicate
+
+Low: numeric PBR statistics, auto retopology on a duplicate, outline normals, hair card checks.
+
+Open limits:
+- [ ] `globals().get("ARGS") or _cli_args()` ignores an explicit `ARGS={}` (latent: no caller passes it; the fix
+  touches AGENTS.md and the validator)
+- [ ] `uv_unwrap_check.py` coverage is sampled on a 512 grid per tile (about 1%); a fully stacked 20k-triangle mesh
+  caps the overlap search and still FAILs
+- [ ] `stress_check.py` thresholds come from synthetic cylinder limbs; real characters may need tuning
+- [ ] LOD sets made before iteration 15 have no tag, so `generate_lods.py` refuses to replace them
+
 ## Not planned, and why
 
 - Needs consent or hardware: a paid orchestrator run, ComfyUI generation (credits), Godot import (not installed), Mac runs
