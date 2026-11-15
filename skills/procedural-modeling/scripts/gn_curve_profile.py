@@ -9,7 +9,7 @@ modifier so they stay editable. Re-running with the same name updates the object
 ARGS:
     name        (str)   object name (default "GEO_Pipe")
     points      (list)  [[x, y, z], ...] curve points in world space, at least 2
-    radius      (float) profile radius in metres (default 0.1)
+    radius      (float) profile radius in the object's local units (default 0.1; equals metres at scale 1)
     resolution  (int)   profile segments (default 16)
     cyclic      (bool)  close the curve (default False)
     fill_caps   (bool)  cap open ends (default True)

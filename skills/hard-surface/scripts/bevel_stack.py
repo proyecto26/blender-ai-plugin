@@ -1,7 +1,8 @@
 """Add the standard non-destructive hard-surface finishing stack:
 Bevel (angle-limited, harden normals) -> Weighted Normal (keep sharp) -> optional Triangulate.
-Existing modifiers with the same names are updated, not duplicated and moved in place into that order
-(modifiers you added yourself are left where they are).
+Existing modifiers with the same names are updated, not duplicated and moved (not recreated) into one block in that order,
+starting where the first of them was. Modifiers you added keep their order among themselves: those before the
+first owned one stay before the block, the rest end up after it.
 
     import runpy
     result = runpy.run_path("<skill_dir>/scripts/bevel_stack.py",
@@ -46,15 +47,14 @@ def _move_to(obj, mod, index):
 
 
 def _order_owned(obj, bevel, wn, tri):
-    """Put the owned modifiers in bevel -> weighted normal -> triangulate order, moving only them (modifiers
-    the user added stay where they are)."""
-    mods = list(obj.modifiers)
-    if mods.index(bevel) > mods.index(wn):
-        _move_to(obj, bevel, mods.index(wn))
-    if tri is not None:
-        mods = list(obj.modifiers)
-        if mods.index(tri) < mods.index(wn):
-            _move_to(obj, tri, mods.index(wn))
+    """Make the owned modifiers one contiguous block in bevel -> weighted normal -> triangulate order, starting
+    where the first of them was. The modifiers themselves are moved, never recreated (settings and animation
+    stay). User modifiers keep their order among themselves; those that sat before the first owned one stay
+    before the block, all others end up after it."""
+    ordered = [m for m in (bevel, wn, tri) if m is not None]
+    start = min(list(obj.modifiers).index(m) for m in ordered)
+    for k, mod in enumerate(ordered):
+        _move_to(obj, mod, start + k)
 
 
 def main(objects, width=0.003, segments=2, angle_deg=30.0, triangulate=False):
