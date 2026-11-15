@@ -3,7 +3,7 @@ name: qa-review
 description: "Final QA gate for Blender assets: screenshots, checklists, naming and topology audit, ship/no-ship verdict. Use for 'is this ready to ship' or a last check before export. Not for fixes (use blender-mcp-workflow fix_asset, asset-optimization)."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

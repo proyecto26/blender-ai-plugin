@@ -3,7 +3,7 @@ name: stylized-style
 description: "Stylized NPR: shape language, toon materials. Use for non-photoreal looks. Ships tested scripts. Not hand-painted texturing (hand-painted-style)."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

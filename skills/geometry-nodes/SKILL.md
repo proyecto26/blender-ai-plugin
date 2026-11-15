@@ -3,7 +3,7 @@ name: geometry-nodes
 description: "Geometry Nodes systems: scatter and instance rocks, trees, grass; parametric node groups; curve to mesh. Use for 'scatter/distribute' or GN Python. Ships tested scripts. Not for one swept profile (use procedural-modeling)."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

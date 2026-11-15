@@ -3,7 +3,7 @@ name: archviz
 description: "Architectural visualization: photoreal interior and exterior renders at real-world scale. Use for 'interior render', real estate stills or a building walkthrough. Not for game kits (use environment-artist)."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

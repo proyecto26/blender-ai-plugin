@@ -3,7 +3,7 @@ name: genre-metroidvania-roguelike
 description: "Metroidvania and roguelike room kits. Use for modular rooms, ability gates or a roguelike dungeon kit."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

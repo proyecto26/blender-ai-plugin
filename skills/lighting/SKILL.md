@@ -3,7 +3,7 @@ name: lighting
 description: "Lighting setups: three-point, HDRI, rim, volumetrics and mood. Use when a scene is too dark, blown out or lit with no shape, or needs a quick key/fill/rim. Ships tested scripts. Not for material or shading problems (use lookdev)."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

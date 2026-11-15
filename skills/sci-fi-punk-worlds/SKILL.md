@@ -3,7 +3,7 @@ name: sci-fi-punk-worlds
 description: "Sci-fi and -punk settings: cyberpunk, steampunk, space station, solarpunk. Use for 'cyberpunk city' or 'steampunk workshop'."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

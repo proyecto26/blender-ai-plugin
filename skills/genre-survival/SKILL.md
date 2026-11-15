@@ -3,7 +3,7 @@ name: genre-survival
 description: "Survival and survival-horror spaces. Use for scavenging maps, crafting props and scarce-resource tension."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

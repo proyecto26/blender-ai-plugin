@@ -3,7 +3,7 @@ name: indie-horror-aesthetics
 description: "Indie horror lanes: abandoned hospital, cabin, corporate horror, Puppet Combo. Use to pick a horror reference. Not generic scary (horror-style)."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

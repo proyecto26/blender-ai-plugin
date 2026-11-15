@@ -3,7 +3,7 @@ name: hand-painted-style
 description: "Hand-painted game textures, WoW-style brushwork. Use for painted-in lighting. Not whole-image watercolor (painterly-style)."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

@@ -3,7 +3,7 @@ name: environment-artist
 description: "Environment art: greybox/blockout, level layout, modular kits, terrain and buildings. Use for rooms, stairs, cover or a blockout before final art. Ships tested scripts. Not for filling a room with props (use set-dressing)."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

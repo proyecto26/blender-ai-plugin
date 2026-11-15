@@ -3,7 +3,7 @@ name: noir-style
 description: "Film noir: high contrast, wet streets, venetian-blind shadows. Use for 'neo-noir' or detective scenes."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

@@ -3,7 +3,7 @@ name: cozy-wholesome-mood
 description: "Cozy wholesome mood. Use for hygge warm lighting, a calm game room, or a scene that feels cold and should comfort."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

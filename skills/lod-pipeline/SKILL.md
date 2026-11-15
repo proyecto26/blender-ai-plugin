@@ -3,7 +3,7 @@ name: lod-pipeline
 description: "LOD chains, tested scripts: LOD1..N copies, naming, screen-size switch distances. Use when distant meshes cost frame rate, LODs pop or an engine needs LODs; load even for advice. Not one-off cleanup (use asset-optimization)."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

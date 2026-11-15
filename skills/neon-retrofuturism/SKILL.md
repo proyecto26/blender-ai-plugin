@@ -3,7 +3,7 @@ name: neon-retrofuturism
 description: "Synthwave/vaporwave neon: grid horizons, chrome, dusk. Use for outrun or 80s sunset. Not glossy aqua (frutiger-aero-style)."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

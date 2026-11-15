@@ -3,7 +3,7 @@ name: procedural-modeling
 description: "Procedural assets from a swept curve profile: pipes, cables, rails, trim, roads. Use for an editable parametric mesh. Ships tested scripts. Not for scattering many instances (use geometry-nodes)."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

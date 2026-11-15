@@ -3,7 +3,7 @@ name: prop-artist
 description: "Prop modeling: furniture, tools, bottles, household objects, kitbash parts. Use for 'model a chair/bottle/tool'. Not for sci-fi machinery (use hard-surface)."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

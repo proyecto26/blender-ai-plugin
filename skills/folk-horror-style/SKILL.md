@@ -3,7 +3,7 @@ name: folk-horror-style
 description: "Folk horror: rural ritual dread, pagan villages. Use for 'Wicker Man' or sunny countryside that feels menacing."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

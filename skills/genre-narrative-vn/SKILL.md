@@ -3,7 +3,7 @@ name: genre-narrative-vn
 description: "Visual novel and narrative game spaces. Use for a VN background or story scene with clear character staging."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

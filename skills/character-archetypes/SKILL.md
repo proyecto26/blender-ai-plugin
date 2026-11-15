@@ -3,7 +3,7 @@ name: character-archetypes
 description: "Character archetype looks: elf, vampire, knight, assassin, mecha. Use for 'design an elf' silhouette and costume before modeling."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

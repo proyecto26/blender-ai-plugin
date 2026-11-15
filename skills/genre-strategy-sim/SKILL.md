@@ -3,7 +3,7 @@ name: genre-strategy-sim
 description: "Strategy, tower defense, city builder and sim art. Use for RTS units, top-down tiles and buildings."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

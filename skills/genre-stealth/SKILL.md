@@ -3,7 +3,7 @@ name: genre-stealth
 description: "Stealth level spaces. Use for infiltration maps, shadow volumes, patrol routes and cover."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

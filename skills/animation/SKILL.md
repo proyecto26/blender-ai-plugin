@@ -3,7 +3,7 @@ name: animation
 description: "Game-ready animation: walk, run and idle cycles, combat moves, camera animation, NLA. Use when a character or prop must move, loop or turntable, or motion feels floaty or pops. Ships tested scripts. Not for rigs (use rigging)."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

@@ -3,7 +3,7 @@ name: genre-puzzle-platformer
 description: "Puzzle and platformer levels. Use when players cannot tell what is climbable, jumpable or dangerous."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

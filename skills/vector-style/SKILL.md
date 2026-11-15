@@ -3,7 +3,7 @@ name: vector-style
 description: "Flat vector look: clean fills, sharp silhouettes. Use for 'flat design' or SVG-like. Not bouncy cartoons (cartoon-style)."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

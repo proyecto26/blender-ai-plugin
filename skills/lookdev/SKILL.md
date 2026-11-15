@@ -3,7 +3,7 @@ name: lookdev
 description: "Look-dev loop: iterate material, light and camera against a reference until shading reads right. Use for 'my asset looks flat/wrong' or turntable review. Not for one material (use materials) or a light rig (use lighting)."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

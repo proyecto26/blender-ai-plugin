@@ -3,7 +3,7 @@ name: dark-gritty-mood
 description: "Grim, rusty, abandoned mood. Use for 'grimy', 'bleak and lonely', or a too-clean scene needing wear and decay."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

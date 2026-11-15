@@ -3,7 +3,7 @@ name: hair-groom
 description: "Hair and fur grooming: curves, particle hair, game hair cards. Use for 'add hair', beards, bangs, whiskers or fur. Not for body or face modeling (use character-artist)."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

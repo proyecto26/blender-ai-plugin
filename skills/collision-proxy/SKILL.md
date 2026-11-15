@@ -3,7 +3,7 @@ name: collision-proxy
 description: "Game colliders, tested scripts: UCX/UHX convex hulls, boxes, capsules, engine naming. Use when players walk through a mesh, physics uses the render mesh or colliders are dense; load even for advice. Not sims (use physics-sim)."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

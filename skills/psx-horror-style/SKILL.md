@@ -3,7 +3,7 @@ name: psx-horror-style
 description: "PS1 horror: affine textures, heavy fog, crunchy low-poly. Use for 'Puppet Combo vibes'. Not plain low-poly (lowpoly-style)."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

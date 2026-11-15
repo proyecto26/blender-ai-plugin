@@ -3,7 +3,7 @@ name: comic-book-style
 description: "Western comic look: ink lines, halftone, high contrast. Use for 'comic book' or Ben-Day dots. Not manga (manga-style)."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

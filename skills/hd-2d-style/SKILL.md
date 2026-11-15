@@ -3,7 +3,7 @@ name: hd-2d-style
 description: "HD-2D: pixel sprites in 3D scenes. Use for Octopath looks, billboard sprites. Ships tested scripts. Not pure pixel art (pixel-art-style)."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

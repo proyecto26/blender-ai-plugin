@@ -3,7 +3,7 @@ name: genre-rpg
 description: "RPG worlds. Use for an RPG town, quest hub, region identity or items whose rarity must read."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

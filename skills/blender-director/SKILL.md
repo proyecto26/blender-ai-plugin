@@ -3,7 +3,7 @@ name: blender-director
 description: "Plans and runs any multi-step Blender production from brief to verified export: model, look, light, camera, validate, export. Use for 'plan this asset/scene/film', matching a reference, or a game-ready pipeline. Holds the skill catalog mapping every skill name to its job. Ships tested scripts. Not for one-off bpy code (use blender-mcp-workflow)."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: orchestrator

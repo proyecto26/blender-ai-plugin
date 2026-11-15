@@ -3,7 +3,7 @@ name: camera-cinematography
 description: "Camera work: framing, lenses, depth of field, hero shots and camera moves. Use for 'frame the subject', eye-level first-person views, or a subject blocked from view. Ships tested scripts. Not for render settings (use rendering)."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

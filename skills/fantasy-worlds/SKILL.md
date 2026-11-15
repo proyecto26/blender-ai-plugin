@@ -3,7 +3,7 @@ name: fantasy-worlds
 description: "Fantasy settings: medieval, high, dark and urban fantasy. Use for 'medieval castle' or 'dark fantasy ruins' props and palette."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

@@ -3,7 +3,7 @@ name: genre-soulslike
 description: "Soulslike spaces. Use for Dark Souls-like ruins, fog-gate boss approaches and bonfire landmarks."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

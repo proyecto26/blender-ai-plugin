@@ -3,7 +3,7 @@ name: horror-style
 description: "Psychological horror, Silent Hill vein: dread, decay. Use for 'make it unsettling'. Not PS1 (psx-horror-style) or VHS (analog-found-footage-horror)"
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

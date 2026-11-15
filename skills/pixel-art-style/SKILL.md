@@ -3,7 +3,7 @@ name: pixel-art-style
 description: "Pixel-art look from 3D: low-res, texel-constrained. Use for 'pixelated' renders. Not NES/SNES (retro-8bit-style, retro-16bit-style) or hd-2d-style."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

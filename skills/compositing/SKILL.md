@@ -3,7 +3,7 @@ name: compositing
 description: "Compositor work: bloom and glow, color grade, render passes, vignette. Use when adding glow, grading a render or writing compositor Python for Blender 5.x. Ships tested scripts. Not for sampling or output settings (use rendering)."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

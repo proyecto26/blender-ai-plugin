@@ -3,7 +3,7 @@ name: retopology
 description: "Retopology: clean quad-dominant, animation-ready topology from sculpts or messy meshes. Use for n-gons, poles or bad edge flow before rigging. Ships tested scripts."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

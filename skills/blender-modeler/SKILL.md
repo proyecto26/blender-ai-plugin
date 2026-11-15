@@ -3,7 +3,7 @@ name: blender-modeler
 description: "Core mesh modeling: blockouts, Edit Mode, modifiers, smooth/flat shading. Use for 'model this', 'clean up the mesh' or 'why does my mesh look faceted'. Not for characters (use character-artist) or props (use prop-artist)."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

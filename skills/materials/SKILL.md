@@ -3,7 +3,7 @@ name: materials
 description: "PBR and stylized materials: metal, wood, rust, glass, fabric, procedural shaders. Use when an object is grey or shiny the wrong way, or needs a metal or rust look. Ships tested scripts. Not for judging the full look (use lookdev)."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

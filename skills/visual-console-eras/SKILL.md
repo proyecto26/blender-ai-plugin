@@ -3,7 +3,7 @@ name: visual-console-eras
 description: "Console-era looks: PS1 to PS5, DOS, arcade, CRT, film grain. Use for 'PS2-era graphics'. Not a low-poly build (lowpoly-style)."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist
