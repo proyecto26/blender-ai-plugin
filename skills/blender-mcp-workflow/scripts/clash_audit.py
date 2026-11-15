@@ -1,7 +1,8 @@
 """Clash audit for a set of mesh objects (read-only): penetrations, objects inside other objects, floating parts.
 
 World-space BVH trees are built from the evaluated meshes (modifiers count), with an AABB broad phase. Touching
-faces are not a clash. Nothing in the scene is changed.
+faces are not a clash. Nothing in the scene is changed. Coordinates are converted to metres with the scene
+`unit_settings.scale_length`, so every `*_m` argument and result is in metres at any unit scale.
 
     import runpy
     result = runpy.run_path("<skill_dir>/scripts/clash_audit.py",
@@ -68,6 +69,7 @@ from mathutils.bvhtree import BVHTree
 
 SCRIPT = "clash_audit.py"
 DIRS = [Vector(d).normalized() for d in ((0.5934, 0.6171, 0.5154), (-0.3182, 0.5017, 0.8043), (0.2651, -0.7483, 0.6101))]
+COPLANAR_MIN_AREA_M2 = 1e-6  # smallest coplanar overlap between islands of one mesh that is a clash
 GRID = 6  # barycentric grid divisions for the finest sampling level
 
 
@@ -89,7 +91,7 @@ def _cli_args():
 class Rec:
     """One object's evaluated mesh in world space."""
 
-    def __init__(self, obj, depsgraph):
+    def __init__(self, obj, depsgraph, scale_length=1.0):
         self.name = self.src = obj.name
         ev = obj.evaluated_get(depsgraph)
         me = ev.to_mesh()
@@ -98,7 +100,7 @@ class Rec:
             co = np.empty(n * 3, dtype=np.float32)
             me.vertices.foreach_get("co", co)
             m = np.array(obj.matrix_world, dtype=np.float64)
-            self.verts = co.reshape(n, 3).astype(np.float64) @ m[:3, :3].T + m[:3, 3]
+            self.verts = (co.reshape(n, 3).astype(np.float64) @ m[:3, :3].T + m[:3, 3]) * scale_length  # metres
             me.calc_loop_triangles()
             nt = len(me.loop_triangles)
             tri = np.empty(nt * 3, dtype=np.int32)
@@ -281,28 +283,65 @@ def _on_surface_fraction(src, dst, tol, cap, rng):
     return n / len(pts)
 
 
-def _coplanar_fraction(src, dst, tol, cap, rng):
-    """Share of src's surface points (triangle grid) lying within tol of dst's surface on a face with the same
-    orientation: z-fighting coplanar overlap, however small a part of the surface it is. Opposed faces (two solids
-    touching face to face) do not count."""
-    t = src.verts[src.tris]
-    n = np.cross(t[:, 1] - t[:, 0], t[:, 2] - t[:, 0])
-    ln = np.linalg.norm(n, axis=1)
-    keep = ln > 0
-    t, n = t[keep], n[keep] / ln[keep][:, None]
-    # interior points only: a point on a triangle edge would count a solid's edge touching another solid's face
-    w = [(i / GRID, j / GRID) for i in range(1, GRID) for j in range(1, GRID - i)]
-    pts = np.concatenate([t[:, 0] * a + t[:, 1] * b + t[:, 2] * (1 - a - b) for a, b in w])
-    nrm = np.tile(n, (len(w), 1))
-    if len(pts) > cap:
-        pick = np.sort(rng.choice(len(pts), cap, replace=False))
-        pts, nrm = pts[pick], nrm[pick]
-    hits = 0
-    for p, q in zip(pts, nrm):
-        loc, normal, _, _ = dst.bvh.find_nearest(Vector(p), tol)
-        if loc is not None and float(np.dot(q, np.array(normal))) > 0.99:
-            hits += 1
-    return hits / max(len(pts), 1)
+def _clip_area(subject, clip):
+    """Area of the intersection of two 2D triangles (Sutherland-Hodgman; `clip` is convex)."""
+    def orient(poly):
+        x, y = poly[:, 0], poly[:, 1]
+        return 0.5 * float(np.sum(x * np.roll(y, -1) - np.roll(x, -1) * y))
+    clip = clip if orient(clip) > 0 else clip[::-1]
+    out = [tuple(p) for p in subject]
+    for i in range(3):
+        a, b = clip[i], clip[(i + 1) % 3]
+        inp, out = out, []
+        if not inp:
+            break
+
+        def side(q):
+            return (b[0] - a[0]) * (q[1] - a[1]) - (b[1] - a[1]) * (q[0] - a[0])
+        for j, cur in enumerate(inp):
+            prev = inp[j - 1]
+            sc, sp = side(cur), side(prev)
+            if sc >= 0:
+                if sp < 0:
+                    t = sp / (sp - sc)
+                    out.append((prev[0] + t * (cur[0] - prev[0]), prev[1] + t * (cur[1] - prev[1])))
+                out.append(cur)
+            elif sp >= 0:
+                t = sp / (sp - sc)
+                out.append((prev[0] + t * (cur[0] - prev[0]), prev[1] + t * (cur[1] - prev[1])))
+    return abs(orient(np.array(out))) if len(out) >= 3 else 0.0
+
+
+def _coplanar_overlap_area(a, b, tol):
+    """Exact area (m2) where triangles of a and b lie on the same plane (every corner within tol of the other's plane,
+    normals within ~8 degrees and the same way round) and overlap: z-fighting, however narrow the strip. Opposed faces
+    (two solids touching face to face) and merely adjacent faces contribute nothing."""
+    # broad phase: triangle boxes padded by tol (BVHTree.overlap tests exact triangle intersection, which two sheets
+    # 0.5 mm apart never have)
+    ta_all, tb_all = a.verts[a.tris], b.verts[b.tris]
+    alo, ahi = ta_all.min(1) - tol, ta_all.max(1) + tol
+    blo, bhi = tb_all.min(1), tb_all.max(1)
+    pairs = []
+    for start in range(0, len(alo), 256):
+        hit = np.all((alo[start:start + 256, None] <= bhi[None]) & (ahi[start:start + 256, None] >= blo[None]), axis=2)
+        pairs.extend((start + i, j) for i, j in zip(*np.nonzero(hit)))
+    total = 0.0
+    for i, j in pairs:
+        ta, tb = a.verts[a.tris[i]], b.verts[b.tris[j]]
+        na, nb = np.cross(ta[1] - ta[0], ta[2] - ta[0]), np.cross(tb[1] - tb[0], tb[2] - tb[0])
+        la, lb = np.linalg.norm(na), np.linalg.norm(nb)
+        if la == 0 or lb == 0:
+            continue
+        na, nb = na / la, nb / lb
+        if float(na @ nb) < 0.99:
+            continue
+        if np.abs((tb - ta[0]) @ na).max() > tol or np.abs((ta - tb[0]) @ nb).max() > tol:
+            continue
+        u = (ta[1] - ta[0]) / np.linalg.norm(ta[1] - ta[0])
+        v = np.cross(na, u)
+        total += _clip_area(np.stack([(tb - ta[0]) @ u, (tb - ta[0]) @ v], axis=1),
+                            np.stack([(ta - ta[0]) @ u, (ta - ta[0]) @ v], axis=1))
+    return total
 
 
 def _border_distance(rec, p):
@@ -499,7 +538,7 @@ def main(objects=None, gap_max_m=0.005, min_depth_m=0.001, require_connected=Tru
     depsgraph = bpy.context.evaluated_depsgraph_get()
     recs, skipped = [], []
     for o in objs:
-        r = Rec(o, depsgraph)
+        r = Rec(o, depsgraph, bpy.context.scene.unit_settings.scale_length or 1.0)
         if r.ok and within_mesh:
             parts = _islands(r)
             recs.extend(parts if len(parts) > 1 else [r])
@@ -592,8 +631,7 @@ def main(objects=None, gap_max_m=0.005, min_depth_m=0.001, require_connected=Tru
                     if frozenset((a.name, b.name)) not in ignore:
                         clashes.append({"a": a.name, "b": b.name, "depth_m": None, "depth": "coincident",
                                         "reason": "the two meshes occupy the same surface: duplicate geometry"})
-                elif a.src == b.src and max(_coplanar_fraction(a, b, tol, cap, rng),
-                                            _coplanar_fraction(b, a, tol, cap, rng)) >= 0.02:
+                elif a.src == b.src and _coplanar_overlap_area(a, b, tol) >= COPLANAR_MIN_AREA_M2:
                     joined = True  # islands of one mesh whose faces overlap on the same plane, even partly (z-fighting)
                     if frozenset((a.name, b.name)) not in ignore:
                         clashes.append({"a": a.name, "b": b.name, "depth_m": None, "depth": "coincident",
