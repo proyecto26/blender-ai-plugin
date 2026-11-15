@@ -134,7 +134,7 @@ import runpy
 result = runpy.run_path("<skill_dir>/scripts/pbr_material.py", init_globals={"ARGS": {...}})["result"]
 ```
 
-ARGS: `name`, `base_color`, `metallic`, `roughness`, `specular_ior_level`, `coat_weight`, `emission_strength`, `emission_color`, `textures`, `objects`
+ARGS: `name`, `base_color`, `metallic`, `roughness`, `specular_ior_level`, `coat_weight`, `emission_strength` (default: 1.0 when an emission texture is wired, else 0), `emission_color`, `textures`, `objects`
 
 ## Reference Guide
 

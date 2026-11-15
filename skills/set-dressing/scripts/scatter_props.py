@@ -53,6 +53,52 @@ def _cli_args():
                          "cmd/PowerShell mangle JSON quotes, so pass --args-file <path.json> instead") from exc
 
 
+def _shelf(sizes, scale, gap):
+    """Shelf-pack (w, h) boxes (metres * scale) into the unit square with a gap; positions or None."""
+    order = sorted(range(len(sizes)), key=lambda i: -sizes[i][1])
+    pos, x, y, row_h = {}, gap, gap, 0.0
+    for i in order:
+        w, h = sizes[i][0] * scale, sizes[i][1] * scale
+        if x + w + gap > 1.0:
+            x, y, row_h = gap, y + row_h + gap, 0.0
+        if x + w + gap > 1.0 or y + h + gap > 1.0:
+            return None
+        pos[i] = (x, y)
+        x += w + gap
+        row_h = max(row_h, h)
+    return pos
+
+
+def _island_uvs(bm, gap=0.004):
+    """Every face is its own island, laid flat in its own plane (no stretch) and packed with a margin
+    at one shared scale, so the props have no overlapping or collapsed UVs."""
+    layer = bm.loops.layers.uv.new("UVMap")
+    flat = []
+    for f in bm.faces:
+        n = f.normal
+        ref = Vector((1, 0, 0)) if abs(n.z) > 0.9 else Vector((0, 0, 1))
+        t = (ref - n * ref.dot(n)).normalized()
+        b = n.cross(t)
+        pts = [(l.vert.co.dot(t), l.vert.co.dot(b)) for l in f.loops]
+        x0, y0 = min(p[0] for p in pts), min(p[1] for p in pts)
+        pts = [(x - x0, y - y0) for x, y in pts]
+        flat.append((pts, (max(p[0] for p in pts), max(p[1] for p in pts))))
+    sizes = [s for _p, s in flat]
+    lo, hi = 0.0, 1.0 / max(max(w, h) for w, h in sizes)
+    for _ in range(40):
+        mid = (lo + hi) / 2
+        if _shelf(sizes, mid, gap) is not None:
+            lo = mid
+        else:
+            hi = mid
+    scale = lo
+    pos = _shelf(sizes, scale, gap)
+    for i, f in enumerate(bm.faces):
+        ox, oy = pos[i]
+        for l, (x, y) in zip(f.loops, flat[i][0]):
+            l[layer].uv = (ox + x * scale, oy + y * scale)
+
+
 def _mesh(kind):
     name = f"ME_Prop_{kind}"
     me = bpy.data.meshes.get(name)
@@ -67,9 +113,9 @@ def _mesh(kind):
     bmesh.ops.scale(bm, vec=(sx, sy, sz), verts=bm.verts)
     bmesh.ops.translate(bm, vec=(0, 0, sz / 2), verts=bm.verts)  # pivot on the floor
     me = bpy.data.meshes.new(name)
+    _island_uvs(bm)
     bm.to_mesh(me)
     bm.free()
-    me.uv_layers.new(name="UVMap")
     mat = bpy.data.materials.get(f"MAT_Prop_{kind}") or bpy.data.materials.new(f"MAT_Prop_{kind}")
     mat.diffuse_color = (*color, 1.0)
     bsdf = mat.node_tree.nodes.get("Principled BSDF") if mat.node_tree else None
