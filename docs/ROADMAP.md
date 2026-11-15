@@ -150,10 +150,12 @@ Low: numeric PBR statistics, auto retopology on a duplicate, outline normals, ha
 Open limits:
 - [ ] `globals().get("ARGS") or _cli_args()` ignores an explicit `ARGS={}` (latent: no caller passes it; the fix
   touches AGENTS.md and the validator)
-- [ ] `uv_unwrap_check.py` coverage is sampled on a 512 grid per tile (about 1%); a fully stacked 20k-triangle mesh
-  caps the overlap search and still FAILs
+- [ ] `uv_unwrap_check.py` coverage is exact along U but sampled on 512 jittered rows along V (typically about 1%, no
+  worst-case bound); a fully stacked 20k-triangle mesh caps the overlap search and still FAILs
 - [ ] `stress_check.py` thresholds come from synthetic cylinder limbs; real characters may need tuning
-- [ ] LOD sets made before iteration 15 have no tag, so `generate_lods.py` refuses to replace them
+- [ ] `clash_audit.py` ignores coplanar overlap below 1e-6 m² (a 1 mm x 1 mm patch)
+- [ ] LOD sets made before iteration 15 have no tag, so `generate_lods.py` refuses to replace them; the same holds
+  for `scatter_props.py` props made before iteration 15 (rename or delete them by hand)
 
 ## Not planned, and why
 
