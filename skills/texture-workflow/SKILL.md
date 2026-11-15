@@ -144,7 +144,7 @@ path of this installed script and their ARGS. Don't inline or rewrite the script
 
 | Script | What it does |
 |--------|--------------|
-| `scripts/bake_maps.py` | Bake high-poly -> low-poly maps in Cycles (normal, AO, roughness, diffuse color) to PNG files, with cage extrusion. Restores the render engine afterwards. Requires the low-poly to have a UV map. Refuses an existing image of the same name at another size, raises if a bake does not return FINISHED, and reports the real size of every image (`sizes`). |
+| `scripts/bake_maps.py` | Bake high-poly -> low-poly maps in Cycles (normal, AO, roughness, diffuse color) to PNG files, with cage extrusion. Restores the render engine afterwards. Requires the low-poly to have a UV map. Refuses an existing image of the same name at another size, raises if a bake does not return FINISHED, and reports the real size of every image (`sizes`). Selection, active object, bake settings and material node selection are restored afterwards. |
 | `scripts/import_painter_textures.py` | Wire exported PBR maps from a folder into a NEW Principled BSDF material by file name: sRGB for colour maps, Non-Color for data maps, Normal Map (optional DirectX green flip), Bump from height, packed ORM split. Refuses an existing material name. Tested with synthetic maps only; Substance Painter itself was not run. |
 
 ```python

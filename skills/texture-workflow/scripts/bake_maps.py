@@ -17,7 +17,8 @@ ARGS:
 
 An image of the same name that already exists at another size is refused (before any bake): remove or
 rename it, or pass its size. The result reports the real size of every image, and an operator that does
-not return FINISHED raises instead of saving.
+not return FINISHED raises instead of saving. Selection, the active object, the bake settings and the
+material node selection are put back afterwards (the SK_BakeTarget image node stays in each material).
 """
 import json
 import os
@@ -43,7 +44,7 @@ def _cli_args():
                          "cmd/PowerShell mangle JSON quotes, so pass --args-file <path.json> instead") from exc
 
 
-def _target_node(low, image):
+def _target_node(low, image, saved):
     """Every material on the low-poly needs an active, selected Image Texture node holding the bake image."""
     if not low.data.materials:
         low.data.materials.append(bpy.data.materials.new(f"MAT_{low.name}_Bake"))
@@ -52,6 +53,8 @@ def _target_node(low, image):
         if mat is None:
             continue
         nodes = mat.node_tree.nodes
+        if mat.name not in saved:  # node selection as the user left it, put back after the bake
+            saved[mat.name] = (nodes.active.name if nodes.active else None, [n.name for n in nodes if n.select])
         node = nodes.get("SK_BakeTarget") or nodes.new("ShaderNodeTexImage")
         node.name = node.label = "SK_BakeTarget"
         node.image = image
@@ -91,6 +94,11 @@ def main(low, out_dir, high=None, maps=("normal", "ao"), size=2048, extrusion=0.
     prev_samples = scene.cycles.samples
     scene.cycles.samples = samples
     bake = scene.render.bake
+    prev_bake = (bake.use_selected_to_active, bake.cage_extrusion, bake.margin)
+    view_layer = bpy.context.view_layer
+    prev_active = view_layer.objects.active
+    prev_selected = [o for o in scene.objects if o.select_get()]
+    saved_nodes = {}
     bake.use_selected_to_active = high_obj is not None
     bake.cage_extrusion = extrusion
     bake.margin = max(4, size // 128)
@@ -102,7 +110,7 @@ def main(low, out_dir, high=None, maps=("normal", "ao"), size=2048, extrusion=0.
             image = bpy.data.images.get(name) or bpy.data.images.new(name, size, size, alpha=False,
                                                                      float_buffer=False)
             image.colorspace_settings.name = "sRGB" if key == "diffuse" else "Non-Color"
-            _target_node(low_obj, image)
+            _target_node(low_obj, image, saved_nodes)
             selected = [low_obj] + ([high_obj] if high_obj else [])
             for o in scene.objects:
                 o.select_set(o in selected)
@@ -122,6 +130,17 @@ def main(low, out_dir, high=None, maps=("normal", "ao"), size=2048, extrusion=0.
             written.append(path)
             sizes[key] = list(image.size)
     finally:
+        for mat_name, (active, selected_nodes) in saved_nodes.items():
+            mat = bpy.data.materials.get(mat_name)
+            if mat is None or mat.node_tree is None:
+                continue
+            for n in mat.node_tree.nodes:
+                n.select = n.name in selected_nodes
+            mat.node_tree.nodes.active = mat.node_tree.nodes.get(active) if active else None
+        bake.use_selected_to_active, bake.cage_extrusion, bake.margin = prev_bake
+        for o in scene.objects:
+            o.select_set(o in prev_selected)
+        view_layer.objects.active = prev_active
         scene.cycles.samples = prev_samples
         scene.render.engine = prev_engine
     return {"images": written, "size": size, "sizes": sizes, "selected_to_active": high_obj is not None}

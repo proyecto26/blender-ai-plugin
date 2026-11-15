@@ -12,7 +12,8 @@ ARGS:
     method           (str)   smart | seams | min_stretch (default smart). seams/min_stretch use the marked
                              seams (see seams_from_angle) and then pack the islands
     angle_deg        (float) smart project angle limit (default 66)
-    margin_px        (float) island margin in pixels at texture_px (default 4)
+    margin_px        (float) gap between islands in pixels at texture_px (default 4); applied as an exact
+                             fraction of the UV space (margin_method FRACTION)
     seams_from_angle (float) before a seams/min_stretch unwrap, mark seams on edges sharper than this many
                              degrees (default None = keep the seams already marked)
     texture_px       (int)   texture resolution used for density (default 2048)
@@ -20,6 +21,8 @@ ARGS:
     uv_layer         (str|int) channel to measure, by name or index (default the active render channel).
                              A missing channel is an error. The result names the channel measured
     allow_overlap    (bool)  the layout is declared mirrored or stacked: skip the overlap rule (default False)
+    make_single_user (bool)  unwrap/lightmap on a mesh shared with other objects is refused (it would change
+                             them too); True gives this object its own copy first ("made_single_user")
     lightmap         (bool)  also build a second, non-overlapping "UVMap_Lightmap" channel with Lightmap
                              Pack and measure it under the lightmap rules (result key "lightmap"); the first
                              channel stays the active render UV. Rerunning repacks the same channel
@@ -72,11 +75,28 @@ def _cli_args():
 
 # ----------------------------------------------------------------------------- unwrap
 
+def _get_selection(me):
+    out = []
+    for coll in (me.vertices, me.edges, me.polygons):
+        arr = np.zeros(len(coll), np.bool_)
+        coll.foreach_get("select", arr)
+        out.append(arr)
+    return out
+
+
+def _set_selection(me, saved):
+    for coll, arr in zip((me.vertices, me.edges, me.polygons), saved):
+        coll.foreach_set("select", arr)
+    me.update()
+
+
 def _edit_ops(obj, fn):
-    """Run fn() in Edit Mode on this one object, restoring mode and active object after."""
+    """Run fn() in Edit Mode on this one object (entered from Object Mode). Afterwards, also when the
+    operator fails: Object Mode, the object's active/selected state and its mesh selection as they were."""
     view_layer = bpy.context.view_layer
     prev_active = view_layer.objects.active
     selected = [o for o in view_layer.objects if o.select_get()]
+    saved = _get_selection(obj.data)
     for o in selected:
         o.select_set(False)  # Edit Mode would otherwise take every selected object along
     obj.select_set(True)
@@ -84,8 +104,7 @@ def _edit_ops(obj, fn):
     try:
         with bpy.context.temp_override(active_object=obj, object=obj, selected_objects=[obj],
                                        selected_editable_objects=[obj]):
-            if obj.mode != "EDIT":
-                bpy.ops.object.mode_set(mode="EDIT")
+            bpy.ops.object.mode_set(mode="EDIT")
             bpy.ops.mesh.select_all(action="SELECT")
             result = fn()
             if "FINISHED" not in result:
@@ -94,6 +113,7 @@ def _edit_ops(obj, fn):
         with bpy.context.temp_override(active_object=obj, object=obj):
             if obj.mode != "OBJECT":
                 bpy.ops.object.mode_set(mode="OBJECT")
+        _set_selection(obj.data, saved)
         obj.select_set(False)
         for o in selected:
             o.select_set(True)
@@ -118,21 +138,22 @@ def _mark_seams(obj, angle_deg):
 
 
 def _unwrap(obj, method, angle_deg, texture_px, margin_px, seams_from_angle):
-    margin = margin_px / texture_px
-    info = {"method": method, "island_margin": round(margin, 5)}
+    gap = margin_px / texture_px
+    margin = gap / 2  # FRACTION margins are per island side: two neighbours leave twice this between them
+    info = {"method": method, "island_margin": round(gap, 5)}
     if method == "smart":
         _edit_ops(obj, lambda: bpy.ops.uv.smart_project(
-            angle_limit=math.radians(angle_deg), island_margin=margin, scale_to_bounds=False))
+            angle_limit=math.radians(angle_deg), island_margin=margin, margin_method="FRACTION", scale_to_bounds=False))
         return info
     if seams_from_angle is not None:
         info["seams_marked"] = _mark_seams(obj, seams_from_angle)
     kind = "ANGLE_BASED" if method == "seams" else "MINIMUM_STRETCH"
 
     def run():
-        res = bpy.ops.uv.unwrap(method=kind, margin=margin)
+        res = bpy.ops.uv.unwrap(method=kind, margin=margin, margin_method="FRACTION")
         if "FINISHED" not in res:
             return res
-        return bpy.ops.uv.pack_islands(margin=margin, rotate=True)
+        return bpy.ops.uv.pack_islands(margin=margin, margin_method="FRACTION", rotate=True)
     _edit_ops(obj, run)
     return info
 
@@ -142,8 +163,9 @@ def _lightmap(obj):
     if LIGHTMAP_NAME not in me.uv_layers:
         me.uv_layers.new(name=LIGHTMAP_NAME)
     # Names, not layer references: references go stale after an edit-mode round trip.
+    others = [l.name for l in me.uv_layers if l.name != LIGHTMAP_NAME]
     render = next((l.name for l in me.uv_layers if l.active_render and l.name != LIGHTMAP_NAME),
-                  next(l.name for l in me.uv_layers if l.name != LIGHTMAP_NAME))
+                  others[0] if others else LIGHTMAP_NAME)  # lightmap as the only channel stays the render UV
     me.uv_layers.active = me.uv_layers[LIGHTMAP_NAME]
     try:
         _edit_ops(obj, lambda: bpy.ops.uv.lightmap_pack(PREF_CONTEXT="ALL_FACES", PREF_PACK_IN_ONE=True,
@@ -330,16 +352,25 @@ def _tile_of(uvt):
 
 
 def _coverage(uvt):
-    """({tile: union coverage}, overlap area from sampled cells with two or more triangles)."""
-    tu, tv = _tile_of(uvt)
+    """({tile: union coverage}, overlap area from sampled cells with two or more triangles).
+    A triangle is rasterised into every tile its bounding box touches and clipped to each."""
+    lo = np.floor(uvt.min(axis=1)).astype(np.int64)
+    hi = np.floor(uvt.max(axis=1) - 1e-9).astype(np.int64)
+    hi = np.maximum(hi, lo)
+    tiles = {}
+    for dx in range(int((hi[:, 0] - lo[:, 0]).max()) + 1):
+        for dy in range(int((hi[:, 1] - lo[:, 1]).max()) + 1):
+            tu, tv = lo[:, 0] + dx, lo[:, 1] + dy
+            ok = (tu <= hi[:, 0]) & (tv <= hi[:, 1])
+            for u in np.unique(tu[ok]):
+                for v in np.unique(tv[ok & (tu == u)]):
+                    tiles.setdefault((int(u), int(v)), []).append(np.nonzero(ok & (tu == u) & (tv == v))[0])
     cov, overlap_cells = {}, 0
-    for u in np.unique(tu):
-        for v in np.unique(tv[tu == u]):
-            sel = (tu == u) & (tv == v)
-            local = uvt[sel] - np.array([u, v], np.float64)
-            g = _raster(local)
-            cov[1001 + int(u) + 10 * int(v)] = float((g > 0).sum()) / g.size
-            overlap_cells += int((g > 1).sum())
+    for (u, v), parts in sorted(tiles.items()):
+        idx = np.concatenate(parts)
+        g = _raster(uvt[idx] - np.array([u, v], np.float64))
+        cov[1001 + u + 10 * v] = float((g > 0).sum()) / g.size
+        overlap_cells += int((g > 1).sum())
     return cov, overlap_cells / (RASTER_N * RASTER_N)
 
 
@@ -510,8 +541,35 @@ def _worst(statuses):
 
 
 def _object(obj, a):
+    entry_mode = obj.mode
+    if entry_mode == "EDIT":
+        obj.update_from_editmode()
+        with bpy.context.temp_override(active_object=obj, object=obj):
+            bpy.ops.object.mode_set(mode="OBJECT")
+    try:
+        return _object_in_object_mode(obj, a)
+    finally:
+        if entry_mode == "EDIT" and obj.mode != "EDIT":
+            with bpy.context.temp_override(active_object=obj, object=obj):
+                bpy.ops.object.mode_set(mode="EDIT")
+
+
+def _users(me):
+    return [o.name for o in bpy.data.objects if o.data is me]
+
+
+def _object_in_object_mode(obj, a):
     me = obj.data
     entry = {}
+    if (a["unwrap"] or a["lightmap"]) and len(_users(me)) > 1:
+        others = [n for n in _users(me) if n != obj.name]
+        if not a["make_single_user"]:
+            return {"error": f"mesh {me.name!r} is shared with {others}; unwrapping would change those objects too. "
+                             "Pass make_single_user=True to give this object its own copy, or make it single-user first",
+                    "verdict": "FAIL"}
+        obj.data = me.copy()
+        me = obj.data
+        entry["made_single_user"] = True
     uv_layer = a["uv_layer"]
     if not me.uv_layers:
         if not (a["unwrap"] or a["lightmap"]):
@@ -523,8 +581,6 @@ def _object(obj, a):
     elif uv_layer is not None and _resolve_layer(me, uv_layer) is None:
         return {"error": f"UV layer {uv_layer!r} not found; layers: {[l.name for l in me.uv_layers]}",
                 "verdict": "FAIL"}
-    if obj.mode == "EDIT":
-        obj.update_from_editmode()
     if a["unwrap"]:
         target = _resolve_layer(me, uv_layer)
         prev_active = me.uv_layers.active.name if me.uv_layers.active else None
@@ -550,11 +606,12 @@ def _object(obj, a):
 
 def main(objects, unwrap=False, angle_deg=66.0, texture_px=2048, target_px_per_m=None, lightmap=False,
          uv_layer=None, allow_overlap=False, method="smart", margin_px=4.0, seams_from_angle=None,
-         lightmap_uv_layer=LIGHTMAP_NAME, result_path=None, run_id=None):
+         lightmap_uv_layer=LIGHTMAP_NAME, make_single_user=False, result_path=None, run_id=None):
     if method not in METHODS:
         raise ValueError(f"method must be one of {METHODS}, got {method!r}")
     a = dict(unwrap=unwrap, angle_deg=angle_deg, texture_px=texture_px, target_px_per_m=target_px_per_m,
              lightmap=lightmap, uv_layer=uv_layer, allow_overlap=allow_overlap, method=method,
+             make_single_user=make_single_user,
              margin_px=margin_px, seams_from_angle=seams_from_angle, lightmap_uv_layer=lightmap_uv_layer)
     out = {}
     for name in objects:
@@ -570,13 +627,13 @@ def main(objects, unwrap=False, angle_deg=66.0, texture_px=2048, target_px_per_m
         verdict, note = _worst(verdicts), None
         if "FAIL" in verdicts:
             verdict = "FAIL"
-    result = {"verdict": verdict, "texture_px": texture_px, "objects": out}
+    result = {"verdict": verdict, "run_id": run_id, "texture_px": texture_px, "objects": out}
     if note:
         result["note"] = note
     if result_path:
         tmp = result_path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump({**result, "run_id": run_id}, fh, indent=2)
+            json.dump(result, fh, indent=2)
         os.replace(tmp, result_path)
     return result
 
