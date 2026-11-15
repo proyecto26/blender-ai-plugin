@@ -22,8 +22,9 @@ stretches its edges):
                      limb axis there, so a section squashed flat along one axis counts as collapsed (ratio 0).
                      Gated on the twist poses only (a bend pinches a little by nature)
   non-finite verts   any NaN or infinite evaluated vertex, all poses
-  displacement       largest vertex move of the limb, posed vs rest, as a fraction of the limb's bounding diagonal;
-                     a reached pose that moves nothing means the skin is inert (NO_DEFORMATION, FAIL)
+  displacement ratio total vertex move of the limb (posed vs rest) divided by the move its own bones would give those
+                     vertices if each followed its dominant bone rigidly; it scales with the pose and the limb size, and a
+                     reached pose that moves nothing means the skin is inert (NO_DEFORMATION, FAIL)
 A row whose required metric could not be measured (stretch always; collapse too on twist poses) is NOT_CHECKED, never a
 PASS from the other metric. A run in which no row was measured at all is FAIL (exit 2), not a WARN.
 
@@ -35,8 +36,10 @@ with a margin of at least 20% of the gap, and the test re-checks this on every r
   STRETCH_P95_MAX = 1.5  FAIL above (every pose). Measured: good limb worst 1.2309 (elbows 130); unweighted ring,
                          weakest failing pose 2.0820 (elbows 130; arms raised gives 10.656). Gap 0.8511; the bound
                          sits 0.2691 above good and 0.5820 below bad (20% of the gap is 0.170).
-  DISPLACEMENT_MIN = 0.03  FAIL below (every pose). Measured: good limb smallest 0.1038; inert skin (zero envelopes) 0.0.
-                         Gap 0.1038; the bound sits 0.0738 below good and 0.03 above bad (20% of the gap is 0.021).
+  DISPLACEMENT_RATIO_MIN = 0.3  FAIL below (every pose). Measured: good limbs smallest 0.99999999 (radius 0.15 and a
+                         slender 0.02 limb, arm and leg); inert skin (zero envelopes) 0.0. Gap 1.0; the bound sits
+                         0.7 below good and 0.3 above bad (20% of the gap is 0.2). It is a ratio, so it does not depend
+                         on the limb's length or radius.
 
     import runpy
     result = runpy.run_path("<skill_dir>/scripts/stress_check.py", init_globals={"ARGS": {
@@ -50,10 +53,13 @@ ARGS:
     armature     (str, required) armature object
     meshes       (list[str]|None) skinned meshes (every name must exist and be a mesh). Default: meshes with an
                  Armature modifier on this armature
-    bone_map     (dict|None) {"arm.L": {"upper": "bone", "lower": "bone", "twist": ["bone", ...]}, ...}. Limbs named
-                 arm.* are posed with arm poses, leg.* with leg poses. `upper`/`lower` are one bone name; `twist` is
+    bone_map     (dict|None) {"arm.L": {"upper": "bone", "lower": "bone", "twist": ["bone", ...]}, ...}. A role with
+                 several bones must be one parent-to-child chain: the angle is split along it and the chain's total is
+                 checked. Limbs named
+                 arm.* are posed with arm poses, leg.* with leg poses. `upper`/`lower` are a bone name (or a chain); `twist` is
                  a list (default: `lower` plus its descendants whose name contains "twist"). Default: found by name
-                 roles (upper_arm/forearm/lower_arm, thigh/upper_leg, shin/calf/lower_leg, either side style). A limb
+                 roles among deform bones that a mesh is weighted to (controls are skipped; two unrelated candidates are
+                 refused, naming them) (upper_arm/forearm/lower_arm, thigh/upper_leg, shin/calf/lower_leg, either side style). A limb
                  with some roles found and others missing, or a mapped bone that does not exist, FAILs
     poses        (list[str]|None) subset of arms_raised, elbows_130, knees_130, crouch, twist_90, twist_180
     fk_switches  (list[dict]|None) [{"bone": "hand_ctl.L" or "" for the armature object, "prop": "ik_fk",
@@ -74,7 +80,7 @@ from mathutils import Matrix, Quaternion
 COLLAPSE_MIN = 0.5
 STRETCH_P95_MAX = 1.5
 REACH_TOL_DEG = 5.0
-DISPLACEMENT_MIN = 0.03
+DISPLACEMENT_RATIO_MIN = 0.3
 POSES = {  # pose -> {limb kind: [(role, local axis index, degrees)]}
     "arms_raised": {"arm": [("upper", 0, 90.0)]},
     "elbows_130": {"arm": [("lower", 0, 130.0)]},
@@ -128,12 +134,13 @@ def _as_list(v):
     return [v] if isinstance(v, str) else list(v)
 
 
-def _detect_limbs(arm):
-    """Limbs by name role. Returns {limb: {"upper": [..], "lower": [..], "twist": [..] | None}} (maybe partial)."""
+def _detect_limbs(arm, weighted):
+    """Limbs by name role, among deform bones that a mesh is weighted to (controls such as `forearm_ctl.L` are not
+    skinned and are skipped). Returns {limb: {"upper": [..], "lower": [..]}} (maybe partial or ambiguous)."""
     found = {}
     for b in arm.data.bones:
         core, side = _side_of(b.name)
-        if side is None or "twist" in core.lower():
+        if side is None or "twist" in core.lower() or not b.use_deform or (weighted is not None and b.name not in weighted):
             continue
         for (kind, role), rx in ROLE_RE.items():
             if rx.search(core):
@@ -147,16 +154,35 @@ def _twist_default(arm, lower):
     while stack:
         b = stack.pop(0)
         for c in b.children:
-            if "twist" in c.name.lower():
+            if "twist" in c.name.lower() and c.name not in out:
                 out.append(c.name)
                 stack.append(c)
     return out
 
 
-def _limb_map(arm, bone_map):
-    """Resolve to {limb: {"upper": [...], "lower": [...], "twist": [...]}} plus {limb: [problems]}."""
+def _chain(arm, names):
+    """`names` ordered from the top of a parent-to-child chain, or None when they do not form one."""
+    bones = [arm.data.bones[n] for n in names if n in arm.data.bones]
+    if len(bones) != len(names):
+        return None
+    for top in bones:
+        order = [top]
+        while True:
+            nxt = [b for b in bones if b.parent == order[-1]]
+            if len(nxt) != 1:
+                break
+            order.append(nxt[0])
+        if len(order) == len(bones):
+            return [b.name for b in order]
+    return None
+
+
+def _limb_map(arm, bone_map, weighted=None):
+    """Resolve to {limb: {"upper": [...], "lower": [...], "twist": [...]}} plus {limb: [problems]}. A role with
+    several bones must be one parent-to-child chain (the angle is split along it); anything else is refused, naming
+    the bones, because splitting a bend over unrelated bones would weaken the pose."""
     raw = {k: {r: _as_list(v) for r, v in spec.items()} for k, spec in bone_map.items()} if bone_map \
-        else _detect_limbs(arm)
+        else _detect_limbs(arm, weighted)
     limbs, problems = {}, {}
     for name, spec in raw.items():
         probs = []
@@ -170,6 +196,13 @@ def _limb_map(arm, bone_map):
             for n in names or []:
                 if n not in arm.data.bones:
                     probs.append(f"{role} bone not in the armature: {n}")
+            if names and len(names) > 1 and all(n in arm.data.bones for n in names):
+                ordered = _chain(arm, names)
+                if ordered is None:
+                    probs.append(f"ambiguous role '{role}': {', '.join(names)} are not one parent-to-child chain; "
+                                 "name the one bone to pose in bone_map")
+                else:
+                    spec[role] = ordered
         limbs[name] = spec
         if probs:
             problems[name] = probs
@@ -220,6 +253,12 @@ def _coords(obj, dg):
     return arr.reshape(-1, 3)
 
 
+def _quat_off(a, b):
+    """Degrees of rotation between two rotations (q and -q are the same rotation)."""
+    a, b = a.normalized(), b.normalized()
+    return math.degrees(2.0 * math.acos(min(1.0, abs(a.dot(b)))))
+
+
 def _reached(arm_eval, arm, name, axis, degrees):
     """(rotation magnitude, distance from the requested rotation), both in degrees. The evaluated bone's rotation
     relative to its rest pose, constraints included, is compared with the requested rotation about the local axis,
@@ -235,8 +274,49 @@ def _reached(arm_eval, arm, name, axis, degrees):
     q = basis.to_quaternion()
     v = [0.0, 0.0, 0.0]
     v[axis] = 1.0
-    want = Quaternion(v, math.radians(degrees))
-    return math.degrees(q.angle), math.degrees(q.rotation_difference(want).angle)
+    return math.degrees(q.angle), _quat_off(q, Quaternion(v, math.radians(degrees)))
+
+
+def _chain_off(arm_eval, arm, bones, axis, degrees):
+    """Degrees between the rotation of the whole chain (parent of its first bone to its last bone) and the requested
+    total rotation about the local axis."""
+    first, last = arm.data.bones[bones[0]], arm.data.bones[bones[-1]]
+    if first.parent:
+        rest_f, pose_f = first.parent.matrix_local, arm_eval.pose.bones[first.parent.name].matrix
+    else:
+        rest_f, pose_f = Matrix.Identity(4), Matrix.Identity(4)
+    total = (rest_f.inverted() @ last.matrix_local).inverted() @ pose_f.inverted() @ arm_eval.pose.bones[bones[-1]].matrix
+    v = [0.0, 0.0, 0.0]
+    v[axis] = 1.0
+    return _quat_off(total.to_quaternion(), Quaternion(v, math.radians(degrees)))
+
+
+def _dominant(obj, verts, bone_names):
+    """Name of the highest-weighted bone group of each given vertex ('' when none)."""
+    gname = {vg.index: vg.name for vg in obj.vertex_groups if vg.name in bone_names}
+    out = []
+    for i in verts:
+        best, bw = "", 1e-4
+        for g in obj.data.vertices[i].groups:
+            if g.group in gname and g.weight > bw:
+                best, bw = gname[g.group], g.weight
+        out.append(best)
+    return np.array(out, dtype=object)
+
+
+def _expected_positions(rest, verts, dom, arm_eval, arm, obj):
+    """Where the limb's vertices would be if each moved rigidly with its dominant bone (mesh space)."""
+    t = np.array(arm.matrix_world.inverted() @ obj.matrix_world)
+    p = np.c_[rest[verts], np.ones(len(verts))]
+    pa = (t @ p.T).T
+    exp = pa.copy()
+    for bn in set(dom):
+        if not bn:
+            continue
+        idx = dom == bn
+        m = np.array(arm_eval.pose.bones[bn].matrix @ arm.data.bones[bn].matrix_local.inverted())
+        exp[idx] = (m @ pa[idx].T).T
+    return (np.linalg.inv(t) @ exp.T).T[:, :3]
 
 
 def _limb_sets(obj, bone_names, rest, edges):
@@ -279,7 +359,7 @@ def _section_widths(co, bins):
     return out
 
 
-def _measure(rest, posed, limb_edges, bins, verts=None):
+def _measure(rest, posed, limb_edges, bins, verts=None, expected=None):
     finite_all = bool(np.isfinite(posed).all())
     out = {"non_finite_vertices": int((~np.isfinite(posed).all(axis=1)).sum())}
     if not finite_all:
@@ -292,11 +372,11 @@ def _measure(rest, posed, limb_edges, bins, verts=None):
         out["edge_stretch_p95"] = float(np.percentile(pl[ok] / rl[ok], 95)) if ok.any() else None
     else:
         out["edge_stretch_p95"] = None
-    out["displacement"] = None
-    if verts is not None and len(verts):
-        diag = float(np.linalg.norm(np.ptp(rest[verts], axis=0)))
-        if diag > 1e-9:
-            out["displacement"] = float(np.linalg.norm(posed[verts] - rest[verts], axis=1).max() / diag)
+    if verts is not None and expected is not None:
+        # how much the mesh really moved, against how far the limb's own bones carry those vertices
+        want = float(np.linalg.norm(expected - rest[verts], axis=1).sum())
+        got = float(np.linalg.norm(posed[verts] - rest[verts], axis=1).sum())
+        out["displacement_ratio"] = got / want if want > 1e-12 else None
     ratios = []
     if len(bins) >= 2:
         for w0, w1 in zip(_section_widths(rest, bins), _section_widths(posed, bins)):
@@ -314,10 +394,11 @@ def _gate(pose, m):
         return "STRETCH", "FAIL"
     if pose in TWIST_POSES and m["collapse_ratio"] is not None and m["collapse_ratio"] < COLLAPSE_MIN:
         return "COLLAPSE", "FAIL"
-    if m.get("displacement") is not None and m["displacement"] < DISPLACEMENT_MIN:
+    if m.get("displacement_ratio") is not None and m["displacement_ratio"] < DISPLACEMENT_RATIO_MIN:
         return "NO_DEFORMATION", "FAIL"
     # a metric the pose needs but could not be measured is never a pass on the strength of the other one
-    if m["edge_stretch_p95"] is None or (pose in TWIST_POSES and m["collapse_ratio"] is None):
+    if m["edge_stretch_p95"] is None or (pose in TWIST_POSES and m["collapse_ratio"] is None) \
+            or ("displacement_ratio" in m and m["displacement_ratio"] is None):
         return "NOT_CHECKED", "NOT_CHECKED"
     return "OK", "PASS"
 
@@ -341,7 +422,8 @@ def main(armature, meshes=None, bone_map=None, poses=None, fk_switches=None, res
     if bad:
         raise ValueError(f"unknown poses {bad}; choose from {sorted(POSES)}")
     scene = bpy.context.scene
-    limbs, problems = _limb_map(arm, bone_map)
+    weighted = {vg.name for o in objs for vg in o.vertex_groups} if objs else None
+    limbs, problems = _limb_map(arm, bone_map, weighted)
     rows, notes = [], []
     for name, probs in problems.items():
         rows.append({"pose": "all", "limb": name, "mesh": None, "status": "MISSING_ROLE", "verdict": "FAIL",
@@ -383,7 +465,8 @@ def main(armature, meshes=None, bone_map=None, poses=None, fk_switches=None, res
                     edges = edges.reshape(-1, 2)
                     sets = {ln: _limb_sets(o, {b for r in ("upper", "lower", "twist") for b in spec.get(r, [])}, rest, edges)
                             for ln, spec in good.items()}
-                    base[o.name] = ("OK", (rest, sets))
+                    doms = {ln: _dominant(o, sets[ln][0], {b.name for b in arm.data.bones}) for ln in good}
+                    base[o.name] = ("OK", (rest, sets, doms))
             arm.data.pose_position = "POSE"
             for pose in names:
                 spec = POSES[pose]
@@ -415,6 +498,12 @@ def main(armature, meshes=None, bone_map=None, poses=None, fk_switches=None, res
                     reach, blocked = [], False
                     for role, axis, deg in spec.get(ln.split(".")[0], []):
                         bones = lspec.get(role) or []
+                        if len(bones) > 1:
+                            total_off = _chain_off(arm_eval, arm, bones, axis, deg)
+                            reach.append({"chain": bones, "axis": "XYZ"[axis], "requested_total_deg": deg,
+                                          "off_requested_deg": round(total_off, 2)})
+                            if total_off > REACH_TOL_DEG:
+                                blocked = True
                         for bn in bones:
                             want = deg / len(bones)
                             got, off = _reached(arm_eval, arm, bn, axis, want)
@@ -433,13 +522,14 @@ def main(armature, meshes=None, bone_map=None, poses=None, fk_switches=None, res
                             row.update(status=state, verdict="FAIL" if state == "NO_ARMATURE_MODIFIER" else "NOT_CHECKED",
                                        reason=payload)
                         else:
-                            rest, sets = payload
+                            rest, sets, doms = payload
                             verts, limb_edges, bins = sets[ln]
                             if len(verts) < 4:
                                 row.update(status="NOT_CHECKED", verdict="NOT_CHECKED",
                                            reason="fewer than 4 vertices are weighted to this limb's bones")
                             else:
-                                m = _measure(rest, _coords(o, dg), limb_edges, bins, verts)
+                                m = _measure(rest, _coords(o, dg), limb_edges, bins, verts,
+                                         _expected_positions(rest, verts, doms[ln], arm_eval, arm, o))
                                 status, verdict = _gate(pose, m)
                                 row.update(m, status=status, verdict=verdict)
                         rows.append(row)
@@ -466,7 +556,7 @@ def main(armature, meshes=None, bone_map=None, poses=None, fk_switches=None, res
             s["failures"].append(f"{r['pose']}:{r['status']}")
     result = {"armature": arm.name, "limbs": limbs, "meshes": [o.name for o in objs], "rows": rows,
               "summary": summary, "thresholds": {"collapse_min": COLLAPSE_MIN, "stretch_p95_max": STRETCH_P95_MAX,
-                                                 "reach_tolerance_deg": REACH_TOL_DEG, "displacement_min": DISPLACEMENT_MIN},
+                                                 "reach_tolerance_deg": REACH_TOL_DEG, "displacement_ratio_min": DISPLACEMENT_RATIO_MIN},
               "notes": notes, "verdict": verdict}
     if result_path:
         tmp = result_path + ".tmp"
