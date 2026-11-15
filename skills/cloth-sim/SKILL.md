@@ -95,7 +95,7 @@ import runpy
 result = runpy.run_path("<skill_dir>/scripts/cloth_setup.py", init_globals={"ARGS": {...}})["result"]
 ```
 
-ARGS: `cloth`, `fabric`, `pin_group`, `colliders`, `frames`, `self_collision`
+ARGS: `cloth`, `fabric`, `pin_group`, `colliders`, `frames`, `self_collision`. A rerun without `pin_group` keeps the existing pin; `pin_group=""` clears it; the result reports the real `pin_group`.
 
 ## Reference Guide
 
