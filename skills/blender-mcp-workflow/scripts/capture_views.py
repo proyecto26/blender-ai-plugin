@@ -18,13 +18,18 @@ ARGS:
     views       (list[str])     subset of front, three_quarter, side, back, top, camera
     resolution  (int)           square resolution in px (default 768)
     engine      (str)           BLENDER_WORKBENCH (fast, default) | BLENDER_EEVEE | CYCLES
-    isolate     (bool)          render only the asset: every other geometry object is hidden from the render for the
-                                capture (lights and cameras stay). The asset is the target (or the framed meshes)
-                                and its children. Default False.
+    isolate     (bool)          render only the asset: every other object that can render geometry (meshes, curves,
+                                text, volumes, ... and Empties that instance a collection) is hidden from the render
+                                for the capture; lights and cameras stay. The asset is the target (or the framed
+                                meshes) and its children. Default False.
     wire        (bool)          add a `wire` view (three-quarter angle, wireframe, Workbench engine) after the
                                 other views. Default False.
     contact_sheet (bool)        also write `<name>_sheet.png`, one image tiling all captured views in a grid
                                 (columns = ceil(sqrt(n)); size = columns*resolution x rows*resolution). Default False.
+    overwrite   (bool)          allow replacing an existing `<name>_sheet.png` or `<name>_wire.png` (default False:
+                                such a file is refused with ValueError before anything is changed). The standard
+                                view files (`<name>_front.png` ...) are always rewritten: that is the long-standing
+                                behaviour, and the iteration-15 suites re-capture into the same folder.
 
 Returns images (one path per view), center, framed_size_m and, with contact_sheet, contact_sheet (path) and
 contact_sheet_size ([width, height]). A render that does not produce its file raises RuntimeError.
@@ -136,7 +141,7 @@ def _tile_sheet(paths, resolution, sheet_path):
 
 
 def main(out_dir, target=None, views=None, resolution=768, engine="BLENDER_WORKBENCH", isolate=False, wire=False,
-         contact_sheet=False):
+         contact_sheet=False, overwrite=False):
     scene = bpy.context.scene
     views = list(views or list(ANGLES) + (["camera"] if scene.camera else []))
     bad = [v for v in views if v not in ANGLES and v not in ("camera", "wire")]
@@ -144,6 +149,11 @@ def main(out_dir, target=None, views=None, resolution=768, engine="BLENDER_WORKB
         raise ValueError(f"unknown views {bad}; choose from {list(ANGLES) + ['camera', 'wire']}")
     if wire and "wire" not in views:
         views.append("wire")
+    new_outputs = ([f"{(target or 'scene')}_wire.png"] if "wire" in views else []) + \
+                  ([f"{(target or 'scene')}_sheet.png"] if contact_sheet else [])
+    clash = [n for n in new_outputs if os.path.exists(os.path.join(out_dir, n))]
+    if clash and not overwrite:
+        raise ValueError(f"{clash} already exist in {out_dir}; nothing was changed. Pass overwrite=True to replace them")
     if target:
         if target not in bpy.data.objects:
             raise ValueError(f"object not found: {target}")
@@ -178,7 +188,7 @@ def main(out_dir, target=None, views=None, resolution=768, engine="BLENDER_WORKB
         r.image_settings.file_format = "PNG"
         if isolate:
             for o in scene.objects:
-                if o not in asset and o.type in GEOMETRY_TYPES:
+                if o not in asset and (o.type in GEOMETRY_TYPES or o.instance_type == "COLLECTION"):
                     o.hide_render = True
         distance = size * 1.9
         for view in views:

@@ -219,7 +219,7 @@ def test_v1_restores_state():
     before = cv_state(target, wall)
     d = sub("restore")
     run("blender-mcp-workflow", "capture_views.py", {"target": "Target", "out_dir": d, "views": ["front", "camera"],
-                                                      "resolution": 64, "isolate": True, "wire": True,
+                                                      "resolution": 64, "isolate": True, "wire": True, "overwrite": True,
                                                       "contact_sheet": True})
     after = cv_state(target, wall)
     assert before == after, {k: (before[k], after[k]) for k in before if before[k] != after[k]}
@@ -235,7 +235,7 @@ def _blocked_capture(block_name):
     os.makedirs(os.path.join(d, block_name))  # a folder where the PNG must go: that render cannot be written
     try:
         run("blender-mcp-workflow", "capture_views.py", {"target": "Target", "out_dir": d, "views": ["front"],
-                                                          "resolution": 64, "isolate": True, "wire": True,
+                                                          "resolution": 64, "isolate": True, "wire": True, "overwrite": True,
                                                           "contact_sheet": True})
     except RuntimeError as exc:
         err = str(exc)[:80]
@@ -262,7 +262,7 @@ def test_v1_restores_state_on_failed_sheet():
     os.makedirs(os.path.join(d, "Target_sheet.png"))
     try:
         run("blender-mcp-workflow", "capture_views.py", {"target": "Target", "out_dir": d, "views": ["front"],
-                                                          "resolution": 64, "isolate": True, "wire": True,
+                                                          "resolution": 64, "isolate": True, "wire": True, "overwrite": True,
                                                           "contact_sheet": True})
     except Exception as exc:
         err = type(exc).__name__
@@ -528,6 +528,242 @@ def test_v2_result_file_contract():
     return {"run_id": data["run_id"]}
 
 
+# ------------------------------------------------------------------------- review follow-up (Seldon, batch V)
+
+def test_v1_new_outputs_never_overwrite():
+    """Finding 1: an existing sheet or wire file keeps its bytes; the call refuses before changing state."""
+    target, wall, cam = scene_with_wall()
+    cv_odd_state(target, wall)
+    before = cv_state(target, wall)
+    results = {}
+    for kind, name in (("sheet", "Target_sheet.png"), ("wire", "Target_wire.png")):
+        d = sub("keep_" + kind)
+        path = os.path.join(d, name)
+        with open(path, "wb") as fh:
+            fh.write(b"precious user file " + kind.encode())
+        digest = hashlib.md5(open(path, "rb").read()).hexdigest()
+        args = {"target": "Target", "out_dir": d, "views": ["front"], "resolution": 64, "isolate": True,
+                "wire": True, "contact_sheet": True}
+        try:
+            run("blender-mcp-workflow", "capture_views.py", args)
+        except ValueError as exc:
+            assert "overwrite" in str(exc), exc
+        else:
+            raise AssertionError(f"existing {name} was not refused")
+        assert hashlib.md5(open(path, "rb").read()).hexdigest() == digest, f"{name} was overwritten"
+        assert not os.path.exists(os.path.join(d, "Target_front.png")), "a view was written before the refusal"
+        assert cv_state(target, wall) == before
+        r = run("blender-mcp-workflow", "capture_views.py", dict(args, overwrite=True))
+        assert os.path.getsize(path) > 100 and open(path, "rb").read()[:4] == b"\x89PNG", "overwrite=True did not write"
+        results[kind] = "refused, then overwritten with overwrite=True"
+    return results
+
+
+def test_v1_isolate_hides_collection_instances():
+    """Finding 4: an instanced collection in front of the target must not render when isolate=True."""
+    target, wall, cam = scene_with_wall()
+    wall.hide_render = True
+    sc = bpy.context.scene
+    col = bpy.data.collections.new("InstSource")  # not linked to the scene: only the instancer shows it
+    big = box("InstBig", 4.0)
+    sc.collection.objects.unlink(big)
+    col.objects.link(big)
+    inst = bpy.data.objects.new("Inst", None)
+    inst.instance_type = "COLLECTION"
+    inst.instance_collection = col
+    inst.location = (0, -3.0, 0)
+    sc.collection.objects.link(inst)
+    d = sub("instiso")
+    run_args = {"target": "Target", "views": ["front"], "resolution": 96}
+    plain = run("blender-mcp-workflow", "capture_views.py", dict(run_args, out_dir=d))
+    a, _ = px(plain["images"][0])
+    d2 = sub("instiso2")
+    iso = run("blender-mcp-workflow", "capture_views.py", dict(run_args, out_dir=d2, isolate=True))
+    b, _ = px(iso["images"][0])
+    inst.hide_render = True
+    d3 = sub("instiso3")
+    ref = run("blender-mcp-workflow", "capture_views.py", dict(run_args, out_dir=d3))
+    c, _ = px(ref["images"][0])
+    inst.hide_render = False
+    blocked, vs_ref = float(np.abs(a - c).mean()), float(np.abs(b - c).mean())
+    assert blocked > 0.02, f"the instance did not block the plain view ({blocked})"
+    assert vs_ref < 0.002, f"isolated view still shows the instance ({vs_ref})"
+    assert not inst.hide_render
+    return {"plain_vs_isolated": round(blocked, 4), "isolated_vs_reference": round(vs_ref, 6)}
+
+
+class fake_import_then:
+    """Run the real FBX import, then let `mutate()` change what it created (fault injection after the import)."""
+
+    def __init__(self, mutate):
+        real = bpy.ops.import_scene.fbx
+
+        def fn(**kw):
+            res = real(**kw)
+            mutate()
+            return res
+
+        self.inner = fake_importer(fn)
+
+    def __enter__(self):
+        return self.inner.__enter__()
+
+    def __exit__(self, *exc):
+        return self.inner.__exit__(*exc)
+
+
+def _imported(type_):
+    return [o for o in bpy.context.scene.objects if o.type == type_]
+
+
+def _rt(name, objects):
+    return fbx(objects=objects, out_path=os.path.join(sub("fbx"), name))
+
+
+def test_v2_negative_bone_name_changed():
+    reset()
+    rig("Rig", ("Idle",))
+    select("Rig")
+
+    def mutate():
+        _imported("ARMATURE")[0].data.bones["Arm"].name = "Elbow"
+
+    with fake_import_then(mutate):
+        r = _rt("bn.fbx", ["Rig"])
+    b = r["objects"]["Rig"]["checks"]["bones"]
+    assert r["verdict"] == "FAIL" and b["status"] == "FAIL" and b["missing"] == ["Arm"] and b["extra"] == ["Elbow"], b
+    return b
+
+
+def test_v2_negative_bone_parent_changed():
+    reset()
+    rig("Rig", ("Idle",))
+    select("Rig")
+
+    def mutate():
+        arm = _imported("ARMATURE")[0]
+        bpy.context.view_layer.objects.active = arm
+        bpy.ops.object.mode_set(mode="EDIT")
+        arm.data.edit_bones["Arm"].parent = None
+        bpy.ops.object.mode_set(mode="OBJECT")
+
+    with fake_import_then(mutate):
+        r = _rt("bp.fbx", ["Rig"])
+    b = r["objects"]["Rig"]["checks"]["bones"]
+    assert r["verdict"] == "FAIL" and b["parent_changes"] == {"Arm": ["Root", None]}, b
+    return b
+
+
+def test_v2_negative_missing_action():
+    reset()
+    rig("Rig", ("Idle", "Walk"))
+    select("Rig")
+
+    def mutate():
+        a = [a for a in bpy.data.actions if a.name.endswith("|Walk") and "|" in a.name and a.name.count("|") == 2][0]
+        bpy.data.actions.remove(a)
+
+    with fake_import_then(mutate):
+        r = _rt("ma.fbx", ["Rig"])
+    c = r["objects"]["Rig"]["checks"]["actions"]
+    assert r["verdict"] == "FAIL" and c["status"] == "FAIL", c
+    return c
+
+
+def _rename_action(old_tail, new_tail):
+    def mutate():
+        a = [a for a in bpy.data.actions if a.name.count("|") == 2 and a.name.endswith("|" + old_tail)][0]
+        a.name = a.name[:-len(old_tail)] + new_tail
+
+    return mutate
+
+
+def test_v2_negative_renamed_action():
+    reset()
+    rig("Rig", ("Idle", "Walk"))
+    select("Rig")
+    with fake_import_then(_rename_action("Walk", "Run")):
+        r = _rt("ra.fbx", ["Rig"])
+    c = r["objects"]["Rig"]["checks"]["actions"]
+    assert r["verdict"] == "FAIL" and c["status"] == "FAIL", c
+    return c
+
+
+def test_v2_suffixed_action_name_exact():
+    """Finding 2: Walk.001 exported and Walk.002 imported is a changed name; a faithful Walk.001 passes."""
+    reset()
+    rig("Rig", ("Idle", "Walk.001"))
+    select("Rig")
+    good = _rt("w1.fbx", ["Rig"])
+    c = good["objects"]["Rig"]["checks"]["actions"]
+    assert good["verdict"] == "PASS" and c["exported"] == ["Idle", "Walk.001"] == c["imported"], c
+    with fake_import_then(_rename_action("Walk.001", "Walk.002")):
+        bad = _rt("w2.fbx", ["Rig"])
+    cb = bad["objects"]["Rig"]["checks"]["actions"]
+    assert bad["verdict"] == "FAIL" and cb["status"] == "FAIL", cb
+    return {"good": c["imported"], "renamed": cb["imported"]}
+
+
+def test_v2_importer_rename_suffix_is_allowed():
+    """The importer adds .001 when the full name already exists in the file; that is not a changed clip."""
+    reset()
+    rig("Rig", ("Idle",))
+    sc = bpy.context.scene
+    squat = bpy.data.actions.new("Rig.001|Rig|Idle")  # what the import would name the take: forces a rename
+    squat.use_fake_user = True
+    select("Rig")
+    r = _rt("sfx.fbx", ["Rig"])
+    c = r["objects"]["Rig"]["checks"]["actions"]
+    assert r["verdict"] == "PASS" and c["status"] == "PASS", c
+    assert "Rig.001|Rig|Idle" in bpy.data.actions
+    return c
+
+
+def _dims_fixture(factor):
+    reset()
+    box("SM_Box", 2.0)
+    select("SM_Box")
+
+    def mutate():
+        from mathutils import Matrix
+        for o in _imported("MESH"):
+            o.data.transform(Matrix.Scale(factor, 4))
+
+    with fake_import_then(mutate):
+        r = _rt("dim.fbx", ["SM_Box"])
+    return r["objects"]["SM_Box"]["checks"]["dimensions"]
+
+
+def test_v2_dimension_threshold_edges():
+    inside = _dims_fixture(1.0009)   # relative difference 0.0009: inside 0.1 %
+    outside = _dims_fixture(1.0011)  # relative difference ~0.0011: outside
+    assert inside["status"] == "PASS" and outside["status"] == "FAIL", (inside, outside)
+    return {"inside": inside["max_relative_difference"], "outside": outside["max_relative_difference"]}
+
+
+def test_v2_skinned_mesh_with_other_modifier():
+    """Finding 3: Armature modifier plus Solidify: the export applies Solidify, so the source must be measured with it."""
+    reset()
+    rg = rig("Rig", ("Idle",))
+    skin = box("Skin", 2.0)
+    vg = skin.vertex_groups.new(name="Arm")
+    vg.add(list(range(len(skin.data.vertices))), 1.0, "REPLACE")
+    am = skin.modifiers.new("Armature", "ARMATURE")
+    am.object = rg
+    so = skin.modifiers.new("Solidify", "SOLIDIFY")
+    so.thickness = 1.0
+    so.offset = 1.0
+    select("Skin", "Rig")
+    before = [m.show_viewport for m in skin.modifiers]
+    r = _rt("skin.fbx", ["Skin", "Rig"])
+    d = r["objects"]["Skin"]["checks"]["dimensions"]
+    assert r["verdict"] == "PASS" and d["status"] == "PASS", d
+    assert d["exported"][0] > 3.0, d  # the solidified extent, not the raw 2.0
+    assert [m.show_viewport for m in skin.modifiers] == before
+    return d
+
+
+
 TESTS = (test_v1_isolate, test_v1_wire, test_v1_contact_sheet_size_and_tiles, test_v1_restores_state,
          test_v1_restores_state_on_failed_first_view, test_v1_restores_state_on_failed_wire_view,
          test_v1_restores_state_on_failed_sheet, test_v1_unknown_view_changes_nothing,
@@ -535,7 +771,12 @@ TESTS = (test_v1_isolate, test_v1_wire, test_v1_contact_sheet_size_and_tiles, te
          test_v2_refuses_existing_file_unless_overwrite, test_v2_duplicate_names_matched_by_id,
          test_v2_two_actions_one_armature, test_v2_no_import_match_is_fail_entry,
          test_v2_failure_midway_restores_everything, test_v2_existing_user_data_survives,
-         test_v2_refuses_existing_tag_and_non_exportable, test_v2_result_file_contract)
+         test_v2_refuses_existing_tag_and_non_exportable, test_v2_result_file_contract,
+         test_v1_new_outputs_never_overwrite, test_v1_isolate_hides_collection_instances,
+         test_v2_negative_bone_name_changed, test_v2_negative_bone_parent_changed,
+         test_v2_negative_missing_action, test_v2_negative_renamed_action,
+         test_v2_suffixed_action_name_exact, test_v2_importer_rename_suffix_is_allowed,
+         test_v2_dimension_threshold_edges, test_v2_skinned_mesh_with_other_modifier)
 
 
 def main():

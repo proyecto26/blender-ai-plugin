@@ -28,12 +28,15 @@ counter) and the exporter writes custom properties; the imported objects are the
 import and are matched by that id, never by name. The property is removed from the originals in `finally`. An
 object that already has `bap_rt_id` is refused before anything is changed.
 
-Actions. Imported actions are named `<imported armature>|<armature>|<action>` (plus `.NNN` on a clash). The names are
-compared after dropping both armature prefixes and the `.NNN` suffix, as sorted lists per armature (the clips of one
-armature are the actions whose every F-curve path resolves on it, which is what the exporter writes, plus its
-assigned action and NLA strip actions). Armature dimensions are not compared (the importer rebuilds bone lengths).
-A mesh with an Armature modifier is measured from its rest mesh data (the exporter writes the rest shape), so other
-modifiers on a skinned mesh are not part of its measured dimensions.
+Actions. Imported actions are named `<imported armature>|<armature>|<action>`. The clips of one armature are the
+actions whose every F-curve path resolves on it (what the exporter writes) plus its assigned action and NLA strip
+actions, taken in export order (Blender's action order). Each expected name is matched exactly against an imported
+name after dropping the two armature prefixes. The only difference allowed is a `.NNN` the importer added because
+the full imported name already existed in the file before the import. So `Walk.001` exported and `Walk.002` imported
+is a changed clip name and FAILs; imported actions nobody expected also FAIL. Armature dimensions are not compared
+(the importer rebuilds bone lengths).
+Dimensions of a skinned mesh: the exporter writes the rest shape with the other modifiers applied, so the source is
+measured with its Armature modifier(s) switched off and the others evaluated; the switch is undone in `finally`.
 
 Cleanup. Only the temporary scene and the datablocks the import created (objects, meshes, armatures, materials,
 images, actions, cameras, lights, curves, collections, textures, node groups, found by session id before and after)
@@ -41,7 +44,7 @@ are removed. Selection, active object, the window's scene and the current frame 
 The user's .blend file is never saved or opened.
 
 Measured on Blender 5.3 (fixtures in tests/blender/test_iter16_v.py): a faithful round trip gives a relative
-dimension difference below 1e-6 (tolerance 1e-3); global_scale 2 gives 1.0 (a factor of 2). The tolerance sits far
+dimension difference below 1e-6 (tolerance 1e-3); global_scale 2 gives 0.5 (symmetric relative difference of a factor of 2). The tolerance sits far
 from both.
 """
 import json
@@ -109,8 +112,15 @@ def _snapshot():
 
 
 def _world_dims(obj, evaluated):
-    """Axis-aligned world extent [x, y, z] of a mesh object, or None when it has no vertices."""
+    """Axis-aligned world extent [x, y, z] of a mesh object, or None when it has no vertices. `evaluated`: measure
+    what the exporter writes, the mesh with modifiers applied but its Armature modifiers off (rest shape)."""
+    switched = []
     if evaluated:
+        for m in obj.modifiers:
+            if m.type == "ARMATURE" and m.show_viewport:
+                m.show_viewport = False
+                switched.append(m)
+        bpy.context.view_layer.update()
         ev = obj.evaluated_get(bpy.context.evaluated_depsgraph_get())
         me = ev.to_mesh()
     else:
@@ -125,6 +135,10 @@ def _world_dims(obj, evaluated):
     finally:
         if ev is not None:
             ev.to_mesh_clear()
+        for m in switched:
+            m.show_viewport = True
+        if switched:
+            bpy.context.view_layer.update()
     m = np.array([list(r) for r in obj.matrix_world], dtype=np.float64)
     w = co @ m[:3, :3].T + m[:3, 3]
     return [float(x) for x in (w.max(axis=0) - w.min(axis=0))]
@@ -163,11 +177,36 @@ def _clip_names(arm):
     return names
 
 
-def _norm_action(name, prefixes):
+def _strip_prefixes(name, prefixes):
     for p in prefixes:
         if name.startswith(p + "|"):
             name = name[len(p) + 1:]
-    return SUFFIX_RE.sub("", name)
+    return name
+
+
+def _match_actions(expected, imported, imp_name, arm_name, pre_names):
+    """Match expected clip names (export order) to imported action names. Exact, except a `.NNN` the importer added
+    because the full imported name existed before the import. Returns (imported labels, importer_renamed, ok)."""
+    stripped = [(n, _strip_prefixes(n, [imp_name, arm_name])) for n in imported]
+    used, labels, renamed = set(), [], []
+    ok = True
+    for e in expected:
+        hit = next((i for i, (n, s) in enumerate(stripped) if i not in used and s == e), None)
+        if hit is None:
+            hit = next((i for i, (n, s) in enumerate(stripped)
+                        if i not in used and s.startswith(e) and re.fullmatch(r"\.\d{3,}", s[len(e):])
+                        and SUFFIX_RE.sub("", n) in pre_names), None)
+            if hit is not None:
+                renamed.append(stripped[hit][0])
+        if hit is None:
+            ok = False
+            continue
+        used.add(hit)
+        labels.append(e)
+    extras = [s for i, (n, s) in enumerate(stripped) if i not in used]
+    if extras:
+        ok = False
+    return labels + extras, renamed, ok
 
 
 def _bones(arm):
@@ -179,7 +218,7 @@ def _check(status, **info):
     return info
 
 
-def _compare(orig, imp, tol, expected_clips, imported_clips, imp_name):
+def _compare(orig, imp, tol, expected_clips, imported_clips, imp_name, pre_names=frozenset()):
     checks = {}
     if imp is None:
         return {"imported": _check("FAIL", reason=f"{orig.name} was exported but nothing with its id was imported")}
@@ -188,8 +227,7 @@ def _compare(orig, imp, tol, expected_clips, imported_clips, imp_name):
         checks["type"] = _check("FAIL", exported=orig.type, imported=imp.type)
         return checks
     if orig.type == "MESH":
-        has_arm = any(m.type == "ARMATURE" for m in orig.modifiers)
-        a = _world_dims(orig, evaluated=not has_arm)
+        a = _world_dims(orig, evaluated=True)
         b = _world_dims(imp, evaluated=False)
         if a is None or b is None:
             checks["dimensions"] = _check("NOT_CHECKED", reason="a mesh with no vertices has no extent")
@@ -205,9 +243,9 @@ def _compare(orig, imp, tol, expected_clips, imported_clips, imp_name):
         checks["bones"] = _check("PASS" if not (missing or extra or parents) else "FAIL", count=len(ba),
                                  missing=missing, extra=extra, parent_changes=parents)
         if expected_clips or imported_clips:
-            exp = sorted(_norm_action(n, [orig.name]) for n in expected_clips)
-            got = sorted(_norm_action(n, [imp_name, orig.name]) for n in imported_clips)
-            checks["actions"] = _check("PASS" if exp == got else "FAIL", exported=exp, imported=got)
+            got, renamed, ok = _match_actions(expected_clips, imported_clips, imp_name, orig.name, pre_names)
+            checks["actions"] = _check("PASS" if ok else "FAIL", exported=list(expected_clips), imported=got,
+                                       importer_renamed=renamed)
     return checks
 
 
@@ -246,7 +284,12 @@ def main(out_path, objects=None, overwrite=False, tol=0.001, global_scale=1.0, r
     prev_frame = scene.frame_current
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
     before_file = _stamp(out_path)
-    expected = {o.name: _clip_names(o) for o in targets if o.type == "ARMATURE"}
+    expected = {}
+    for o in targets:
+        if o.type == "ARMATURE":
+            names = _clip_names(o)
+            expected[o.name] = [a.name for a in bpy.data.actions if a.name in names]  # export order
+    pre_action_names = {a.name for a in bpy.data.actions}
     arm_names = {o.name: o for o in targets if o.type == "ARMATURE"}
     originals = {}
     tmp_scene = None
@@ -289,13 +332,13 @@ def main(out_path, objects=None, overwrite=False, tol=0.001, global_scale=1.0, r
         for rid, orig in originals.items():
             imp = (imported_by_id.get(rid) or [None])[0]
             if orig.type == "ARMATURE" and imp is not None:
-                imported_clips[rid] = {a.name for a in bpy.data.actions
-                                       if a.session_uid not in before["actions"] and a.name.startswith(imp.name + "|")}
+                imported_clips[rid] = [a.name for a in bpy.data.actions
+                                       if a.session_uid not in before["actions"] and a.name.startswith(imp.name + "|")]
         out = {}
         for rid, orig in originals.items():
             imps = imported_by_id.get(rid) or [None]
-            checks = _compare(orig, imps[0], tol, expected.get(orig.name, set()) if orig.type == "ARMATURE" else set(),
-                              imported_clips.get(rid, set()), imps[0].name if imps[0] else "")
+            checks = _compare(orig, imps[0], tol, expected.get(orig.name, []) if orig.type == "ARMATURE" else [],
+                              imported_clips.get(rid, []), imps[0].name if imps[0] else "", pre_action_names)
             if len(imps) > 1:
                 checks["unique_match"] = _check("FAIL", reason=f"{len(imps)} imported objects carry id {rid}")
             out[orig.name] = {"id": rid, "type": orig.type, "checks": checks,
