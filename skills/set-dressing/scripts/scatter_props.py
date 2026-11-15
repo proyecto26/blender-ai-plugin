@@ -21,6 +21,16 @@ ARGS:
     ground      (str)   mesh to raycast onto (default: any visible mesh below)
     collection  (str)   default "COL_SetDressing"
     seed        (int)   default 0
+    min_spacing_m (float) minimum horizontal (XY) distance between any two prop origins, metres (default none)
+    max_slope_deg (float) steepest ground slope a prop may stand on, degrees from level, 0-90 (default none)
+    height_range_m (list) [lowest, highest] allowed world Z of a prop's origin (its ground point), metres
+                        (default none)
+
+Limits are honoured while placing, then measured again on the props actually placed (slope by a fresh ray
+cast with the props hidden for the measurement, spacing and height from the finished objects) and compared with each
+limit with a 1e-6 m / 1e-4 degree tolerance. The result has "measured" (min_spacing_m, max_slope_deg,
+height_range_m of the placed props; null when there is nothing to measure), and when any limit was given
+"limits" (limit, measured, ok per limit) and "verdict": FAIL if any limit is violated, else PASS.
 """
 import json
 import math
@@ -155,19 +165,72 @@ def _mesh(kind):
     return me
 
 
-def _ground_z(xy, ground, top):
+def _ground_hit(xy, ground, top):
+    """(z, world unit normal) of the ground below xy, or None."""
     dg = bpy.context.evaluated_depsgraph_get()
     origin = Vector((xy.x, xy.y, top + 50.0))
     if ground:
-        inv = ground.matrix_world.inverted()
-        ok, loc, _n, _i = ground.evaluated_get(dg).ray_cast(inv @ origin, inv.to_3x3() @ Vector((0, 0, -1)))
-        return (ground.matrix_world @ loc).z if ok else None
-    ok, loc, _n, _i, _o, _m = bpy.context.scene.ray_cast(dg, origin, Vector((0, 0, -1)))
-    return loc.z if ok else None
+        mw = ground.matrix_world
+        inv = mw.inverted()
+        ok, loc, nrm, _i = ground.evaluated_get(dg).ray_cast(inv @ origin, inv.to_3x3() @ Vector((0, 0, -1)))
+        if not ok:
+            return None
+        nrm = (inv.to_3x3().transposed() @ nrm).normalized()
+        return (mw @ loc).z, nrm
+    ok, loc, nrm, _i, _o, _m = bpy.context.scene.ray_cast(dg, origin, Vector((0, 0, -1)))
+    return (loc.z, nrm.normalized()) if ok else None
+
+
+def _slope_deg(nrm):
+    return math.degrees(math.acos(max(-1.0, min(1.0, abs(nrm.z)))))
+
+
+def _measure(objs, gnd, top):
+    """Measured spacing, slope and height of the placed prop objects. Slope is a fresh ray cast at each prop
+    with the props hidden (restored afterwards)."""
+    out = {"min_spacing_m": None, "max_slope_deg": None, "height_range_m": None}
+    if not objs:
+        return out
+    pts = [o.location.xy.copy() for o in objs]
+    if len(pts) > 1:
+        out["min_spacing_m"] = min((a - b).length for i, a in enumerate(pts) for b in pts[:i])
+    zs = [o.location.z for o in objs]
+    out["height_range_m"] = [min(zs), max(zs)]
+    hidden = [(o, o.hide_viewport) for o in objs]
+    try:
+        for o in objs:
+            o.hide_viewport = True
+        bpy.context.view_layer.update()
+        slopes = []
+        for o in objs:
+            hit = _ground_hit(o.location.xy, gnd, top)
+            if hit is not None:
+                slopes.append(_slope_deg(hit[1]))
+        out["max_slope_deg"] = max(slopes) if slopes else None
+    finally:
+        for o, h in hidden:
+            o.hide_viewport = h
+        bpy.context.view_layer.update()
+    return out
+
+
+def _check_limits(limits, measured):
+    """limits: {name: value}; returns ({name: {limit, measured, ok}}, verdict). An unmeasurable limit FAILs."""
+    res = {}
+    for name, lim in limits.items():
+        m = measured.get(name)
+        if name == "min_spacing_m":
+            ok = m is None or m >= lim - 1e-6   # fewer than two props: nothing to violate
+        elif name == "max_slope_deg":
+            ok = m is not None and m <= lim + 1e-4
+        else:
+            ok = m is not None and m[0] >= lim[0] - 1e-6 and m[1] <= lim[1] + 1e-6
+        res[name] = {"limit": lim, "measured": m, "ok": bool(ok)}
+    return res, ("PASS" if all(v["ok"] for v in res.values()) else "FAIL")
 
 
 def main(target, count=8, kinds=None, clusters=3, min_dist=0.4, max_dist=3.5, ground=None,
-         collection="COL_SetDressing", seed=0):
+         collection="COL_SetDressing", seed=0, min_spacing_m=None, max_slope_deg=None, height_range_m=None):
     tgt = bpy.data.objects.get(target)
     if tgt is None:
         raise ValueError(f"target not found: {target}")
@@ -176,6 +239,19 @@ def main(target, count=8, kinds=None, clusters=3, min_dist=0.4, max_dist=3.5, gr
     bad = [k for k in kinds if k not in KINDS]
     if bad:
         raise ValueError(f"unknown kinds {bad}; use {list(KINDS)}")
+    limits = {}
+    if min_spacing_m is not None:
+        if not min_spacing_m >= 0:
+            raise ValueError("min_spacing_m must be >= 0")
+        limits["min_spacing_m"] = float(min_spacing_m)
+    if max_slope_deg is not None:
+        if not 0 <= max_slope_deg <= 90:
+            raise ValueError("max_slope_deg must be between 0 and 90")
+        limits["max_slope_deg"] = float(max_slope_deg)
+    if height_range_m is not None:
+        if len(height_range_m) != 2 or not height_range_m[0] <= height_range_m[1]:
+            raise ValueError("height_range_m must be [lowest, highest] with lowest <= highest")
+        limits["height_range_m"] = [float(height_range_m[0]), float(height_range_m[1])]
     for k in kinds:
         _preflight(k)  # every mesh is checked before any earlier prop is removed
     rng = random.Random(seed)
@@ -238,8 +314,14 @@ def main(target, count=8, kinds=None, clusters=3, min_dist=0.4, max_dist=3.5, gr
         if any((xy - p).length < radius + r + 0.05 for p, r in placed):
             fails[ci] += 1
             continue
-        z = _ground_z(xy, gnd, hi.z)
-        if z is None:
+        hit = _ground_hit(xy, gnd, hi.z)
+        if hit is None:
+            fails[ci] += 1
+            continue
+        z, nrm = hit
+        if (max_slope_deg is not None and _slope_deg(nrm) > max_slope_deg) or \
+           (height_range_m is not None and not height_range_m[0] <= z <= height_range_m[1]) or \
+           (min_spacing_m is not None and any((xy - p).length < min_spacing_m for p, _r in placed)):
             fails[ci] += 1
             continue
         obj = bpy.data.objects.new(f"PROP_{'ABCDEFGH'[ci]}_{kind}_{len(made):02d}", _mesh(kind))
@@ -251,8 +333,13 @@ def main(target, count=8, kinds=None, clusters=3, min_dist=0.4, max_dist=3.5, gr
         fails[ci] = 0
         made.append({"name": obj.name, "kind": kind, "cluster": ci,
                      "loc": [round(v, 3) for v in obj.location]})
-    return {"count": len(made), "collection": col.name, "props": made,
-            "shared_meshes": len({m["kind"] for m in made}), "max_dist": max_dist}
+    measured = _measure([bpy.data.objects[m["name"]] for m in made], gnd, hi.z)
+    result = {"count": len(made), "collection": col.name, "props": made,
+              "shared_meshes": len({m["kind"] for m in made}), "max_dist": max_dist, "measured": measured,
+              "verdict": "PASS"}
+    if limits:
+        result["limits"], result["verdict"] = _check_limits(limits, measured)
+    return result
 
 
 ARGS = globals().get("ARGS") or _cli_args()

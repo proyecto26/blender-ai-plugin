@@ -154,6 +154,7 @@ path of this installed script and their ARGS. Don't inline or rewrite the script
 | Script | What it does |
 |--------|--------------|
 | `scripts/scatter_points.py` | Build a reusable geometry-nodes scatter on a surface object: Distribute Points on Faces -> Instance on Points (collection, random pick) with random rotation/scale, aligned to the surface normal. Density, seed and scale are exposed as modifier inputs. |
+| `scripts/gn_diagnostics.py` | Read-only diagnosis of Geometry Nodes modifiers: missing node group, Group Output with no Geometry link, node errors/warnings, and whether the modifier's own output is empty (curve-only and instance-only output are not empty). An unused Geometry input is only listed, since a generator is valid. Later modifiers are hidden while measuring and restored. |
 
 ```python
 import runpy
