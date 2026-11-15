@@ -14,6 +14,10 @@ ARGS:
     extrusion (float) cage extrusion in meters (default 0.02)
     samples  (int) Cycles samples for AO (default 64)
     out_dir  (str, required)
+
+An image of the same name that already exists at another size is refused (before any bake): remove or
+rename it, or pass its size. The result reports the real size of every image, and an operator that does
+not return FINISHED raises instead of saving.
 """
 import json
 import os
@@ -59,6 +63,10 @@ def _target_node(low, image):
     return made
 
 
+def _image_name(low_obj, key):
+    return f"T_{low_obj.name.removeprefix('SM_')}_{key.capitalize()}"
+
+
 def main(low, out_dir, high=None, maps=("normal", "ao"), size=2048, extrusion=0.02, samples=64):
     low_obj = bpy.data.objects.get(low)
     if low_obj is None or low_obj.type != "MESH":
@@ -68,6 +76,14 @@ def main(low, out_dir, high=None, maps=("normal", "ao"), size=2048, extrusion=0.
     high_obj = bpy.data.objects.get(high) if high else None
     if high and high_obj is None:
         raise ValueError(f"high-poly not found: {high}")
+    unknown = [k for k in maps if k not in BAKE_TYPES]
+    if unknown:
+        raise ValueError(f"unknown maps {unknown}; use {list(BAKE_TYPES)}")
+    for key in maps:
+        existing = bpy.data.images.get(_image_name(low_obj, key))
+        if existing is not None and tuple(existing.size) != (size, size):
+            raise ValueError(f"image {existing.name!r} already exists at {existing.size[0]}x{existing.size[1]}, "
+                             f"not {size}x{size}; remove or rename it, or bake at its size")
     os.makedirs(out_dir, exist_ok=True)
     scene = bpy.context.scene
     prev_engine, prev_samples = scene.render.engine, None
@@ -78,11 +94,11 @@ def main(low, out_dir, high=None, maps=("normal", "ao"), size=2048, extrusion=0.
     bake.use_selected_to_active = high_obj is not None
     bake.cage_extrusion = extrusion
     bake.margin = max(4, size // 128)
-    written = []
+    written, sizes = [], {}
     try:
         for key in maps:
             kind = BAKE_TYPES[key]
-            name = f"T_{low_obj.name.removeprefix('SM_')}_{key.capitalize()}"
+            name = _image_name(low_obj, key)
             image = bpy.data.images.get(name) or bpy.data.images.new(name, size, size, alpha=False,
                                                                      float_buffer=False)
             image.colorspace_settings.name = "sRGB" if key == "diffuse" else "Non-Color"
@@ -96,16 +112,19 @@ def main(low, out_dir, high=None, maps=("normal", "ao"), size=2048, extrusion=0.
                 kwargs["pass_filter"] = {"COLOR"}
             with bpy.context.temp_override(object=low_obj, active_object=low_obj,
                                            selected_objects=selected, selected_editable_objects=selected):
-                bpy.ops.object.bake(**kwargs)
+                result = bpy.ops.object.bake(**kwargs)
+            if "FINISHED" not in result:
+                raise RuntimeError(f"bake {key} on {low_obj.name} returned {sorted(result)}; nothing saved for it")
             path = os.path.join(out_dir, f"{name}.png")
             image.filepath_raw = path
             image.file_format = "PNG"
             image.save()
             written.append(path)
+            sizes[key] = list(image.size)
     finally:
         scene.cycles.samples = prev_samples
         scene.render.engine = prev_engine
-    return {"images": written, "size": size, "selected_to_active": high_obj is not None}
+    return {"images": written, "size": size, "sizes": sizes, "selected_to_active": high_obj is not None}
 
 
 ARGS = globals().get("ARGS") or _cli_args()

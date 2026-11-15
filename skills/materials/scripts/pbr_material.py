@@ -10,7 +10,8 @@ correct color spaces (Base Color = sRGB, data maps = Non-Color).
 ARGS:
     name            (str, required) material name (MAT_ prefix enforced)
     base_color      (list[3])  linear RGB 0-1
-    metallic, roughness, specular_ior_level, coat_weight, emission_strength (float)
+    metallic, roughness, specular_ior_level, coat_weight (float)
+    emission_strength (float|None) default None: 1.0 when an emission texture is wired, else 0.0; a value you pass wins
     emission_color  (list[3])
     textures        (dict)  optional {"base_color": path, "normal": path, "roughness": path,
                             "metallic": path, "orm": path, "emission": path}
@@ -48,7 +49,7 @@ def _image_node(nodes, path, non_color, x, y):
 
 
 def main(name, base_color=(0.8, 0.8, 0.8), metallic=0.0, roughness=0.5, specular_ior_level=0.5,
-         coat_weight=0.0, emission_color=(1.0, 1.0, 1.0), emission_strength=0.0, textures=None, objects=None):
+         coat_weight=0.0, emission_color=(1.0, 1.0, 1.0), emission_strength=None, textures=None, objects=None):
     if not name.startswith("MAT_"):
         name = "MAT_" + name
     mat = bpy.data.materials.get(name) or bpy.data.materials.new(name)
@@ -65,7 +66,7 @@ def main(name, base_color=(0.8, 0.8, 0.8), metallic=0.0, roughness=0.5, specular
     i["Specular IOR Level"].default_value = specular_ior_level
     i["Coat Weight"].default_value = coat_weight
     i["Emission Color"].default_value = (*emission_color, 1.0)
-    i["Emission Strength"].default_value = emission_strength
+    i["Emission Strength"].default_value = 0.0 if emission_strength is None else emission_strength
     mat.diffuse_color = (*base_color, 1.0)  # viewport solid-mode color
     mat.metallic, mat.roughness = metallic, roughness
 
@@ -102,6 +103,8 @@ def main(name, base_color=(0.8, 0.8, 0.8), metallic=0.0, roughness=0.5, specular
             continue
         wired.append(key)
 
+    if emission_strength is None and "emission" in wired:
+        i["Emission Strength"].default_value = 1.0  # a wired emission texture must not be multiplied by 0
     assigned = []
     for obj_name in objects or []:
         obj = bpy.data.objects.get(obj_name)
@@ -112,7 +115,8 @@ def main(name, base_color=(0.8, 0.8, 0.8), metallic=0.0, roughness=0.5, specular
         else:
             obj.data.materials.append(mat)
         assigned.append(obj_name)
-    return {"material": mat.name, "textures_wired": wired, "textures_missing": missing, "assigned": assigned}
+    return {"material": mat.name, "textures_wired": wired, "textures_missing": missing, "assigned": assigned,
+            "emission_strength": round(i["Emission Strength"].default_value, 4)}
 
 
 ARGS = globals().get("ARGS") or _cli_args()
