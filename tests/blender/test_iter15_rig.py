@@ -123,14 +123,25 @@ CANDY_BONES = [("upper_arm.L", (0, 0, 0), (0, 0, 1), None), ("forearm.L", (0, 0,
 CANDY_KNOTS = {"upper_arm.L": 0.5, "forearm.L": 1.5}
 
 
+LEG_BONES = [("upper_leg.L", (0, 0, 0), (0, 0, 1), None), ("lower_leg.L", (0, 0, 1), (0, 0, 2), "upper_leg.L")]
+LEG_KNOTS = {"upper_leg.L": 0.85, "lower_leg.L": 1.15}
+
+
 def limb(kind="good"):
     fresh()
-    arm = make_armature("ARM_Limb", CANDY_BONES if kind == "candy" else GOOD_BONES)
+    bones = {"candy": CANDY_BONES, "leg": LEG_BONES, "leg_limit": LEG_BONES}.get(kind, GOOD_BONES)
+    arm = make_armature("ARM_Limb", bones)
     cyl = make_cylinder("SK_Limb")
-    knots = CANDY_KNOTS if kind == "candy" else GOOD_KNOTS
+    knots = {"candy": CANDY_KNOTS, "leg": LEG_KNOTS, "leg_limit": LEG_KNOTS}.get(kind, GOOD_KNOTS)
     skin(cyl, arm, knots, skip=(lambda z: 0.75 < z < 1.25) if kind == "ring" else (lambda z: False))
     if kind == "limit":
         c = arm.pose.bones["forearm.L"].constraints.new("LIMIT_ROTATION")
+        c.use_limit_x, c.min_x, c.max_x, c.owner_space = True, math.radians(-30), math.radians(30), "LOCAL"
+    if kind == "few_weights":  # only 3 vertices keep any weight: nothing can be measured
+        for vg in cyl.vertex_groups:
+            vg.remove(list(range(3, len(cyl.data.vertices))))
+    if kind == "leg_limit":
+        c = arm.pose.bones["lower_leg.L"].constraints.new("LIMIT_ROTATION")
         c.use_limit_x, c.min_x, c.max_x, c.owner_space = True, math.radians(-30), math.radians(30), "LOCAL"
     if kind == "missing_role":
         bpy.data.objects.remove(arm)
@@ -377,6 +388,141 @@ def test_e2_thresholds_margin():
     return {"measured": MEASURED, "thresholds": th}
 
 
+# ---------------------------------------------------------------- Seldon review findings
+def _globals():
+    """The script's own globals (helper functions), loaded on the current scene with a cheap run."""
+    return runpy.run_path(script("rigging", "stress_check.py"), init_globals={"ARGS": {
+        "armature": "ARM_Limb", "poses": ["twist_90"]}})
+
+
+def test_s1_flattened_section_fails_collapse():
+    import numpy as np
+    arm, cyl = limb("good")
+    g = _globals()
+    n = len(cyl.data.vertices)
+    rest = np.empty(n * 3)
+    cyl.data.vertices.foreach_get("co", rest)
+    rest = rest.reshape(-1, 3)
+    edges = np.empty(len(cyl.data.edges) * 2, dtype=np.int64)
+    cyl.data.edges.foreach_get("vertices", edges)
+    edges = edges.reshape(-1, 2)
+    verts, limb_edges, bins = g["_limb_sets"](cyl, set(GOOD_KNOTS), rest, edges)
+    flat = rest.copy()
+    flat[:, 1] *= 0.0  # every cross-section squashed flat along Y: minimum width is zero
+    shrunk = rest * np.array([0.6, 0.6, 1.0])  # round sections at 60% radius
+    m_flat = g["_measure"](rest, flat, limb_edges, bins)
+    m_shrunk = g["_measure"](rest, shrunk, limb_edges, bins)
+    assert m_flat["collapse_ratio"] < 0.1 and g["_gate"]("twist_180", m_flat)[0] == "COLLAPSE", m_flat
+    assert abs(m_shrunk["collapse_ratio"] - 0.6) < 0.02, m_shrunk
+    return {"flat": m_flat["collapse_ratio"], "round_60pct": m_shrunk["collapse_ratio"]}
+
+
+def test_s2_reach_checks_axis_and_direction():
+    out = {}
+    for label, lim, expect in (("opposite_direction", dict(min_x=-130, max_x=-130), "NOT_REACHED"),
+                               ("wrong_axis", dict(min_x=0, max_x=0, use_y=True, min_y=130, max_y=130), "NOT_REACHED"),
+                               ("same_rotation", dict(min_x=130, max_x=130), "OK")):
+        arm, cyl = limb("good")
+        c = arm.pose.bones["forearm.L"].constraints.new("LIMIT_ROTATION")
+        c.owner_space, c.use_limit_x = "LOCAL", True
+        c.min_x, c.max_x = math.radians(lim["min_x"]), math.radians(lim["max_x"])
+        if lim.get("use_y"):
+            c.use_limit_y, c.min_y, c.max_y = True, math.radians(lim["min_y"]), math.radians(lim["max_y"])
+        res = run("rigging", "stress_check.py", armature="ARM_Limb", poses=["elbows_130"])
+        row = res["rows"][0]
+        assert row["status"] == expect, (label, row)
+        out[label] = {"status": row["status"], "reach": row["reach"][0]}
+    return out
+
+
+def test_s3_unmeasured_is_not_pass():
+    arm, cyl = limb("good")
+    g = _globals()
+    m = {"non_finite_vertices": 0, "edge_stretch_p95": 1.0, "collapse_ratio": None}
+    assert g["_gate"]("twist_180", m)[1] == "NOT_CHECKED", g["_gate"]("twist_180", m)
+    assert g["_gate"]("elbows_130", {**m, "edge_stretch_p95": None})[1] == "NOT_CHECKED"
+    assert g["_gate"]("elbows_130", m)[1] == "PASS"
+    # nothing measurable on the whole rig: FAIL (the CLI then exits 2), not a WARN that exits 0
+    limb("few_weights")
+    res = run("rigging", "stress_check.py", armature="ARM_Limb")
+    assert res["rows"] and all(r["status"] == "NOT_CHECKED" for r in res["rows"]), res["rows"]
+    assert res["verdict"] == "FAIL" and any("measured nothing" in n for n in res["notes"]), res
+    return {"verdict": res["verdict"], "notes": res["notes"]}
+
+
+def test_s4_axis_angle_armature_rotation():
+    fresh()
+    arm = make_armature("ARM_Z", [("a", (0, 0, 0), (0, 0, 1), None)])
+    arm.rotation_mode = "AXIS_ANGLE"
+    arm.rotation_axis_angle = (math.radians(90), 1.0, 0.0, 0.0)
+    r = run("rigging", "rig_check.py", armature="ARM_Z")
+    assert r["checks"]["armature_transform"]["verdict"] == "WARN", r["checks"]["armature_transform"]
+    arm.rotation_axis_angle = (0.0, 1.0, 0.0, 0.0)
+    r = run("rigging", "rig_check.py", armature="ARM_Z")
+    assert r["checks"]["armature_transform"]["verdict"] == "PASS", r["checks"]["armature_transform"]
+    return {"ok": True}
+
+
+def test_s5_restore_after_mid_run_failure():
+    arm, cyl = limb("good")
+    scene = bpy.context.scene
+    pb = arm.pose.bones["forearm.L"]
+    pb.rotation_mode = "XYZ"
+    pb.rotation_euler = (0.2, 0.0, 0.0)
+    pb.keyframe_insert("rotation_euler", frame=1)
+    pb.rotation_euler = (0.6, 0.0, 0.0)
+    pb.keyframe_insert("rotation_euler", frame=20)
+    scene.frame_set(7)
+    act, slot = arm.animation_data.action, arm.animation_data.action_slot
+    assert act is not None and slot is not None
+
+    def curves():
+        return [(fc.data_path, fc.array_index, [tuple(k.co) for k in fc.keyframe_points])
+                for ch in act.layers[0].strips[0].channelbags for fc in ch.fcurves]
+
+    fc_before = curves()
+    assert fc_before, "original action must be populated"
+    rot_before = tuple(pb.rotation_euler)
+    g = _globals()
+    # the cheap run above already restored everything; now fail in the middle of a second run
+    seen = {}
+
+    def boom(*a, **k):  # runs after the temporary action exists and the pose was changed
+        ob = bpy.data.objects["ARM_Limb"]
+        seen["tmp_action"] = "_stress_check_tmp" in bpy.data.actions
+        seen["posed"] = max(abs(x) for x in ob.pose.bones["forearm_twist_1.L"].rotation_euler) > 0.1
+        seen["action_swapped"] = ob.animation_data.action is not act
+        raise RuntimeError("simulated failure")
+
+    g["main"].__globals__["_measure"] = boom
+    try:
+        g["main"](armature="ARM_Limb", poses=["twist_90"])
+    except RuntimeError as exc:
+        assert "simulated" in str(exc)
+    else:
+        raise AssertionError("failure was swallowed")
+    assert seen == {"tmp_action": True, "posed": True, "action_swapped": True}, seen
+    ad = arm.animation_data
+    assert ad.action is act and ad.action_slot == slot and scene.frame_current == 7
+    assert "_stress_check_tmp" not in bpy.data.actions
+    assert curves() == fc_before
+    assert tuple(pb.rotation_euler) == rot_before and arm.data.pose_position == "POSE"
+    return {"seen": seen, "fcurves": len(fc_before)}
+
+
+def test_s6_leg_fixture_knees_and_crouch():
+    limb("leg")
+    res = run("rigging", "stress_check.py", armature="ARM_Limb")
+    assert res["verdict"] == "PASS", json.dumps(res["rows"], indent=1)
+    assert {r["pose"] for r in res["rows"]} == {"knees_130", "crouch"} and set(res["limbs"]) == {"leg.L"}
+    out = {"stretch": {r["pose"]: round(r["edge_stretch_p95"], 3) for r in res["rows"]}}
+    limb("leg_limit")
+    res = run("rigging", "stress_check.py", armature="ARM_Limb")
+    assert res["verdict"] == "FAIL" and {r["pose"] for r in res["rows"] if r["status"] == "NOT_REACHED"} == {"knees_130", "crouch"}
+    out["limit_rotation"] = "NOT_REACHED on knees_130 and crouch"
+    return out
+
+
 # ---------------------------------------------------------------- B1: result_path / run_id / exit codes
 def _blender(blend, py, args):
     args_file = os.path.join(OUT, "args_" + str(abs(hash((blend, py, json.dumps(args, sort_keys=True))))) + ".json")
@@ -416,6 +562,28 @@ def test_b1_result_contract_and_exit_codes():
     data = json.load(open(rp, encoding="utf-8"))
     assert code == 0 and data["run_id"] == "r-1" and data["verdict"] in ("PASS", "WARN"), (code, data["verdict"])
     out["rig_check_exit"] = code
+    # rig_check FAIL (the only mesh has no Armature modifier) -> exit 2 + file
+    arm, cyl = limb("good")
+    cyl.modifiers.remove(cyl.modifiers["Armature"])
+    nomod = os.path.join(OUT, "rig_nomod.blend")
+    bpy.ops.wm.save_as_mainfile(filepath=nomod, copy=True)
+    rp = os.path.join(OUT, "rig_exit2.json")
+    code = _blender(nomod, check, {"armature": "ARM_Limb", "meshes": ["SK_Limb"], "result_path": rp, "run_id": "r-2"})
+    data = json.load(open(rp, encoding="utf-8"))
+    assert code == 2 and data["run_id"] == "r-2" and data["verdict"] == "FAIL", (code, data["verdict"])
+    out["rig_check_fail_exit"] = code
+    # rig_check exception on a clean path -> exit 1 and no file at all
+    rp = os.path.join(OUT, "rig_exc.json")
+    code = _blender(good, check, {"armature": "NoSuchArmature", "result_path": rp, "run_id": "r-3"})
+    assert code == 1 and not os.path.exists(rp) and not os.path.exists(rp + ".tmp"), (code, os.path.exists(rp))
+    out["rig_check_exception_exit"] = code
+    # nothing measurable -> FAIL -> exit 2
+    few = _save("few_weights", "rig_few.blend")
+    rp = os.path.join(OUT, "stress_few.json")
+    code = _blender(few, stress, {"armature": "ARM_Limb", "result_path": rp, "run_id": "f-1"})
+    data = json.load(open(rp, encoding="utf-8"))
+    assert code == 2 and data["verdict"] == "FAIL", (code, data["verdict"])
+    out["stress_nothing_measured_exit"] = code
     # exception -> exit 1 and nothing written; a stale file from an earlier run_id is left as it was
     rp = os.path.join(OUT, "stress_exc.json")
     with open(rp, "w", encoding="utf-8") as fh:
@@ -437,7 +605,9 @@ def main():
     tests = [test_a6_prefix_pairs, test_a7_missing_and_nonmesh_names_error, test_a7_modifier_must_target_this_armature,
              test_e1_weights_and_bones, test_e1_mirrored_z_axes, test_a8_cloth_pin_report, test_e2_good_limb_passes,
              test_e2_candy_wrapper_fails_collapse, test_e2_unweighted_ring_fails_stretch, test_e2_limit_rotation_not_reached,
-             test_e2_missing_role_fails, test_e2_restores_state, test_e2_thresholds_margin,
+             test_e2_missing_role_fails, test_e2_restores_state, test_s1_flattened_section_fails_collapse,
+             test_s2_reach_checks_axis_and_direction, test_s3_unmeasured_is_not_pass, test_s4_axis_angle_armature_rotation,
+             test_s5_restore_after_mid_run_failure, test_s6_leg_fixture_knees_and_crouch, test_e2_thresholds_margin,
              test_b1_result_contract_and_exit_codes]
     checks, failed = {}, []
     for fn in tests:
