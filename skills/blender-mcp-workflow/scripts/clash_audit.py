@@ -31,7 +31,11 @@ What is reported:
   not_measured  what could not be decided: an open mesh has no inside, so containment inside it, and depth
               measured into it, are listed here and never count as a pass.
 Verdict: FAIL on a clash, a contained object or (with `require_connected`) a floating part; WARN when only
-not_measured entries exist; PASS otherwise.
+not_measured entries exist; PASS otherwise. Nothing measured (no mesh with faces) is FAIL.
+
+Headless: `blender -b f.blend --python-exit-code 1 --python <skill_dir>/scripts/clash_audit.py -- --args-file a.json`
+exits 0 on PASS or WARN, 2 on FAIL, 1 when the script raised. Trust the run only when the exit code is 0 or 2 AND
+`result_path` exists with this run's `run_id`.
 
 ARGS:
     objects            (list[str]|None) mesh objects to audit; default = all visible mesh objects in the scene
@@ -41,6 +45,13 @@ ARGS:
     anchor             (str|None) object whose group is the main one; default = the group with most objects, then tris
     ignore_pairs       (list[[str, str]]) pairs allowed to overlap (a bolt in its hole); they still join a group
     max_samples        (int) cap on sample points per object and direction (default 4000; sets `sampled` when hit)
+    within_mesh        (bool)  opt-in (default False): treat the vertex-connected islands of each mesh like separate
+                       objects (named `<object>#1`, `<object>#2`), so floating parts, crossing islands and coplanar
+                       overlap (surfaces within `min_depth_m`, 1 mm by default) inside one mesh are found. A floating
+                       island fails like a floating object, under `require_connected`
+    result_path        (str|None) write the result dict plus "run_id" there as JSON (temp file, then replace) at the end
+                       of a successful run; a run that raised writes nothing
+    run_id             (str|None) echoed into that file so a caller can tell this run's file from an older one
     evidence_path      (str|None) a .json file inside an existing run folder; the audit writes its own result there, as
                        script-evidence/1 (script, time, verdict PASS/WARN/FAIL, summary), which run_manifest.py reads to
                        back a `validate` PASS. An existing file is only replaced when it is a clash_audit evidence file.
@@ -79,7 +90,7 @@ class Rec:
     """One object's evaluated mesh in world space."""
 
     def __init__(self, obj, depsgraph):
-        self.name = obj.name
+        self.name = self.src = obj.name
         ev = obj.evaluated_get(depsgraph)
         me = ev.to_mesh()
         try:
@@ -102,6 +113,7 @@ class Rec:
             ed = np.empty(ne * 2, dtype=np.int32)
             me.edges.foreach_get("vertices", ed)
             self.edges = ed.reshape(ne, 2)
+            self.edge_count = count
             self.boundary = self.edges[count == 1]  # border edges of an open surface (one face on them)
         finally:
             ev.to_mesh_clear()
@@ -110,6 +122,45 @@ class Rec:
             self.lo, self.hi = self.verts.min(0), self.verts.max(0)
             self.bvh = BVHTree.FromPolygons([tuple(v) for v in self.verts.tolist()],
                                             [tuple(t) for t in self.tris.tolist()], epsilon=0.0)
+
+
+def _islands(rec):
+    """Split a Rec into one Rec per vertex-connected group of triangles, named name#1, name#2, ..."""
+    n = len(rec.verts)
+    label = np.arange(n)
+    while True:
+        low = label[rec.tris].min(1)
+        new = label.copy()
+        for k in range(3):
+            np.minimum.at(new, rec.tris[:, k], low)
+        new = new[new]
+        if np.array_equal(new, label):
+            break
+        label = new
+    tri_label = label[rec.tris[:, 0]]
+    out = []
+    for k, lab in enumerate(np.unique(tri_label), 1):
+        tris = rec.tris[tri_label == lab]
+        used = np.unique(tris)
+        remap = np.full(n, -1, dtype=np.int64)
+        remap[used] = np.arange(len(used))
+        e_in = (remap[rec.edges[:, 0]] >= 0) & (remap[rec.edges[:, 1]] >= 0)
+        sub = Rec.__new__(Rec)
+        sub.name = f"{rec.name}#{k}"
+        sub.src = rec.src
+        sub.verts = rec.verts[used]
+        sub.tris = remap[tris]
+        sub.edges = remap[rec.edges[e_in]]
+        count = rec.edge_count[e_in]
+        sub.edge_count = count
+        sub.closed = bool(len(sub.tris) and np.all(count[count > 0] == 2))
+        sub.boundary = sub.edges[count == 1]
+        sub.ok = True
+        sub.lo, sub.hi = sub.verts.min(0), sub.verts.max(0)
+        sub.bvh = BVHTree.FromPolygons([tuple(v) for v in sub.verts.tolist()],
+                                       [tuple(t) for t in sub.tris.tolist()], epsilon=0.0)
+        out.append(sub)
+    return out
 
 
 def _aabb_gap(a, b):
@@ -384,6 +435,15 @@ def _write_evidence(path, result):
     return doc
 
 
+def _write_result(path, result, run_id):
+    """Result plus run_id as JSON: temp file, then replace, so a reader never sees half of it."""
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump({**result, "run_id": run_id}, fh, indent=2)
+    os.replace(tmp, path)
+
+
 def _targets(names):
     if names:
         missing = [n for n in names if n not in bpy.data.objects]
@@ -397,7 +457,8 @@ def _targets(names):
 
 
 def main(objects=None, gap_max_m=0.005, min_depth_m=0.001, require_connected=True, anchor=None,
-         ignore_pairs=None, max_samples=4000, evidence_path=None):
+         ignore_pairs=None, max_samples=4000, evidence_path=None, within_mesh=False, result_path=None,
+         run_id=None):
     evidence_path = _check_evidence_path(evidence_path)
     gap_max_m, tol, cap = float(gap_max_m), float(min_depth_m), int(max_samples)
     if gap_max_m < 0 or tol < 0 or cap < 100:
@@ -415,7 +476,11 @@ def main(objects=None, gap_max_m=0.005, min_depth_m=0.001, require_connected=Tru
     recs, skipped = [], []
     for o in objs:
         r = Rec(o, depsgraph)
-        (recs if r.ok else skipped).append(r if r.ok else o.name)
+        if r.ok and within_mesh:
+            parts = _islands(r)
+            recs.extend(parts if len(parts) > 1 else [r])
+        else:
+            (recs if r.ok else skipped).append(r if r.ok else o.name)
     notes = []
     if not recs:
         result = {"verdict": "FAIL", "objects_checked": 0, "pairs_tested": 0, "clashes": [], "contained": [],
@@ -451,7 +516,8 @@ def main(objects=None, gap_max_m=0.005, min_depth_m=0.001, require_connected=Tru
             gap = _aabb_gap(a, b)
             if gap > gap_max_m + eps:
                 continue
-            overlap = gap <= eps
+            # islands of one mesh also overlap when they lie within the touching tolerance (coplanar overlap, 1 mm)
+            overlap = gap <= (eps + tol if a.src == b.src else eps)
             joined = False
             if overlap:
                 pairs += 1
@@ -551,10 +617,13 @@ def main(objects=None, gap_max_m=0.005, min_depth_m=0.001, require_connected=Tru
               "groups": [sorted(r.name for r in g) for g in glist], "main_group": sorted(r.name for r in main_group),
               "not_measured": not_measured, "open_meshes": sorted(r.name for r in recs if not r.closed),
               "skipped": skipped, "notes": notes, "sampled": sampled_any,
-              "params": {"gap_max_m": gap_max_m, "min_depth_m": tol, "require_connected": bool(require_connected)}}
+              "params": {"gap_max_m": gap_max_m, "min_depth_m": tol, "require_connected": bool(require_connected),
+                        "within_mesh": bool(within_mesh)}}
     if evidence_path:
         result["evidence"] = _write_evidence(evidence_path, result)
         result["evidence"]["path"] = evidence_path
+    if result_path:
+        _write_result(result_path, result, run_id)
     return result
 
 
@@ -562,3 +631,5 @@ ARGS = globals().get("ARGS") or _cli_args()
 result = main(**ARGS)
 if bpy.app.background and __name__ == "__main__":
     print(json.dumps(result, indent=2))
+    if result.get("verdict") == "FAIL":
+        sys.exit(2)

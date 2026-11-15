@@ -72,6 +72,20 @@ blender -b asset.blend --python <skill_dir>/scripts/validate_asset.py -- '{"tri_
 blender -b asset.blend --python <skill_dir>/scripts/validate_asset.py -- --args-file args.json
 ```
 
+For a verdict you will act on (`validate_asset.py`, `clash_audit.py`; the other verdict scripts take the same two
+arguments), use `--python-exit-code 1`, pass `--args-file`, and give the ARGS a fresh `run_id` and a `result_path`:
+
+```bash
+# args.json: {"objects": ["SM_Crate"], "result_path": "C:/work/validate.json", "run_id": "crate-007"}
+blender -b asset.blend --python-exit-code 1 --python <skill_dir>/scripts/validate_asset.py -- --args-file args.json
+```
+
+The script writes its result dict plus `"run_id"` to `result_path` (temp file, then replace) when it finishes. The run
+succeeded only if the exit code is 0 or 2 **and** `result_path` exists with this `run_id`. Exit code 0 is PASS or WARN, 2
+is a FAIL verdict, 1 is a script error (Blender's own exit code for an exception, a missing script file or a bad
+argument; no file is written). A missing file or another `run_id` (an older run's file) is a failed run, never a pass.
+Only a background command-line run exits with 2; a `runpy` call inside a live Blender never ends the session.
+
 Read a script before running it the first time in a session; pass only the documented ARGS.
 
 When Blender is not connected and the user will paste code into Blender's Scripting workspace, give them
