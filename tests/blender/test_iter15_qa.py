@@ -525,16 +525,18 @@ def test_f2_partial_coplanar_overlap():
     out = {}
     try:
         for name, args in (("half", (0.5, 0.0005)), ("quarter", (0.7, 0.0005)), ("narrow", (0.9, 0.0005)),("apart_2mm", (0.5, 0.002)),
-                           ("opposed_open", (0.5, 0.0005, True)), ("sliver_below_floor", (0.00995, 0.0005, False, 0.01)),
+                           ("small_gap_setting", (0.5, 0.0005)), ("opposed_open", (0.5, 0.0005, True)), ("sliver_below_floor", (0.00995, 0.0005, False, 0.01)),
                            ("side_by_side", (1.5, 0.0))):
             ob = pair("pc_" + name, *args)
-            r = run("clash_audit.py", {"objects": [ob.name], "within_mesh": True})
+            extra = {"gap_max_m": 0.0001, "require_connected": False} if name == "small_gap_setting" else {}
+            r = run("clash_audit.py", {"objects": [ob.name], "within_mesh": True, **extra})
             out[name] = {"verdict": r["verdict"], "kinds": [c.get("depth") for c in r["clashes"]]}
     finally:
         cleanup()
     assert out["half"]["verdict"] == "FAIL" and out["half"]["kinds"] == ["coincident"], out
     assert out["quarter"]["verdict"] == "FAIL", out
     assert out["narrow"]["verdict"] == "FAIL" and out["narrow"]["kinds"] == ["coincident"], out  # a 10% strip
+    assert out["small_gap_setting"]["verdict"] == "FAIL" and out["small_gap_setting"]["kinds"] == ["coincident"], out
     assert out["opposed_open"]["verdict"] == "FAIL" and out["opposed_open"]["kinds"] == ["coincident"], out
     assert out["sliver_below_floor"]["verdict"] == "PASS", out  # 5e-7 m2 overlap: under the documented 1e-6 m2 floor
     assert out["apart_2mm"]["verdict"] == "PASS" and out["side_by_side"]["verdict"] == "FAIL", out  # side_by_side: floating

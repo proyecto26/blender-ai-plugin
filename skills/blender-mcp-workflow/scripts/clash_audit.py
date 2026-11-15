@@ -51,7 +51,7 @@ ARGS:
                        overlap (surfaces within `min_depth_m`, 1 mm by default) inside one mesh are found. A floating
                        island fails like a floating object, under `require_connected`
                        The coplanar test is exact (triangles clipped onto one plane) but has an area floor: overlap below
-                       1e-6 m2 (a 1 mm sliver of a 1 m edge) is not reported. Faces that face the same way always count;
+                       1e-6 m2 (a 1 mm x 1 mm patch) is not reported. Faces that face the same way always count;
                        opposed faces count only when at least one of the two islands is an open shell (two closed solids
                        touching face to face are normal)
     result_path        (str|None) write the result dict plus "run_id" there as JSON (temp file, then replace) at the end
@@ -586,7 +586,8 @@ def main(objects=None, gap_max_m=0.005, min_depth_m=0.001, require_connected=Tru
             diag = float(np.linalg.norm(np.maximum(a.hi, b.hi) - np.minimum(a.lo, b.lo)))
             eps, adv = max(1e-6, 1e-6 * diag), max(2e-6, 2e-6 * diag)
             gap = _aabb_gap(a, b)
-            if gap > gap_max_m + eps:
+            # the coplanar check of islands of one mesh reaches `tol` (1 mm) whatever the contact-gap setting is
+            if gap > max(gap_max_m, tol if a.src == b.src else 0.0) + eps:
                 continue
             # islands of one mesh also overlap when they lie within the touching tolerance (coplanar overlap, 1 mm)
             overlap = gap <= (eps + tol if a.src == b.src else eps)
