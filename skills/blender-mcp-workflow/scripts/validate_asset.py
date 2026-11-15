@@ -2,7 +2,9 @@
 
 Checks: applied transforms, triangle budget, n-gons, non-manifold edges, loose geometry, degenerate faces and
 edges, inconsistent winding, inside-out closed shells, UV layers + out-of-bounds UVs, collapsed UV faces,
-overlapping UVs, empty material slots, naming prefix, origin placement, and scale sanity. Each check is PASS,
+overlapping UVs, empty material slots, naming prefix, origin placement, scale sanity, material dependencies (faces on empty or
+missing slots, missing image files, image colour spaces wired to the wrong kind of socket) and optional budgets for
+materials, texture size and deform bones. Each check is PASS,
 WARN, FAIL or NOT_CHECKED (it could not measure; the reason is in `detail`).
 
 Verdict rule: an object is FAIL if any check fails, else WARN if any check warns or was NOT_CHECKED, else PASS;
@@ -15,6 +17,18 @@ Thresholds: degenerate face < 1e-10 m2, degenerate edge < 1e-7 m, collapsed UV f
 > 1% of the covered UV area (rasterized at 256 px per UV tile, so faces smaller than a pixel are not resolved).
 An open shell (a plane, a card, a mesh with holes) has no inside: `orientation` is NOT_CHECKED for it, never PASS.
 The UV checks read the active render UV map.
+
+Material dependencies read the materials in the object's slots (node groups are followed). `material_slots` FAILs
+when a face uses an empty slot or an index beyond the slots. `material_images` FAILs when an image texture reads a
+file that is not on disk and the image is not packed (generated images pass; UDIM, sequence and movie images are not
+checked, so they make the check NOT_CHECKED). `material_color_space` WARNs when an sRGB image's Color output feeds
+Roughness, Metallic, Alpha, Normal (or another data input of a shader), a Normal Map Color input, or a Bump or
+Displacement Height input, and when a Non-Color image feeds Principled Base Color; it follows Reroute nodes only.
+The Alpha output of an image is never warned about. Budgets are FAIL only when the measured value is above the limit
+(a value exactly at the limit passes) and are not checked when unset: `max_materials` counts distinct materials used
+by faces, `max_texture_px` is the largest width or height among the images of the slot materials (each image once;
+NOT_CHECKED when an image has no pixels to measure), `max_bones` counts deform bones of the armatures its Armature
+modifiers point to (modifiers counted even when disabled).
 
     import runpy
     result = runpy.run_path("<skill_dir>/scripts/validate_asset.py",
@@ -29,6 +43,9 @@ ARGS:
     tri_budget  (int|None)       per-object triangle budget
     prefix      (str)            required name prefix (default "SM_"; use "" to skip)
     max_size_m  (float)          WARN when the largest dimension exceeds this (catches cm/m mix-ups)
+    max_materials (int|None)     FAIL when more distinct materials than this are used by faces
+    max_texture_px (int|None)    FAIL when an image of its materials is wider or taller than this many pixels
+    max_bones   (int|None)       FAIL when its Armature modifiers point at more deform bones than this
     allow_overlap (bool)         declared mirrored or stacked UVs (default False): the overlap is reported but
                                  does not fail
     evidence_path (str|None)     write this run's result there (script-evidence/1: script, time, verdict, summary) so
@@ -161,6 +178,128 @@ def _uv_overlap(tri_uv):
     return float((count >= 2).sum()) / covered, None
 
 
+DATA_INPUTS = {"Roughness", "Metallic", "Alpha", "Normal", "Specular IOR Level", "Coat Weight", "Coat Roughness",
+               "Sheen Roughness", "Transmission Weight", "Subsurface Weight"}
+
+
+def _trees(material):
+    """The material's node tree plus every node group reachable from it, each once."""
+    if material is None or material.node_tree is None:
+        return []
+    seen, out, stack = set(), [], [material.node_tree]
+    while stack:
+        tree = stack.pop()
+        if tree.as_pointer() in seen:
+            continue
+        seen.add(tree.as_pointer())
+        out.append(tree)
+        stack.extend(n.node_tree for n in tree.nodes if n.type == "GROUP" and n.node_tree)
+    return out
+
+
+def _consumers(tree, node):
+    """(node, input socket name) pairs the Color output of an image node feeds, looking through Reroute nodes."""
+    found, seen, stack = [], set(), [(node, "Color")]
+    while stack:
+        src, out_name = stack.pop()
+        for link in tree.links:
+            if link.from_node != src or link.from_socket.name != out_name or link.is_muted or not link.is_valid:
+                continue
+            if link.to_node.type == "REROUTE":
+                if link.to_node.as_pointer() not in seen:
+                    seen.add(link.to_node.as_pointer())
+                    stack.append((link.to_node, link.to_node.outputs[0].name))
+            else:
+                found.append((link.to_node, link.to_socket.name))
+    return found
+
+
+def _material_images(materials):
+    """[(image, [(tree, node)])] for every distinct image used by image texture nodes of these materials."""
+    images, order = {}, []
+    for mat in materials:
+        for tree in _trees(mat):
+            for node in tree.nodes:
+                if node.type in ("TEX_IMAGE", "TEX_ENVIRONMENT") and node.image:
+                    key = node.image.as_pointer()
+                    if key not in images:
+                        images[key] = (node.image, [])
+                        order.append(key)
+                    images[key][1].append((tree, node))
+    return [images[k] for k in order]
+
+
+def _material_checks(obj, used_indices, max_materials, max_texture_px, add):
+    slots = [s.material for s in obj.material_slots]
+    if not used_indices:
+        add("material_slots", "NOT_CHECKED", "mesh has no faces")
+    else:
+        empty = sorted(i for i in used_indices if i < len(slots) and slots[i] is None)
+        beyond = sorted(i for i in used_indices if i >= len(slots))
+        add("material_slots", "PASS" if not (empty or beyond) else "FAIL",
+            f"faces use slot(s) {sorted(used_indices)} of {len(slots)}; empty slots used: {empty}; "
+            f"indices beyond the slots: {beyond}")
+    mats = [m for m in slots if m is not None]
+    images = _material_images(mats)
+    missing, skipped = [], []
+    for img, _ in images:
+        if img.source != "FILE":
+            if img.source in ("TILED", "SEQUENCE", "MOVIE"):
+                skipped.append(img.name)
+            continue
+        path = bpy.path.abspath(img.filepath, library=img.library) if img.filepath else ""
+        if img.packed_file is None and not (path and os.path.isfile(path)):
+            missing.append(f"{img.name} ({img.filepath or 'no path'})")
+    if missing:
+        add("material_images", "FAIL", f"{len(missing)} image(s) not on disk and not packed: {missing}")
+    elif skipped:
+        add("material_images", "NOT_CHECKED", f"{len(skipped)} UDIM, sequence or movie image(s) not checked: {skipped}")
+    else:
+        add("material_images", "PASS", f"{len(images)} image(s), every file found, packed or generated")
+    warns = []
+    for img, uses in images:
+        cs = img.colorspace_settings.name
+        for tree, node in uses:
+            for target, socket in _consumers(tree, node):
+                data_in = (socket in DATA_INPUTS or (target.type == "NORMAL_MAP" and socket == "Color")
+                           or (target.type in ("BUMP", "DISPLACEMENT") and socket == "Height"))
+                if cs.startswith("sRGB") and data_in:
+                    warns.append(f"{img.name} (sRGB colour) feeds {target.name}.{socket}: use Non-Color")
+                elif cs == "Non-Color" and target.type == "BSDF_PRINCIPLED" and socket == "Base Color":
+                    warns.append(f"{img.name} (Non-Color) feeds {target.name}.Base Color: use sRGB")
+    add("material_color_space", "PASS" if not warns else "WARN",
+        "; ".join(sorted(set(warns))) if warns else f"{len(images)} image(s), colour spaces match their use")
+    if max_materials is not None:
+        used = {slots[i].name for i in used_indices if i < len(slots) and slots[i] is not None}
+        add("budget_materials", "PASS" if len(used) <= max_materials else "FAIL",
+            f"{len(used)} material(s) used by faces, limit {max_materials}")
+    if max_texture_px is not None:
+        biggest, unmeasured = 0, []
+        for img, _ in images:
+            w, h = img.size  # reading the size loads the pixels into memory (a cache, not file data)
+            if w and h:
+                biggest = max(biggest, w, h)
+            else:
+                unmeasured.append(img.name)
+        if biggest > max_texture_px:
+            add("budget_texture_px", "FAIL", f"largest texture {biggest} px, limit {max_texture_px}")
+        elif unmeasured:
+            add("budget_texture_px", "NOT_CHECKED", f"{len(unmeasured)} image(s) have no pixels to measure: "
+                f"{unmeasured}; largest measured {biggest} px, limit {max_texture_px}")
+        else:
+            add("budget_texture_px", "PASS", f"largest texture {biggest} px, limit {max_texture_px}")
+
+
+def _bone_budget(obj, max_bones, add):
+    arms = {}
+    for mod in obj.modifiers:
+        if mod.type == "ARMATURE" and mod.object and mod.object.type == "ARMATURE":
+            arms[mod.object.as_pointer()] = mod.object
+    count = sum(1 for a in arms.values() for b in a.data.bones if b.use_deform)
+    add("budget_bones", "PASS" if count <= max_bones else "FAIL",
+        f"{count} deform bone(s) in {len(arms)} armature(s), limit {max_bones}")
+
+
 def _geometry(bm, matrix_world, scale_length, add):
     """Degenerate faces/edges, winding, orientation, on world-space evaluated geometry converted to metres."""
     m = np.array(matrix_world, dtype=np.float64)
@@ -238,7 +377,8 @@ def _uv_checks(bm, uv_layer, allow_overlap, add):
             "mirrored or stacked on purpose: allow_overlap=True)")
 
 
-def _check(obj, tri_budget, prefix, max_size_m, depsgraph, allow_overlap=False):
+def _check(obj, tri_budget, prefix, max_size_m, depsgraph, allow_overlap=False, max_materials=None,
+           max_texture_px=None, max_bones=None):
     checks = {}
     scale_length = bpy.context.scene.unit_settings.scale_length or 1.0
 
@@ -259,6 +399,7 @@ def _check(obj, tri_budget, prefix, max_size_m, depsgraph, allow_overlap=False):
         bm.edges.index_update()
         bm.faces.index_update()
         tris = sum(len(f.verts) - 2 for f in bm.faces)
+        used_indices = {f.material_index for f in bm.faces}
         ngons = sum(1 for f in bm.faces if len(f.verts) > 4)
         non_manifold = sum(1 for e in bm.edges if not e.is_manifold and not e.is_boundary)
         boundary = sum(1 for e in bm.edges if e.is_boundary)
@@ -309,6 +450,9 @@ def _check(obj, tri_budget, prefix, max_size_m, depsgraph, allow_overlap=False):
     else:
         add("materials", "PASS" if not empty_slots else "FAIL",
             f"{len(obj.material_slots)} slot(s); empty slots: {empty_slots}")
+    _material_checks(obj, used_indices, max_materials, max_texture_px, add)
+    if max_bones is not None:
+        _bone_budget(obj, max_bones, add)
     if prefix:
         add("naming", "PASS" if obj.name.startswith(prefix) else "FAIL", f"expected prefix {prefix!r}")
     largest = (max(obj.dimensions) if obj.dimensions else 0) * scale_length
@@ -341,8 +485,19 @@ def _write_result(path, result, run_id):
     os.replace(tmp, path)
 
 
+def _budget(name, value):
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{name} must be a whole number of 0 or more (or null to skip), got {value!r}")
+    return value
+
+
 def main(objects=None, tri_budget=None, prefix="SM_", max_size_m=50.0, evidence_path=None, allow_overlap=False,
-         result_path=None, run_id=None):
+         result_path=None, run_id=None, max_materials=None, max_texture_px=None, max_bones=None):
+    max_materials = _budget("max_materials", max_materials)
+    max_texture_px = _budget("max_texture_px", max_texture_px)
+    max_bones = _budget("max_bones", max_bones)
     targets = _targets(objects)
     editing = [o.name for o in targets if o.type == "MESH" and o.data.is_editmode]
     if editing:
@@ -354,7 +509,8 @@ def main(objects=None, tri_budget=None, prefix="SM_", max_size_m=50.0, evidence_
     for obj in targets:
         if obj.type != "MESH":
             continue
-        tris, checks = _check(obj, tri_budget, prefix, max_size_m, depsgraph, bool(allow_overlap))
+        tris, checks = _check(obj, tri_budget, prefix, max_size_m, depsgraph, bool(allow_overlap), max_materials,
+                              max_texture_px, max_bones)
         worst = _aggregate(c["status"] for c in checks.values())
         report[obj.name] = {"tris": tris, "verdict": worst, "checks": checks,
                             "not_checked": [n for n, c in checks.items() if c["status"] == "NOT_CHECKED"]}
