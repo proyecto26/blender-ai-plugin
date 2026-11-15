@@ -45,7 +45,7 @@ def run(script, args):
 CUBE_V = [(-.5, -.5, 0), (.5, -.5, 0), (.5, .5, 0), (-.5, .5, 0), (-.5, -.5, 1), (.5, -.5, 1), (.5, .5, 1), (-.5, .5, 1)]
 CUBE_F = [(0, 3, 2, 1), (4, 5, 6, 7), (0, 1, 5, 4), (1, 2, 6, 5), (2, 3, 7, 6), (3, 0, 4, 7)]
 QUAD = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)]
-CREATED = {"objects": [], "meshes": [], "materials": [], "images": [], "armatures": []}
+CREATED = {"objects": [], "meshes": [], "materials": [], "images": [], "armatures": [], "node_groups": []}
 TEMP_FILES = []
 
 
@@ -122,7 +122,7 @@ def cleanup():
     for ob in CREATED["objects"]:
         if ob.name in bpy.data.objects:
             bpy.data.objects.remove(ob, do_unlink=True)
-    for key in ("meshes", "materials", "images", "armatures"):
+    for key in ("meshes", "materials", "images", "armatures", "node_groups"):
         for d in CREATED[key]:
             coll = getattr(bpy.data, key)
             if d.name in coll:
@@ -241,7 +241,9 @@ def test_p1_result_file(out_dir):
 
 
 def test_p2_material_slots():
-    """P2: a face on an empty slot or beyond the slots FAILs; an empty slot nobody uses is fine."""
+    """P2: a face on an empty slot or beyond the slots FAILs the material_slots check. An empty slot no face uses
+    passes material_slots, but the object's verdict is still FAIL because the existing `materials` check fails every
+    empty slot (an unfilled slot is a defect of its own, whether or not a face uses it)."""
     try:
         mat, _, _ = new_mat("P2_A")
         empty = mesh_obj("P2_Empty", [mat, None], [0, 0, 0, 0, 0, 1])
@@ -255,6 +257,9 @@ def test_p2_material_slots():
         cleanup()
     assert got == {"P2_Empty": "FAIL", "P2_Beyond": "FAIL", "P2_UnusedEmpty": "PASS", "P2_GoodSlots": "PASS"}, (got, detail)
     assert res["objects"]["P2_Empty"]["verdict"] == "FAIL" and res["objects"]["P2_GoodSlots"]["verdict"] == "PASS"
+    unused_checks = res["objects"]["P2_UnusedEmpty"]["checks"]
+    assert unused_checks["material_slots"]["status"] == "PASS" and unused_checks["materials"]["status"] == "FAIL", unused_checks
+    assert res["objects"]["P2_UnusedEmpty"]["verdict"] == "FAIL"
     return {"statuses": got, "detail": detail}
 
 
@@ -486,6 +491,164 @@ def test_p23_state_restored(out_dir):
     return {"verdict": res["verdict"]}
 
 
+def gn_set_material(ob, material, name="GN_SetMat"):
+    """A Geometry Nodes modifier that sets every face of `ob` to `material`."""
+    ng = bpy.data.node_groups.new(name, "GeometryNodeTree")
+    CREATED["node_groups"].append(ng)
+    ng.interface.new_socket("Geometry", in_out="INPUT", socket_type="NodeSocketGeometry")
+    ng.interface.new_socket("Geometry", in_out="OUTPUT", socket_type="NodeSocketGeometry")
+    gin = ng.nodes.new("NodeGroupInput")
+    gout = ng.nodes.new("NodeGroupOutput")
+    setm = ng.nodes.new("GeometryNodeSetMaterial")
+    setm.inputs["Material"].default_value = material
+    ng.links.new(gin.outputs[0], setm.inputs["Geometry"])
+    ng.links.new(setm.outputs["Geometry"], gout.inputs[0])
+    mod = ob.modifiers.new("GN", "NODES")
+    mod.node_group = ng
+    return mod
+
+
+def test_r1_evaluated_materials(out_dir):
+    """Review 1: materials come from the evaluated mesh, so a Geometry Nodes Set Material is audited, not the slots."""
+    try:
+        folder = os.path.join(out_dir, "r1_img")
+        os.makedirs(folder, exist_ok=True)
+        orig, _, _ = new_mat("R1_Orig")
+        img_missing, p_missing = file_image("r1_missing", folder)
+        bad, btree, bbsdf = new_mat("R1_Bad")
+        btree.links.new(tex_node(btree, img_missing).outputs["Color"], bbsdf.inputs["Base Color"])
+        ob = mesh_obj("R1_Gn", [orig], [0] * 6)
+        gn_set_material(ob, bad)
+        big = gen_image("r1_big", 256, 256)
+        big_mat, ttree, tbsdf = new_mat("R1_Big")
+        ttree.links.new(tex_node(ttree, big).outputs["Color"], tbsdf.inputs["Base Color"])
+        ob2 = mesh_obj("R1_GnBig", [orig], [0] * 6)
+        gn_set_material(ob2, big_mat, "GN_SetMat2")
+        os.remove(p_missing)
+        res = run("validate_asset.py", {"objects": [ob.name, ob2.name], "prefix": "", "max_texture_px": 128,
+                                        "max_materials": 1})
+        images = check(res, "R1_Gn", "material_images")
+        tex = check(res, "R1_GnBig", "budget_texture_px")
+        mats = check(res, "R1_GnBig", "budget_materials")
+    finally:
+        cleanup()
+    assert images["status"] == "FAIL" and "r1_missing" in images["detail"], images
+    assert tex["status"] == "FAIL" and "256 px" in tex["detail"], tex
+    assert mats["status"] == "PASS", mats
+    return {"images": images["detail"], "texture": tex["detail"], "materials": mats["detail"]}
+
+
+def test_r2_udim_movie_sequence_missing(out_dir):
+    """Review 2: a UDIM, sequence or movie image whose files are not on disk FAILs unless packed; present ones pass."""
+    try:
+        folder = os.path.join(out_dir, "r2_img")
+        os.makedirs(folder, exist_ok=True)
+        cases = {}
+
+        def case(key, img):
+            mat, tree, bsdf = new_mat(f"R2_{key}")
+            tree.links.new(tex_node(tree, img).outputs["Color"], bsdf.inputs["Base Color"])
+            cases[key] = mesh_obj(f"R2_{key}", [mat], [0] * 6)
+
+        def special(name, source, path):
+            img = gen_image(name, 4, 4)
+            img.source = source
+            img.filepath = path
+            return img
+        gone = os.path.join(folder, "gone")
+        case("udim_missing", special("r2_udim_missing", "TILED", gone + ".<UDIM>.png"))
+        case("movie_missing", special("r2_movie_missing", "MOVIE", gone + ".mp4"))
+        case("sequence_missing", special("r2_seq_missing", "SEQUENCE", gone + "_0001.png"))
+        real, real_path = file_image("r2_real", folder)
+        tile_path = os.path.join(folder, "tile.1001.png")
+        os.replace(real_path, tile_path)
+        TEMP_FILES.append(tile_path)
+        case("udim_present", special("r2_udim_present", "TILED", os.path.join(folder, "tile.<UDIM>.png")))
+        res = run("validate_asset.py", {"objects": [o.name for o in cases.values()], "prefix": ""})
+        got = {k: check(res, o.name, "material_images")["status"] for k, o in cases.items()}
+        detail = {k: check(res, o.name, "material_images")["detail"] for k, o in cases.items()}
+    finally:
+        cleanup()
+    assert got == {"udim_missing": "FAIL", "movie_missing": "FAIL", "sequence_missing": "FAIL",
+                   "udim_present": "PASS"}, (got, detail)
+    return {"statuses": got}
+
+
+def test_r3_group_boundaries():
+    """Review 3: colour-space tracing follows links through node groups, out of Group Output and into Group Input."""
+    results = {}
+    try:
+        def make_group(name, inner):
+            ng = bpy.data.node_groups.new(name, "ShaderNodeTree")
+            CREATED["node_groups"].append(ng)
+            ng.interface.new_socket("Color", in_out="INPUT", socket_type="NodeSocketColor")
+            ng.interface.new_socket("Color", in_out="OUTPUT", socket_type="NodeSocketColor")
+            gin, gout = ng.nodes.new("NodeGroupInput"), ng.nodes.new("NodeGroupOutput")
+            inner(ng, gin, gout)
+            return ng
+
+        def case(key, wire):
+            mat, tree, bsdf = new_mat(f"R3_{key}")
+            wire(tree, bsdf)
+            results[key] = mesh_obj(f"R3_{key}", [mat], [0] * 6)
+
+        def out_of_group(colorspace, socket):
+            def wire(tree, bsdf):
+                def inner(ng, gin, gout):
+                    img = gen_image(f"r3_out_{colorspace}_{socket}", 8, 8, colorspace)
+                    ng.links.new(tex_node(ng, img).outputs["Color"], gout.inputs[0])
+                grp = tree.nodes.new("ShaderNodeGroup")
+                grp.node_tree = make_group(f"R3G_out_{colorspace}_{socket}", inner)
+                tree.links.new(grp.outputs[0], bsdf.inputs[socket])
+            return wire
+
+        def into_group(colorspace, socket):
+            def wire(tree, bsdf):
+                def inner(ng, gin, gout):
+                    ng.links.new(gin.outputs[0], gout.inputs[0])
+                grp = tree.nodes.new("ShaderNodeGroup")
+                grp.node_tree = make_group(f"R3G_in_{colorspace}_{socket}", inner)
+                img = gen_image(f"r3_in_{colorspace}_{socket}", 8, 8, colorspace)
+                tree.links.new(tex_node(tree, img).outputs["Color"], grp.inputs[0])
+                tree.links.new(grp.outputs[0], bsdf.inputs[socket])
+            return wire
+        case("bad_noncolor_out_of_group_base", out_of_group("Non-Color", "Base Color"))
+        case("bad_srgb_out_of_group_roughness", out_of_group("sRGB", "Roughness"))
+        case("bad_noncolor_into_group_base", into_group("Non-Color", "Base Color"))
+        case("good_srgb_out_of_group_base", out_of_group("sRGB", "Base Color"))
+        case("good_noncolor_into_group_roughness", into_group("Non-Color", "Roughness"))
+        res = run("validate_asset.py", {"objects": [o.name for o in results.values()], "prefix": ""})
+        got = {k: check(res, o.name, "material_color_space")["status"] for k, o in results.items()}
+    finally:
+        cleanup()
+    assert got == {k: ("WARN" if k.startswith("bad") else "PASS") for k in got}, got
+    return got
+
+
+def test_r4_registered_engines_only():
+    """Review 4: the engine list holds registered engines (also indirect subclasses), not merely defined classes."""
+    class Unreg(bpy.types.RenderEngine):
+        bl_idname = "BAP_R4_UNREGISTERED"
+        bl_label = "never registered"
+
+    class Mid(bpy.types.RenderEngine):
+        bl_idname = "BAP_R4_MID"
+        bl_label = "mid"
+
+    class Leaf(Mid):
+        bl_idname = "BAP_R4_LEAF"
+        bl_label = "leaf"
+    bpy.utils.register_class(Leaf)
+    try:
+        engines = run("env_report.py", {"enums": []})["render_engines"]
+    finally:
+        bpy.utils.unregister_class(Leaf)
+    assert "BAP_R4_UNREGISTERED" not in engines, engines
+    assert "BAP_R4_LEAF" in engines, engines
+    assert "CYCLES" in engines and "BLENDER_EEVEE" in engines, engines
+    return {"engines": engines}
+
+
 def main():
     args = _cli_args()
     out_dir = args.get("out_dir", ".")
@@ -494,9 +657,11 @@ def main():
     checks, failed = {}, []
     tests = [test_p1_env_report_state_and_values, test_p1_enum_errors_and_args, test_p1_result_file,
              test_p2_material_slots, test_p2_material_images, test_p2_color_space, test_p3_max_materials,
-             test_p3_max_texture_px, test_p3_max_bones, test_p3_bad_budget_args, test_p23_state_restored]
+             test_p3_max_texture_px, test_p3_max_bones, test_p3_bad_budget_args, test_p23_state_restored,
+             test_r1_evaluated_materials, test_r2_udim_movie_sequence_missing, test_r3_group_boundaries,
+             test_r4_registered_engines_only]
     if CONFIG["validate_script"]:  # old-script run: only the P2/P3 tests are meaningful
-        tests = [t for t in tests if t.__name__.startswith(("test_p2", "test_p3", "test_p23"))]
+        tests = [t for t in tests if t.__name__.startswith(("test_p2", "test_p3", "test_p23", "test_r"))]
     for fn in tests:
         try:
             takes_dir = fn.__code__.co_argcount == 1

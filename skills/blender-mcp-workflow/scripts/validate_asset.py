@@ -18,12 +18,13 @@ Thresholds: degenerate face < 1e-10 m2, degenerate edge < 1e-7 m, collapsed UV f
 An open shell (a plane, a card, a mesh with holes) has no inside: `orientation` is NOT_CHECKED for it, never PASS.
 The UV checks read the active render UV map.
 
-Material dependencies read the materials in the object's slots (node groups are followed). `material_slots` FAILs
+Material dependencies read the materials of the evaluated mesh (so a Geometry Nodes Set Material is what gets audited;
+a slot linked to the object keeps the object's material), and follow node groups. `material_slots` FAILs
 when a face uses an empty slot or an index beyond the slots. `material_images` FAILs when an image texture reads a
-file that is not on disk and the image is not packed (generated images pass; UDIM, sequence and movie images are not
-checked, so they make the check NOT_CHECKED). `material_color_space` WARNs when an sRGB image's Color output feeds
+file that is not on disk and the image is not packed (generated images pass; a UDIM image passes when any tile file
+exists, a sequence or movie image when its base file exists). `material_color_space` WARNs when an sRGB image's Color output feeds
 Roughness, Metallic, Alpha, Normal (or another data input of a shader), a Normal Map Color input, or a Bump or
-Displacement Height input, and when a Non-Color image feeds Principled Base Color; it follows Reroute nodes only.
+Displacement Height input, and when a Non-Color image feeds Principled Base Color; it follows Reroute nodes and links through node groups.
 The Alpha output of an image is never warned about. Budgets are FAIL only when the measured value is above the limit
 (a value exactly at the limit passes) and are not checked when unset: `max_materials` counts distinct materials used
 by faces, `max_texture_px` is the largest width or height among the images of the slot materials (each image once;
@@ -197,20 +198,45 @@ def _trees(material):
     return out
 
 
-def _consumers(tree, node):
-    """(node, input socket name) pairs the Color output of an image node feeds, looking through Reroute nodes."""
-    found, seen, stack = [], set(), [(node, "Color")]
+def _users(materials):
+    """{node tree pointer: [(parent tree, group node)]} for every node group used inside these materials."""
+    users = {}
+    for mat in materials:
+        for tree in _trees(mat):
+            for n in tree.nodes:
+                if n.type == "GROUP" and n.node_tree:
+                    users.setdefault(n.node_tree.as_pointer(), []).append((tree, n))
+    return users
+
+
+def _consumers(tree, node, users):
+    """(node, input socket name) pairs the Color output of an image node feeds, looking through Reroute nodes and
+    through node groups (into Group Input, out of Group Output, matched by socket position)."""
+    found, seen = [], set()
+    stack = [(tree, node, node.outputs["Color"].identifier, ())]
     while stack:
-        src, out_name = stack.pop()
-        for link in tree.links:
-            if link.from_node != src or link.from_socket.name != out_name or link.is_muted or not link.is_valid:
+        cur_tree, src, ident, ctx = stack.pop()
+        key = (cur_tree.as_pointer(), src.as_pointer(), ident, tuple(g.as_pointer() for _, g in ctx))
+        if key in seen:
+            continue
+        seen.add(key)
+        for link in cur_tree.links:
+            if link.from_node != src or link.from_socket.identifier != ident or link.is_muted or not link.is_valid:
                 continue
-            if link.to_node.type == "REROUTE":
-                if link.to_node.as_pointer() not in seen:
-                    seen.add(link.to_node.as_pointer())
-                    stack.append((link.to_node, link.to_node.outputs[0].name))
+            to, idx = link.to_node, [x.identifier for x in link.to_node.inputs].index(link.to_socket.identifier)
+            if to.type == "REROUTE":
+                stack.append((cur_tree, to, to.outputs[0].identifier, ctx))
+            elif to.type == "GROUP" and to.node_tree:
+                for inner in to.node_tree.nodes:
+                    if inner.type == "GROUP_INPUT" and idx < len(inner.outputs):
+                        stack.append((to.node_tree, inner, inner.outputs[idx].identifier, ctx + ((cur_tree, to),)))
+            elif to.type == "GROUP_OUTPUT":
+                parents = [ctx[-1]] if ctx else users.get(cur_tree.as_pointer(), [])
+                for parent_tree, group in parents:
+                    if idx < len(group.outputs):
+                        stack.append((parent_tree, group, group.outputs[idx].identifier, ctx[:-1]))
             else:
-                found.append((link.to_node, link.to_socket.name))
+                found.append((to, link.to_socket.name))
     return found
 
 
@@ -229,8 +255,23 @@ def _material_images(materials):
     return [images[k] for k in order]
 
 
-def _material_checks(obj, used_indices, max_materials, max_texture_px, add):
-    slots = [s.material for s in obj.material_slots]
+def _file_exists(img):
+    """Whether the image's file(s) are on disk: every source with a path (UDIM: any tile, tokens resolved)."""
+    raw = img.filepath
+    if not raw:
+        return False
+    if img.source == "TILED":
+        for tile in (list(img.tiles) or [None]):
+            number = tile.number if tile else 1001
+            path = raw.replace("<UDIM>", str(number)).replace(
+                "<UVTILE>", f"u{(number - 1001) % 10 + 1}_v{(number - 1001) // 10 + 1}")
+            if os.path.isfile(bpy.path.abspath(path, library=img.library)):
+                return True
+        return False
+    return os.path.isfile(bpy.path.abspath(raw, library=img.library))
+
+
+def _material_checks(slots, used_indices, max_materials, max_texture_px, add):
     if not used_indices:
         add("material_slots", "NOT_CHECKED", "mesh has no faces")
     else:
@@ -241,26 +282,21 @@ def _material_checks(obj, used_indices, max_materials, max_texture_px, add):
             f"indices beyond the slots: {beyond}")
     mats = [m for m in slots if m is not None]
     images = _material_images(mats)
-    missing, skipped = [], []
+    missing = []
     for img, _ in images:
-        if img.source != "FILE":
-            if img.source in ("TILED", "SEQUENCE", "MOVIE"):
-                skipped.append(img.name)
-            continue
-        path = bpy.path.abspath(img.filepath, library=img.library) if img.filepath else ""
-        if img.packed_file is None and not (path and os.path.isfile(path)):
-            missing.append(f"{img.name} ({img.filepath or 'no path'})")
+        if img.source in ("FILE", "TILED", "SEQUENCE", "MOVIE"):
+            packed = img.packed_file is not None or len(img.packed_files) > 0
+            if not packed and not _file_exists(img):
+                missing.append(f"{img.name} ({img.filepath or 'no path'})")
     if missing:
         add("material_images", "FAIL", f"{len(missing)} image(s) not on disk and not packed: {missing}")
-    elif skipped:
-        add("material_images", "NOT_CHECKED", f"{len(skipped)} UDIM, sequence or movie image(s) not checked: {skipped}")
     else:
         add("material_images", "PASS", f"{len(images)} image(s), every file found, packed or generated")
-    warns = []
+    warns, users = [], _users(mats)
     for img, uses in images:
         cs = img.colorspace_settings.name
         for tree, node in uses:
-            for target, socket in _consumers(tree, node):
+            for target, socket in _consumers(tree, node, users):
                 data_in = (socket in DATA_INPUTS or (target.type == "NORMAL_MAP" and socket == "Color")
                            or (target.type in ("BUMP", "DISPLACEMENT") and socket == "Height"))
                 if cs.startswith("sRGB") and data_in:
@@ -377,6 +413,16 @@ def _uv_checks(bm, uv_layer, allow_overlap, add):
             "mirrored or stacked on purpose: allow_overlap=True)")
 
 
+def _slot_materials(obj, mesh):
+    """Materials by slot index as the evaluated mesh has them (Geometry Nodes can set or add materials); a slot
+    linked to the object keeps the object's material."""
+    slots = list(mesh.materials)
+    for i, slot in enumerate(obj.material_slots):
+        if slot.link == "OBJECT" and i < len(slots):
+            slots[i] = slot.material
+    return slots
+
+
 def _check(obj, tri_budget, prefix, max_size_m, depsgraph, allow_overlap=False, max_materials=None,
            max_texture_px=None, max_bones=None):
     checks = {}
@@ -400,6 +446,7 @@ def _check(obj, tri_budget, prefix, max_size_m, depsgraph, allow_overlap=False, 
         bm.faces.index_update()
         tris = sum(len(f.verts) - 2 for f in bm.faces)
         used_indices = {f.material_index for f in bm.faces}
+        slots = _slot_materials(obj, mesh)
         ngons = sum(1 for f in bm.faces if len(f.verts) > 4)
         non_manifold = sum(1 for e in bm.edges if not e.is_manifold and not e.is_boundary)
         boundary = sum(1 for e in bm.edges if e.is_boundary)
@@ -450,7 +497,7 @@ def _check(obj, tri_budget, prefix, max_size_m, depsgraph, allow_overlap=False, 
     else:
         add("materials", "PASS" if not empty_slots else "FAIL",
             f"{len(obj.material_slots)} slot(s); empty slots: {empty_slots}")
-    _material_checks(obj, used_indices, max_materials, max_texture_px, add)
+    _material_checks(slots, used_indices, max_materials, max_texture_px, add)
     if max_bones is not None:
         _bone_budget(obj, max_bones, add)
     if prefix:

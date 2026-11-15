@@ -50,9 +50,13 @@ def _cli_args():
 def _engines(scene):
     """Registered render engines: the built-in enum values plus every engine class that registered itself."""
     found = [e.identifier for e in scene.render.bl_rna.properties["engine"].enum_items]
-    for cls in bpy.types.RenderEngine.__subclasses__():
+    stack = list(bpy.types.RenderEngine.__subclasses__())
+    while stack:  # every depth: a registered engine may derive from another engine class
+        cls = stack.pop(0)
+        stack.extend(cls.__subclasses__())
         ident = getattr(cls, "bl_idname", None)
-        if ident and ident not in found:
+        registered = bpy.types.RenderEngine.bl_rna_get_subclass_py(ident) is cls if ident else False  # unregistered: not an engine
+        if ident and registered and ident not in found:
             found.append(ident)
     return found
 
