@@ -15,7 +15,7 @@ ARGS:
     uv_scale    (float) metres per UV unit for "box" (default 1.0); must be > 0
 
 Arguments are checked before anything changes: any other `apply` or `uv` value, or a `uv_scale` that is not a
-positive number, raises and leaves every object as it was. Smart UV leaves Object Mode and the active object as
+positive number, raises and leaves every object as it was. Smart UV leaves the mode (Object or Edit) and the active object as
 they were, also when it fails, and a Smart UV operator that does not return FINISHED raises.
 
 A mesh shared by several objects is made single-user first, so siblings are never changed.
@@ -112,8 +112,10 @@ def _box_uv(me, uv_scale):
 
 
 def _smart_uv(obj):
-    """Smart UV Project on one object. Object Mode and the active object are restored whatever happens."""
+    """Smart UV Project on one object. The entry mode (Object or Edit) and the active object are restored whatever
+    happens, and the cleanup operator's result is checked (it raises only when nothing else is already failing)."""
     prev = bpy.context.view_layer.objects.active
+    entry_mode = obj.mode
     bpy.context.view_layer.objects.active = obj
     try:
         with bpy.context.temp_override(active_object=obj, object=obj, selected_objects=[obj],
@@ -124,10 +126,13 @@ def _smart_uv(obj):
                 if result != {"FINISHED"}:
                     raise RuntimeError(f"{op.idname()} returned {set(result)}, not {{'FINISHED'}}: no UVs were made")
     finally:
+        failing = sys.exc_info()[0] is not None
         with bpy.context.temp_override(active_object=obj, object=obj, selected_objects=[obj],
                                        selected_editable_objects=[obj]):
-            if obj.mode != "OBJECT":
-                bpy.ops.object.mode_set(mode="OBJECT")
+            if obj.mode != entry_mode:
+                result = bpy.ops.object.mode_set(mode=entry_mode)
+                if result != {"FINISHED"} and not failing:
+                    raise RuntimeError(f"object.mode_set({entry_mode}) returned {set(result)}: mode not restored")
         bpy.context.view_layer.objects.active = prev
 
 

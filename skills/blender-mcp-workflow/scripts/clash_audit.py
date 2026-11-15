@@ -281,6 +281,30 @@ def _on_surface_fraction(src, dst, tol, cap, rng):
     return n / len(pts)
 
 
+def _coplanar_fraction(src, dst, tol, cap, rng):
+    """Share of src's surface points (triangle grid) lying within tol of dst's surface on a face with the same
+    orientation: z-fighting coplanar overlap, however small a part of the surface it is. Opposed faces (two solids
+    touching face to face) do not count."""
+    t = src.verts[src.tris]
+    n = np.cross(t[:, 1] - t[:, 0], t[:, 2] - t[:, 0])
+    ln = np.linalg.norm(n, axis=1)
+    keep = ln > 0
+    t, n = t[keep], n[keep] / ln[keep][:, None]
+    # interior points only: a point on a triangle edge would count a solid's edge touching another solid's face
+    w = [(i / GRID, j / GRID) for i in range(1, GRID) for j in range(1, GRID - i)]
+    pts = np.concatenate([t[:, 0] * a + t[:, 1] * b + t[:, 2] * (1 - a - b) for a, b in w])
+    nrm = np.tile(n, (len(w), 1))
+    if len(pts) > cap:
+        pick = np.sort(rng.choice(len(pts), cap, replace=False))
+        pts, nrm = pts[pick], nrm[pick]
+    hits = 0
+    for p, q in zip(pts, nrm):
+        loc, normal, _, _ = dst.bvh.find_nearest(Vector(p), tol)
+        if loc is not None and float(np.dot(q, np.array(normal))) > 0.99:
+            hits += 1
+    return hits / max(len(pts), 1)
+
+
 def _border_distance(rec, p):
     """Distance from point p to the nearest border edge of the open mesh `rec` (inf when it has none)."""
     if len(rec.boundary) == 0:
@@ -489,6 +513,8 @@ def main(objects=None, gap_max_m=0.005, min_depth_m=0.001, require_connected=Tru
                   "params": {"gap_max_m": gap_max_m, "min_depth_m": tol}}
         if evidence_path:
             result["evidence"] = _write_evidence(evidence_path, result)
+        if result_path:
+            _write_result(result_path, result, run_id)
         return result
 
     rng = np.random.default_rng(0)
@@ -566,6 +592,13 @@ def main(objects=None, gap_max_m=0.005, min_depth_m=0.001, require_connected=Tru
                     if frozenset((a.name, b.name)) not in ignore:
                         clashes.append({"a": a.name, "b": b.name, "depth_m": None, "depth": "coincident",
                                         "reason": "the two meshes occupy the same surface: duplicate geometry"})
+                elif a.src == b.src and max(_coplanar_fraction(a, b, tol, cap, rng),
+                                            _coplanar_fraction(b, a, tol, cap, rng)) >= 0.02:
+                    joined = True  # islands of one mesh whose faces overlap on the same plane, even partly (z-fighting)
+                    if frozenset((a.name, b.name)) not in ignore:
+                        clashes.append({"a": a.name, "b": b.name, "depth_m": None, "depth": "coincident",
+                                        "reason": "faces of the two islands overlap on the same plane "
+                                                  f"(within {tol:g} m, same orientation): coplanar overlap"})
                 else:
                     for inner, outer in ((a, b), (b, a)):
                         if not np.all(inner.lo >= outer.lo - eps) or not np.all(inner.hi <= outer.hi + eps):
