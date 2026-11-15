@@ -80,7 +80,9 @@ tree.links.new(glare.outputs["Image"], out.inputs[0])
 # Smooth by angle (replaces auto smooth) - operators need an object context
 with bpy.context.temp_override(object=obj, active_object=obj,
                                selected_objects=[obj], selected_editable_objects=[obj]):
-    bpy.ops.object.shade_auto_smooth(angle=math.radians(30))  # adds "Smooth by Angle" modifier
+    result = bpy.ops.object.shade_auto_smooth(angle=math.radians(30))  # adds "Smooth by Angle" modifier
+if result != {"FINISHED"}:
+    raise RuntimeError(f"shade_auto_smooth returned {result}: no modifier was added")
 ```
 
 ```python

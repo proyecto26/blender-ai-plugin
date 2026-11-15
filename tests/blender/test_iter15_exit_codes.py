@@ -63,6 +63,10 @@ which = sys.argv[sys.argv.index("--") + 1]
 path = sys.argv[sys.argv.index("--") + 2]
 if which == "good":
     cube("SM_Good")
+elif which == "nofaces":  # a mesh with vertices and no faces: clash_audit has nothing to audit
+    me = bpy.data.meshes.new("Loose")
+    me.from_pydata([(0, 0, 0), (1, 0, 0)], [], [])
+    bpy.context.scene.collection.objects.link(bpy.data.objects.new("Loose", me))
 else:  # two cubes that cross each other, no material, no prefix
     cube("BadA", material=False)
     cube("BadB", loc=(0.25, 0.25, 0.25), material=False)
@@ -103,7 +107,7 @@ def main():
     with open(build, "w", encoding="utf-8") as fh:
         fh.write(BUILD)
     blends = {}
-    for which in ("good", "bad"):
+    for which in ("good", "bad", "nofaces"):
         blends[which] = os.path.join(folder, f"{which}.blend")
         subprocess.run([blender, "-b", "--factory-startup", "--python", build, "--", which, blends[which]],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=TIMEOUT_S, check=True)
@@ -140,6 +144,8 @@ def main():
          pre_stale=True)
     case("clash_pass", clash, blends["good"], {"objects": ["SM_Good"]}, (0,), True, "PASS")
     case("clash_fail", clash, blends["bad"], {"objects": ["BadA", "BadB"]}, (2,), True, "FAIL")
+    # nothing to audit is a FAIL verdict (exit 2) and must still leave the result file, like every other FAIL
+    case("clash_nothing_to_audit", clash, blends["nofaces"], {"objects": ["Loose"]}, (2,), True, "FAIL")
     case("clash_exception", clash, blends["good"], {"objects": ["NoSuchObject"]}, (1,), False)
     # a script path that does not exist: whatever Blender returns, no result file can exist, so the rule rejects it
     missing = os.path.join(folder, "no_such_script.py")

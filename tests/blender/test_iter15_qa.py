@@ -493,13 +493,115 @@ def test_docs_headless():
     return {"checked": 7}
 
 
+def test_f1_active_render_layer():
+    """Review finding 1 (REFUTED as an API error): UVLoopLayers.active_render exists on this Blender. Pinned here, and
+    the UV checks follow the render layer, not just the active one."""
+    me = bpy.data.meshes.new("rl_probe")
+    assert hasattr(me.uv_layers, "active_render") and hasattr(me.uv_layers, "active_render_index")
+    bpy.data.meshes.remove(me)
+    ob = mesh_obj("rl_cube", CUBE_V, CUBE_F, cube_uvs("collapsed"))   # layer 0 "UVMap": one collapsed face
+    try:
+        good = ob.data.uv_layers.new(name="Good")
+        for li, uv in enumerate(cube_uvs()):
+            good.uv[li].vector = uv
+        ob.data.uv_layers.active_index = 1
+        ob.data.uv_layers.active_render_index = 0           # render layer is the collapsed one, active is the good one
+        r0 = statuses(validate([ob.name]), ob.name)["uv_collapsed"]
+        ob.data.uv_layers.active_render_index = 1
+        r1 = statuses(validate([ob.name]), ob.name)["uv_collapsed"]
+    finally:
+        cleanup()
+    assert (r0, r1) == ("FAIL", "PASS"), (r0, r1)
+    return {"render=collapsed layer": r0, "render=good layer": r1}
+
+
+def test_f2_partial_coplanar_overlap():
+    """Review finding 2: squares offset 0.5 m sideways and 0.5 mm up overlap on half their area: coincident, not PASS."""
+    def pair(name, dx, dz, flip=False):
+        v = [(-.5, -.5, 0), (.5, -.5, 0), (.5, .5, 0), (-.5, .5, 0)]
+        v = v + [(x + dx, y, z + dz) for x, y, z in v]
+        second = (4, 7, 6, 5) if flip else (4, 5, 6, 7)
+        return mesh_obj(name, v, [(0, 1, 2, 3), second], None, material=False)
+    out = {}
+    try:
+        for name, args in (("half", (0.5, 0.0005)), ("quarter", (0.7, 0.0005)), ("apart_2mm", (0.5, 0.002)),
+                           ("side_by_side", (1.5, 0.0))):
+            ob = pair("pc_" + name, *args)
+            r = run("clash_audit.py", {"objects": [ob.name], "within_mesh": True})
+            out[name] = {"verdict": r["verdict"], "kinds": [c.get("depth") for c in r["clashes"]]}
+    finally:
+        cleanup()
+    assert out["half"]["verdict"] == "FAIL" and out["half"]["kinds"] == ["coincident"], out
+    assert out["quarter"]["verdict"] == "FAIL", out
+    assert out["apart_2mm"]["verdict"] == "PASS" and out["side_by_side"]["verdict"] == "FAIL", out  # side_by_side: floating
+    return out
+
+
+def test_f3_empty_audit_result_file():
+    """Review finding 3: clash_audit with nothing to audit is FAIL and still writes result_path with the run_id."""
+    d = tempfile.mkdtemp(prefix="iter15-empty-")
+    me = bpy.data.meshes.new("nf_loose")
+    me.from_pydata([(0, 0, 0), (1, 0, 0)], [], [])
+    ob = bpy.data.objects.new("nf_loose", me)
+    bpy.context.scene.collection.objects.link(ob)
+    CREATED["objects"].append(ob)
+    CREATED["meshes"].append(me)
+    try:
+        path = os.path.join(d, "empty.json")
+        res = run("clash_audit.py", {"objects": [ob.name], "result_path": path, "run_id": "e1"})
+        assert res["verdict"] == "FAIL"
+        assert os.path.isfile(path) and json.load(open(path))["run_id"] == "e1", "no result file for the empty audit"
+    finally:
+        cleanup()
+    return {"file": True}
+
+
+def test_f4_smart_uv_entry_mode():
+    """Review finding 4: Smart UV puts back the mode it started in, Edit Mode included."""
+    out = {}
+    for entry in ("OBJECT", "EDIT"):
+        ob = mesh_obj(f"sm_{entry}", CUBE_V, CUBE_F, None, material=False)
+        other = mesh_obj(f"sm_other_{entry}", CUBE_V, CUBE_F, None, material=False)
+        try:
+            bpy.context.view_layer.objects.active = ob
+            if entry == "EDIT":
+                assert bpy.ops.object.mode_set(mode="EDIT") == {"FINISHED"}
+            bpy.context.view_layer.objects.active = other if entry == "OBJECT" else ob
+            run("fix_asset.py", {"objects": [ob.name], "uv": "smart", "apply": ""})
+            out[entry] = {"mode_after": ob.mode, "active_restored": bpy.context.view_layer.objects.active is (other if entry == "OBJECT" else ob)}
+            assert ob.mode == entry and out[entry]["active_restored"], out
+        finally:
+            if ob.mode != "OBJECT":
+                bpy.ops.object.mode_set(mode="OBJECT")
+            cleanup()
+    return out
+
+
+def test_f5_doc_examples_check_results():
+    """Review finding 5: every bpy.ops call in a python block of the two references assigns and checks its result."""
+    bad = []
+    for name in ("mcp-tools.md", "blender-5-api-notes.md"):
+        text = open(os.path.join(WF, "references", name), encoding="utf8").read()
+        for block in re.findall(r"```python\n(.*?)```", text, re.S):
+            for line in block.splitlines():
+                code = line.split("#")[0]
+                if "bpy.ops." in code and "result" not in code:
+                    bad.append((name, line.strip()))
+            if "bpy.ops." in block and "{\"FINISHED\"}" not in block and "{'FINISHED'}" not in block:
+                bad.append((name, "block without a FINISHED check"))
+    assert not bad, bad
+    return {"checked_blocks": True}
+
+
 def main():
     args = _cli_args()
     out_dir = args.get("out_dir", ".")
     os.makedirs(out_dir, exist_ok=True)
     checks, failed = {}, []
     tests = (test_d_geometry_and_scale, test_d_world_space, test_verdict_rule, test_c_uv_ratio_values,
-             test_d_clash_within_mesh, test_b1_result_file, test_a13_fix_asset, test_b2_rows, test_docs_headless)
+             test_d_clash_within_mesh, test_b1_result_file, test_a13_fix_asset, test_b2_rows, test_docs_headless,
+             test_f1_active_render_layer, test_f2_partial_coplanar_overlap, test_f3_empty_audit_result_file,
+             test_f4_smart_uv_entry_mode, test_f5_doc_examples_check_results)
     for fn in tests:
         try:
             checks[fn.__name__] = {"ok": True, "data": fn()}

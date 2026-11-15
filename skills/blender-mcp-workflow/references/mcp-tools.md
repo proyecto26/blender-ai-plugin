@@ -80,7 +80,9 @@ if col.name not in bpy.context.scene.collection.children:
 # Apply transforms on one object
 with bpy.context.temp_override(active_object=obj, object=obj,
                                selected_objects=[obj], selected_editable_objects=[obj]):
-    bpy.ops.object.transform_apply(location=False, rotation=True, scale=True)
+    result = bpy.ops.object.transform_apply(location=False, rotation=True, scale=True)
+if result != {"FINISHED"}:
+    raise RuntimeError(f"transform_apply returned {result}: transforms were not applied")
 ```
 
 ```python
