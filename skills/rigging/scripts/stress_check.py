@@ -17,7 +17,9 @@ Rotation, IK) can never look like a healthy rest mesh. Measures on the evaluated
 vertices weighted to the limb's bones, and every edge touching one of them, so an unweighted ring that stays behind
 stretches its edges):
   edge stretch p95   95th percentile of (posed edge length / rest edge length), all poses
-  collapse ratio     minimum over cross-sections of the section's minimum width, posed / rest. The width is the
+  collapse ratio     minimum over cross-sections (one slab per edge loop: vertices closer along the limb axis than half
+                     the mesh's median axial spacing, so a dense mesh is not averaged away) of the section's minimum
+                     width, posed / rest. The width is the
                      narrower principal spread of the section's points, projected onto the plane perpendicular to the
                      limb axis there, so a section squashed flat along one axis counts as collapsed (ratio 0).
                      Gated on the twist poses only (a bend pinches a little by nature)
@@ -341,9 +343,18 @@ def _limb_sets(obj, bone_names, rest, edges):
     centred = pts - pts.mean(axis=0)
     axis = np.linalg.eigh(centred.T @ centred)[1][:, -1]
     t = centred @ axis
-    nb = max(4, min(24, len(verts) // 6))
-    which = np.minimum(((t - t.min()) / max(np.ptp(t), 1e-9) * nb).astype(int), nb - 1)
-    bins = [verts[which == k] for k in range(nb) if (which == k).sum() >= 4]
+    # one slab per edge loop: positions along the axis closer than half the mesh's own median axial spacing are one
+    # slab, so a collapsed ring is never averaged with its neighbours, however dense the mesh is
+    order = np.argsort(t)
+    ts = t[order]
+    span = max(float(np.ptp(t)), 1e-9)
+    gaps = np.diff(ts)
+    distinct = gaps[gaps > 1e-6 * span]
+    if not len(distinct):
+        return verts, limb_edges, []
+    tol = 0.5 * float(np.median(distinct))
+    cut = np.flatnonzero(gaps > tol) + 1
+    bins = [verts[order[g]] for g in np.split(np.arange(len(ts)), cut) if len(g) >= 4]
     return verts, limb_edges, bins
 
 
@@ -480,6 +491,15 @@ def main(armature, meshes=None, bone_map=None, poses=None, fk_switches=None, res
                             for ln, spec in good.items()}
                     doms = {ln: _dominant(o, sets[ln][0], {b.name for b in arm.data.bones}) for ln in good}
                     base[o.name] = ("OK", (rest, sets, doms))
+            carrying = {}
+            for ln, lspec in good.items():
+                bn = {b for names_ in lspec.values() for b in names_ or []}
+                carrying[ln] = [o for o in objs if bn & {vg.name for vg in o.vertex_groups}
+                                and (base[o.name][0] != "OK" or len(base[o.name][1][1][ln][0]) > 0)]
+            for ln in [n for n in good if not carrying[n]]:  # no mesh is weighted to this limb
+                rows.append({"pose": "all", "limb": ln, "mesh": None, "status": "UNWEIGHTED_LIMB", "verdict": "FAIL",
+                             "problems": ["no mesh carries vertex weights for this limb's bones: it is not skinned"]})
+                del good[ln]
             arm.data.pose_position = "POSE"
             for pose in names:
                 spec = POSES[pose]
@@ -528,7 +548,7 @@ def main(armature, meshes=None, bone_map=None, poses=None, fk_switches=None, res
                         rows.append({"pose": pose, "limb": ln, "mesh": None, "status": "NOT_REACHED",
                                      "verdict": "FAIL", "reach": reach})
                         continue
-                    for o in objs:
+                    for o in carrying[ln]:
                         state, payload = base[o.name]
                         row = {"pose": pose, "limb": ln, "mesh": o.name, "reach": reach}
                         if state != "OK":
