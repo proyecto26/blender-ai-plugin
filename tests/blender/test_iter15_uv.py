@@ -301,7 +301,7 @@ def test_a3_bake_size_mismatch():
     except ValueError as exc:
         assert "32x32" in str(exc), exc
         assert tuple(bpy.data.images["T_Bake_Ao"].size) == (32, 32)
-        r3 = run("texture-workflow", "bake_maps.py", args)  # same size reruns fine
+        r3 = run("texture-workflow", "bake_maps.py", dict(args, overwrite=True))  # same size reruns with overwrite
         assert r3["sizes"] == {"ao": [32, 32]} and r3["size"] == 32, r3
         assert tuple(bpy.data.images["T_Bake_Ao"].size) == (32, 32)
         return {"refused": str(exc)[:80], "sizes": r3["sizes"]}
