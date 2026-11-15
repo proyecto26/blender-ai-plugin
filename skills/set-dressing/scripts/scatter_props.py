@@ -99,12 +99,11 @@ def _island_uvs(bm, gap=0.004):
             l[layer].uv = (ox + x * scale, oy + y * scale)
 
 
-def _mesh(kind):
-    name = f"ME_Prop_{kind}"
-    me = bpy.data.meshes.get(name)
-    if me:
-        return me
-    (sx, sy, sz), prim, color = KINDS[kind]
+UV_VERSION = 1  # bump when the prop UV layout changes; older script-made meshes are rebuilt
+
+
+def _shape(kind):
+    (sx, sy, sz), prim, _color = KINDS[kind]
     bm = bmesh.new()
     if prim == "cube":
         bmesh.ops.create_cube(bm, size=1.0)
@@ -112,17 +111,48 @@ def _mesh(kind):
         bmesh.ops.create_cone(bm, cap_ends=True, segments=16, radius1=0.5, radius2=0.5, depth=1.0)
     bmesh.ops.scale(bm, vec=(sx, sy, sz), verts=bm.verts)
     bmesh.ops.translate(bm, vec=(0, 0, sz / 2), verts=bm.verts)  # pivot on the floor
-    me = bpy.data.meshes.new(name)
+    return bm
+
+
+def _same_shape(me, bm):
+    """True when mesh `me` has the geometry this script generates (so it is an earlier version of its own)."""
+    if len(me.vertices) != len(bm.verts):
+        return False
+    mine = sorted(tuple(round(c, 4) for c in v.co) for v in me.vertices)
+    ours = sorted(tuple(round(c, 4) for c in v.co) for v in bm.verts)
+    return mine == ours
+
+
+def _mesh(kind):
+    name = f"ME_Prop_{kind}"
+    me = bpy.data.meshes.get(name)
+    if me is not None and me.get("set_dressing_uv") == UV_VERSION and len(me.uv_layers):
+        return me
+    bm = _shape(kind)
+    if me is not None and not me.get("set_dressing") and not _same_shape(me, bm):
+        bm.free()
+        raise ValueError(f"mesh {name!r} already exists and was not made by this script; "
+                         "rename or remove it, or dress with a different kind")
     _island_uvs(bm)
+    if me is None:
+        me = bpy.data.meshes.new(name)
+    else:
+        me.clear_geometry()  # our own older mesh: rebuild in place so existing props keep their data
+        for layer in list(me.uv_layers):
+            me.uv_layers.remove(layer)
     bm.to_mesh(me)
     bm.free()
+    me["set_dressing"] = True
+    me["set_dressing_uv"] = UV_VERSION
+    color = KINDS[kind][2]
     mat = bpy.data.materials.get(f"MAT_Prop_{kind}") or bpy.data.materials.new(f"MAT_Prop_{kind}")
     mat.diffuse_color = (*color, 1.0)
     bsdf = mat.node_tree.nodes.get("Principled BSDF") if mat.node_tree else None
     if bsdf:
         bsdf.inputs["Base Color"].default_value = (*color, 1.0)
         bsdf.inputs["Roughness"].default_value = 0.8
-    me.materials.append(mat)
+    if not len(me.materials):
+        me.materials.append(mat)
     return me
 
 

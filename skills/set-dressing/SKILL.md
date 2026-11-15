@@ -79,7 +79,7 @@ path of this installed script and their ARGS. Don't inline or rewrite the script
 
 | Script | What it does |
 |--------|--------------|
-| `scripts/scatter_props.py` | Exact-count story clusters of boxes/barrels/pallets around a target: ground raycast, keep-out of the target bbox, no overlaps, shared meshes, `PROP_` names, one packed UV island per face (no overlap). For many small instances on terrain use geometry-nodes `scatter_points.py`. |
+| `scripts/scatter_props.py` | Exact-count story clusters of boxes/barrels/pallets around a target: ground raycast, keep-out of the target bbox, no overlaps, shared meshes, `PROP_` names, one packed UV island per face (no overlap). An existing `ME_Prop_<kind>` mesh from an older version of this script is rebuilt in place; one it did not make is refused. For many small instances on terrain use geometry-nodes `scatter_points.py`. |
 
 ```python
 import runpy
