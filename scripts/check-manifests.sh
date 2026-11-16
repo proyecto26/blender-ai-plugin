@@ -74,6 +74,12 @@ portable_allowed = {"$schema", "name", "version", "description", "author",
 extra = set(root) - portable_allowed
 if extra:
     errors.append(f"plugin.json has non-portable top-level fields: {sorted(extra)}")
+homepage_in = [label for label, src in list(sources.items()) + [
+    (".agents/plugins/marketplace.json[entry]", next((p for p in codex_mp.get("plugins", [])
+                                                       if p.get("name") == name), {}))]
+               if "homepage" in src]
+if homepage_in:
+    errors.append(f"'homepage' is not used by this project; remove it from: {homepage_in}")
 
 # Codex / Copilot catalog wiring
 codex_entries = [p for p in codex_mp.get("plugins", []) if p.get("name") == name]
