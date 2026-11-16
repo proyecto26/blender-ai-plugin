@@ -260,7 +260,7 @@ def test_d1_missing_role_and_bad_names():
 def test_d1_thresholds_margin():
     for k in ("loose_depth_rel", "poke_depth_rel"):
         assert k in MEASURED, f"{k} not measured (run the fixture tests first)"
-    tol = 0.005
+    tol = const("cloth-sim", "garment_check.py", "PENETRATION_TOL_REL")
     good, bad = MEASURED["loose_depth_rel"], MEASURED["poke_depth_rel"]
     gap = bad - good
     assert gap > 0 and tol >= good + 0.2 * gap and tol <= bad - 0.2 * gap, (good, bad, tol)
@@ -475,7 +475,7 @@ def test_d2_read_only():
 def test_d2_thresholds_margin():
     for k in ("mirror_good_rel", "mirror_bad_rel"):
         assert k in MEASURED, f"{k} not measured (run the fixture tests first)"
-    tol = 0.01
+    tol = const("rigging", "shape_key_audit.py", "MIRROR_REL")
     good, bad = MEASURED["mirror_good_rel"], MEASURED["mirror_bad_rel"]
     gap = bad - good
     assert gap > 0 and tol >= good + 0.2 * gap and tol <= bad - 0.2 * gap, (good, bad, tol)
@@ -618,6 +618,52 @@ def test_r5_mid_run_failure_restores_everything():
     return {"restored": True}
 
 
+# ---------------------------------------------------------------- review round 2
+def const(skill, script, name):
+    """A module-level numeric constant read from a script's source, so the margin tests follow the script."""
+    import re
+    src = open(os.path.join(SKILLS, skill, "scripts", script), encoding="utf-8").read()
+    m = re.search(rf"^{name} = ([0-9.eE+-]+)", src, re.M)
+    assert m, f"{name} not found in {script}"
+    return float(m.group(1))
+
+
+def two_shell_scene(sleeve_radius=0.1):
+    """Body = an inward-wound cylinder (arm) plus a larger outward-wound box (torso) one unit away, in ONE mesh, so a
+    single global facing sign (the box dominates the total volume) would be wrong for the arm shell."""
+    fresh()
+    arm = make_armature()
+    cyl = make_cylinder("tmpc", 0.15, 0.0, 2.0, flip=True)
+    vs = [tuple(v.co) for v in cyl.data.vertices]
+    fs = [tuple(p.vertices) for p in cyl.data.polygons]
+    bpy.data.objects.remove(cyl)
+    x0, x1, y0, y1, z0, z1 = 0.8, 1.8, -0.25, 0.25, 0.0, 2.0
+    base = len(vs)
+    vs += [(x0, y0, z0), (x1, y0, z0), (x1, y1, z0), (x0, y1, z0), (x0, y0, z1), (x1, y0, z1), (x1, y1, z1), (x0, y1, z1)]
+    box = [(0, 3, 2, 1), (4, 5, 6, 7), (0, 1, 5, 4), (1, 2, 6, 5), (2, 3, 7, 6), (3, 0, 4, 7)]  # outward
+    fs += [tuple(base + i for i in f) for f in box]
+    me = bpy.data.meshes.new("Body")
+    me.from_pydata(vs, [], fs)
+    me.update()
+    body = bpy.data.objects.new("Body", me)
+    bpy.context.scene.collection.objects.link(body)
+    skin(body, arm, KNOTS)
+    gar = make_cylinder("Garment", sleeve_radius, 0.2, 1.8, loops=17, caps=False)
+    skin(gar, arm, KNOTS)
+    return arm, body, gar
+
+
+def test_r6_opposite_winding_shells_each_use_their_own_facing():
+    two_shell_scene(0.1)  # sleeve 0.05 INSIDE the inward-wound arm shell
+    res = gc(poses=["arms_raised"])
+    rest = row(res, "rest")[0]
+    assert rest["status"] == "PENETRATION" and res["verdict"] == "FAIL", json.dumps(res["rows"], indent=1)
+    two_shell_scene(0.2)  # sleeve 0.05 OUTSIDE the arm shell: must PASS
+    res = gc(poses=["arms_raised"])
+    assert res["verdict"] == "PASS", json.dumps(res["rows"], indent=1)
+    return {"inside": "PENETRATION", "outside": "PASS"}
+
+
 def main():
     os.makedirs(OUT, exist_ok=True)
     tests = [test_d1_loose_garment_passes, test_d1_poke_through_in_one_pose_fails,
@@ -632,7 +678,8 @@ def main():
              test_d2_read_only, test_d2_thresholds_margin, test_d2_result_contract,
              test_r1_posed_body_must_stay_closed, test_r2_mirror_match_is_one_to_one,
              test_r3_context_prop_driver_is_valid, test_r4_nan_in_basis_is_json_safe,
-             test_r5_mid_run_failure_restores_everything]
+             test_r5_mid_run_failure_restores_everything,
+             test_r6_opposite_winding_shells_each_use_their_own_facing]
     checks_out, failed = {}, []
     for fn in tests:
         try:

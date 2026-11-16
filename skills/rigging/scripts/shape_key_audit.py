@@ -10,8 +10,10 @@ when you pass one. Per mesh object that has shape keys, each check is PASS, WARN
   drivers        FAIL   a driver on the shape keys (or on the object, for a key value) that targets a missing object, a
                         missing bone of an armature target, or a key block that does not exist.
   mirror         FAIL   a `.L`/`.R` key pair whose deltas, mirrored across X, differ by more than 1% of the mesh
-                        bounding-box diagonal. Vertices are matched by nearest mirrored position within 1e-4 of the
-                        diagonal; any unmatched vertex makes the pair NOT_CHECKED, as does a key with no partner.
+                        bounding-box diagonal. Each vertex must have exactly ONE reference-key vertex within 1e-4 of the
+                        diagonal at its mirrored position and no two may share a match (strict rule, no nearest-wins:
+                        coincident vertices cannot be paired safely); any vertex with none or several makes the pair
+                        NOT_CHECKED, as does a key with no partner.
 The object verdict is FAIL if any check FAILs, else WARN if any WARN or NOT_CHECKED, else PASS. The run verdict is the
 worst; a run that measured nothing (no mesh with shape keys) is a FAIL with a note.
 

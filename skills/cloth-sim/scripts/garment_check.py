@@ -14,7 +14,8 @@ edited, selection and mode are not touched.
 Per row the status is OK, PENETRATION (FAIL), NOT_REACHED (FAIL), NON_FINITE (FAIL), MISSING_ROLE (FAIL) or NOT_CHECKED.
   * The body must be a CLOSED mesh whose faces are consistently wound (every directed edge used exactly once and its
     reverse used once); otherwise "inside" is undefined and every row is NOT_CHECKED. Either facing is accepted
-    (the signed volume decides which side is outside). A run with no measured row is a FAIL ("measured nothing").
+    (the signed volume of each connected shell decides which side of that shell is outside, so shells wound in
+    opposite directions are each judged correctly, and every shell must keep its facing in every posed measurement). A run with no measured row is a FAIL ("measured nothing").
   * Coverage is the share of garment vertices that had a body surface point within `search_radius`. Below 0.9 the row
     is NOT_CHECKED, never a PASS: a garment that is nowhere near the body was not tested.
   * Each pose is checked before measuring: the evaluated bone's rotation must be within 5 degrees of the requested
@@ -299,12 +300,34 @@ def _closed_and_wound(directed, n):
     return bool(np.isin(b * n + a, keys).all())
 
 
-def _signed_volume(world, tris):
+def _shell_labels(tris, n):
+    """Connected-shell label of every triangle (vertices joined through shared triangles)."""
+    parent = list(range(n))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+    for a, b, c in tris:
+        ra, rb, rc = find(int(a)), find(int(b)), find(int(c))
+        parent[rb] = ra
+        parent[find(rc)] = ra
+    roots = np.array([find(int(t)) for t in tris[:, 0]])
+    _u, labels = np.unique(roots, return_inverse=True)
+    return labels
+
+
+def _shell_volumes(world, tris, labels):
+    """Signed volume of every connected shell (one value per label)."""
     a, b, c = world[tris[:, 0]], world[tris[:, 1]], world[tris[:, 2]]
-    return float(np.einsum("ij,ij->i", a, np.cross(b, c)).sum() / 6.0)
+    per_tri = np.einsum("ij,ij->i", a, np.cross(b, c)) / 6.0
+    vol = np.zeros(int(labels.max()) + 1 if len(labels) else 0)
+    np.add.at(vol, labels, per_tri)
+    return vol
 
 
-def _measure(garment_world, body_world, body_tris, sign, tol, radius):
+def _measure(garment_world, body_world, body_tris, tri_sign, tol, radius):
     """Penetration numbers of the garment vertices against the body surface."""
     out = {"garment_vertices": int(len(garment_world))}
     if not np.isfinite(garment_world).all() or not np.isfinite(body_world).all():
@@ -314,11 +337,11 @@ def _measure(garment_world, body_world, body_tris, sign, tol, radius):
                                 all_triangles=True)
     covered, depths = 0, np.zeros(len(garment_world))
     for i, p in enumerate(garment_world):
-        loc, nrm, _idx, _dist = tree.find_nearest(Vector(p), radius)
+        loc, nrm, idx, _dist = tree.find_nearest(Vector(p), radius)
         if loc is None:
             continue
         covered += 1
-        depth = -(Vector(p) - loc).dot(nrm) * sign
+        depth = -(Vector(p) - loc).dot(nrm) * tri_sign[idx]
         depths[i] = max(0.0, depth)
     inside = depths > tol
     out.update(covered_vertices=covered, coverage=covered / len(garment_world) if len(garment_world) else 0.0,
@@ -390,8 +413,14 @@ def main(garment, body, armature, bone_map=None, poses=None, fk_switches=None, s
                          "reason": "the body is not a closed, consistently wound mesh: 'inside the body' is "
                                    "undefined (fix holes, flipped faces or non-manifold edges)"})
         else:
-            vol = _signed_volume(bworld, btris)
-            sign = 1.0 if vol > 0 else -1.0
+            # Facing is decided per connected shell: a mesh may hold shells wound in opposite directions (an
+            # inward-wound arm next to an outward torso), and one global sign would invert the smaller shell. Every
+            # shell must also keep its facing in each posed measurement.
+            labels = _shell_labels(btris, nverts)
+            shell_vol = _shell_volumes(bworld, btris, labels)
+            shell_sign = np.where(shell_vol > 0, 1.0, -1.0)
+            tri_sign = shell_sign[labels]
+            vol = float(shell_vol.sum())
             diag = float(np.linalg.norm(bworld.max(axis=0) - bworld.min(axis=0)))
             tol = PENETRATION_TOL_REL * diag
             radius = float(search_radius) if search_radius is not None else SEARCH_REL * diag
@@ -401,12 +430,13 @@ def main(garment, body, armature, bone_map=None, poses=None, fk_switches=None, s
                 dgx = bpy.context.evaluated_depsgraph_get()
                 bw, bt, bd, bn = _world_mesh(bod, dgx)
                 if not (_closed_and_wound(bd, bn) and len(bt) > 0 and np.isfinite(bw).all()
-                        and _signed_volume(bw, bt) * sign > 0):
+                        and bn == nverts and len(bt) == len(btris)
+                        and (_shell_volumes(bw, bt, labels) * shell_sign > 0).all()):
                     return {"pose": pose_name, "limb": None, "status": "NOT_CHECKED", "verdict": "NOT_CHECKED",
                             "reason": "the evaluated body is not a closed, consistently wound mesh (or its facing "
-                                      "flipped) in this pose, so 'inside the body' is undefined here"}
+                                      "flipped, in some shell) in this pose, so 'inside the body' is undefined here"}
                 gw, _gt, _gd, _gn = _world_mesh(gar, dgx)
-                return _row_from(pose_name, _measure(gw, bw, bt, sign, tol, radius), diag)
+                return _row_from(pose_name, _measure(gw, bw, bt, tri_sign, tol, radius), diag)
 
             rows.append(measure("rest"))
             arm.data.pose_position = "POSE"
