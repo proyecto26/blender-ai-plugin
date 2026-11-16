@@ -3,7 +3,7 @@ name: uv-workflow
 description: "Unwrap UVs: seams, packing, texel density, UDIM, lightmap UVs. Use when textures look stretched or blurry, or before texturing and export. Ships tested scripts. Not for baking (use texture-workflow)."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

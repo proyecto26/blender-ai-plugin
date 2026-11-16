@@ -3,7 +3,7 @@ name: genre-action-combat
 description: "Action, brawler and fighting-game spaces. Use for 'design a fighting arena' or a readable combat space."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

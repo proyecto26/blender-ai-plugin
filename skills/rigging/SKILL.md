@@ -3,7 +3,7 @@ name: rigging
 description: "Rigging: armatures, IK/FK, weight painting, facial rigs, drivers. Use when a rig bends wrongly, skinning breaks or bones are misnamed. Ships tested scripts. Not for keyframing (use animation)."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

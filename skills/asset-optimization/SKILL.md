@@ -3,7 +3,7 @@ name: asset-optimization
 description: "Cut an asset to budget, tested scripts: polycount, stray geometry, duplicate verts, extra materials. Use when an asset or scan is too heavy, fails a budget or needs an audit; load even for advice. Not LODs (use lod-pipeline)."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

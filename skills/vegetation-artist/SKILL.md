@@ -3,7 +3,7 @@ name: vegetation-artist
 description: "Vegetation: trees, grass, bushes, ivy, leaf cards with LOD-friendly foliage. Use for 'make a tree' or a forest. Not for mass scatter (use geometry-nodes)."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

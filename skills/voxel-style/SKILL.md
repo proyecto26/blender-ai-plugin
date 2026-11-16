@@ -3,7 +3,7 @@ name: voxel-style
 description: "Voxel/Minecraft block look. Use for blocky cube-world meshes. Ships tested scripts."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

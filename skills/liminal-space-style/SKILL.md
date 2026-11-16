@@ -3,7 +3,7 @@ name: liminal-space-style
 description: "Liminal spaces and Backrooms: empty malls, hallways, poolrooms. Use for 'Backrooms'. Not childhood weirdness (dream-weirdcore-style)."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

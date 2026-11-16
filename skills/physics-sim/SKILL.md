@@ -3,7 +3,7 @@ name: physics-sim
 description: "Rigid body, soft body and destruction sims with bakes. Use when objects should fall, stack, collide or break apart, or a sim explodes. Ships tested scripts. Not for cloth (cloth-sim) or colliders (collision-proxy)."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

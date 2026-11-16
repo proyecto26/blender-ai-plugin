@@ -3,7 +3,7 @@ name: vfx-fx
 description: "VFX: smoke, fire, steam, particles, trails. Use for gas effects from an emitter, sparks or muzzle flash. Ships tested scripts."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

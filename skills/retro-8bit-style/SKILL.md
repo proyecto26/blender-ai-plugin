@@ -3,7 +3,7 @@ name: retro-8bit-style
 description: "8-bit NES look: tiny palettes, chunky pixels. Use for 'NES'. Not SNES (retro-16bit-style) or general pixel-art-style."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

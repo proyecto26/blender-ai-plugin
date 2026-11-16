@@ -3,7 +3,7 @@ name: usd-pipeline
 description: "USD for film/VFX hand-offs, tested scripts: export, reimport, round-trip checks of counts, transforms, mesh sizes, material names. Not for engine FBX/GLB delivery (use export-pipeline)."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

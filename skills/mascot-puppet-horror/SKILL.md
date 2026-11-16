@@ -3,7 +3,7 @@ name: mascot-puppet-horror
 description: "Mascot and puppet horror: cheerful characters gone wrong, felt and foam. Use for creepy costumes or felt puppets."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

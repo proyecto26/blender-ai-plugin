@@ -3,7 +3,7 @@ name: character-artist
 description: "Human character modeling: anatomy, face topology, clothing, animation-ready meshes. Use for 'model a character', faces that deform badly, or edge loops for expressions. Not for monsters (use creature-artist)."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

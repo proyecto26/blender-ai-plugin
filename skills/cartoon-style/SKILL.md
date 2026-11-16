@@ -3,7 +3,7 @@ name: cartoon-style
 description: "Western cartoon look with squash-and-stretch shapes. Use for 'cartoony', rubber hose. Not anime (anime-style) or flat vector (vector-style)."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

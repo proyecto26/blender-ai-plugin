@@ -3,7 +3,7 @@ name: set-dressing
 description: "Set dressing: prop placement and environmental storytelling. Use when a scene feels empty or props should tell a story. Ships tested scripts. Mass terrain scatter goes to geometry-nodes."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

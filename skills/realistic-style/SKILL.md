@@ -3,7 +3,7 @@ name: realistic-style
 description: "Photoreal AAA assets: real-world scale, PBR values, scan cleanup, high-poly to low bake. Use for 'photoreal' or 'AAA'. Not interiors (archviz)."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

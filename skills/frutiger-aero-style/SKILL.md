@@ -3,7 +3,7 @@ name: frutiger-aero-style
 description: "Frutiger Aero: glossy aqua, bubbles, glass, nature-tech. Use for Vista/2000s looks. Not dark synthwave (neon-retrofuturism)."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

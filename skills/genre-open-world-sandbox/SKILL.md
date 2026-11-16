@@ -3,7 +3,7 @@ name: genre-open-world-sandbox
 description: "Open world and sandbox maps. Use for exploration landmarks and environments that guide players visually."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

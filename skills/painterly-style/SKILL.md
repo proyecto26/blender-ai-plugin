@@ -3,7 +3,7 @@ name: painterly-style
 description: "Whole-render watercolor or oil painting looks. Use for gouache or impressionist illustration. Not painted textures (hand-painted-style)."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

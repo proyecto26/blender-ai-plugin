@@ -3,7 +3,7 @@ name: rendering
 description: "Final render setup: Cycles/Eevee sampling, denoise, resolution, color management. Use for noisy or slow renders or a quick preview. Ships tested scripts. Not for bloom or grading (use compositing)."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

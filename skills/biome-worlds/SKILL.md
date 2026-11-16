@@ -3,7 +3,7 @@ name: biome-worlds
 description: "Biome settings: underwater, desert, arctic, jungle, cave, floating islands. Use for 'snowy tundra' or 'jungle ruins' palette and props."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

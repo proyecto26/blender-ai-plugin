@@ -3,7 +3,7 @@ name: analog-found-footage-horror
 description: "VHS, CRT and found-footage horror shots. Use for 'analog horror', security-cam or lost-media looks. Not PS1 crunch (psx-horror-style)."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

@@ -3,7 +3,7 @@ name: retro-16bit-style
 description: "16-bit SNES/Genesis look: richer palettes, dither. Use for 'SNES'. Not NES four-color (retro-8bit-style) or pixel-art-style."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

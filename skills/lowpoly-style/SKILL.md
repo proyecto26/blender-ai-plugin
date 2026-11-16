@@ -3,7 +3,7 @@ name: lowpoly-style
 description: "Low-poly PS1/PS2 look with few triangles, vertex snap, fog. Ships tested scripts. Not PS1 horror (psx-horror-style) or eras (visual-console-eras)."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

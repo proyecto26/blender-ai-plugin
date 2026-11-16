@@ -3,7 +3,7 @@ name: anime-style
 description: "Anime cel-shaded look. Use for 'toon shader', hard shadows, flat colors. Not manga (manga-style) or Western cartoons (cartoon-style)."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

@@ -3,7 +3,7 @@ name: dream-weirdcore-style
 description: "Weirdcore/dreamcore nostalgic wrongness. Use for traumacore, wrong childhood rooms. Not empty offices or malls (liminal-space-style)."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

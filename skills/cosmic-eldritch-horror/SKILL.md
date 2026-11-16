@@ -3,7 +3,7 @@ name: cosmic-eldritch-horror
 description: "Lovecraftian cosmic horror: impossible scale, non-Euclidean forms. Use for 'eldritch', void entities, wrong vast architecture."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

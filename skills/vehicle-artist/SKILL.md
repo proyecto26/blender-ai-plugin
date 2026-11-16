@@ -3,7 +3,7 @@ name: vehicle-artist
 description: "Vehicle modeling: cars, planes, ships, tanks, mechs with panel flow and LODs. Use for 'model a car/plane/ship'. Not for generic hard-surface (use hard-surface)."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

@@ -3,7 +3,7 @@ name: stop-motion-craft-style
 description: "Stop-motion/craft look: claymation, papercraft, felt. Use for fingerprints in clay or cardboard."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

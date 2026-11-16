@@ -3,7 +3,7 @@ name: export-pipeline
 description: "Engine-agnostic export, tested scripts: FBX, GLB, OBJ, USD scale, axis, pivot, batch. Use for web/three.js, client deliveries, kits or no engine yet; load even for advice. One engine? Use unity-export, unreal-export, godot-export."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

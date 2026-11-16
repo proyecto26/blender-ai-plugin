@@ -3,7 +3,7 @@ name: genre-card-party-idle
 description: "Card, party, idle and rhythm game staging. Use for a card table, idle scene or party stage with UI room."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

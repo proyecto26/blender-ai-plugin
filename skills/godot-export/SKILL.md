@@ -3,7 +3,7 @@ name: godot-export
 description: "Godot 4 export, tested scripts: GLB scale, PBR, clips, -col collision. Use when an asset goes to Godot, looks grey, merges clips or needs import collision; load even for advice. Not Unity/Unreal (use unity-export, unreal-export)."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

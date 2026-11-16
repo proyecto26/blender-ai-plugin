@@ -3,7 +3,7 @@ name: cloth-sim
 description: "Cloth simulation and baking for capes, flags, curtains and garments. Use when cloth must drape or flutter, or clips through legs, explodes or jitters. Ships tested scripts. Not for rigid bodies (use physics-sim)."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

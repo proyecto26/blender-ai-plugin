@@ -3,7 +3,7 @@ name: creature-artist
 description: "Creature modeling: dragons, monsters and aliens with believable anatomy and muscle flow. Use for 'model a dragon/monster' or creature blockouts. Not for human characters (use character-artist)."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

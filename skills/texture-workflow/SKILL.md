@@ -3,7 +3,7 @@ name: texture-workflow
 description: "Texture baking and atlases: AO, curvature, normal and roughness maps from high-poly, decals, texture memory. Use for baked maps or an atlas. Ships tested scripts. Not for UVs (use uv-workflow)."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

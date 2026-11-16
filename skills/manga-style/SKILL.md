@@ -3,7 +3,7 @@ name: manga-style
 description: "Manga: monochrome values, speed lines, screentone. Use for 'manga panel'. Not colored anime (anime-style)."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist

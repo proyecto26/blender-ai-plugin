@@ -3,7 +3,7 @@ name: genre-shooter
 description: "Shooter maps and props. Use for FPS/TPS arenas, cover layout, sightlines or a first-person camera check."
 license: MIT
 metadata:
-  author: https://github.com/arjun988
+  author: https://github.com/proyecto26
   version: "1.0.0"
   domain: blender
   role: specialist
