@@ -32,8 +32,8 @@ Stages: inspect, brief, model, look_dev, light_camera, animate, validate, export
 | `cloth-sim` | animate | Cloth simulation and baking for capes, flags, curtains and garments. | cloth_setup.py, garment_check.py |
 | `compositing` | light_camera | Compositor work: bloom and glow, color grade, render passes, vignette. | comp_grade.py |
 | `creature-artist` | model | Creature modeling: dragons, monsters and aliens with believable anatomy and muscle flow. | - |
-| `environment-artist` | model | Environment art: greybox/blockout, level layout, modular kits, terrain and buildings. | blockout.py |
-| `geometry-nodes` | model | Geometry Nodes systems: scatter and instance rocks, trees, grass; parametric node groups; curve to mesh. | scatter_points.py |
+| `environment-artist` | model | Environment art: greybox/blockout, level layout, modular kits, terrain and buildings. | blockout.py, kit_check.py |
+| `geometry-nodes` | model | Geometry Nodes systems: scatter and instance rocks, trees, grass; parametric node groups; curve to mesh. | gn_diagnostics.py, scatter_points.py |
 | `hair-groom` | model | Hair and fur grooming: curves, particle hair, game hair cards. | - |
 | `hard-surface` | model | Hard-surface modeling for sci-fi, vehicles, weapons and robots with booleans, bevels and panel lines. | bevel_stack.py |
 | `lighting` | light_camera | Lighting setups: three-point, HDRI, rim, volumetrics and mood. | light_rig.py |
@@ -46,7 +46,7 @@ Stages: inspect, brief, model, look_dev, light_camera, animate, validate, export
 | `retopology` | model | Retopology: clean quad-dominant, animation-ready topology from sculpts or messy meshes. | topology_report.py |
 | `rigging` | animate | Rigging: armatures, IK/FK, weight painting, facial rigs, drivers. | rig_check.py, shape_key_audit.py, stress_check.py |
 | `scene-assembly` | model | Scene assembly: collections, linking, library overrides, collection instances. | - |
-| `sculpting` | model | Sculpting: Dyntopo, multires, brushes, wrinkles and damage detail. | - |
+| `sculpting` | model | Sculpting: Dyntopo, multires, brushes, wrinkles and damage detail. | sculpt_prep.py |
 | `set-dressing` | model | Set dressing: prop placement and environmental storytelling. | scatter_props.py |
 | `texture-workflow` | look_dev | Texture baking and atlases: AO, curvature, normal and roughness maps from high-poly, decals, texture memory. | bake_maps.py, import_painter_textures.py |
 | `uv-workflow` | look_dev | Unwrap UVs: seams, packing, texel density, UDIM, lightmap UVs. | uv_unwrap_check.py |
