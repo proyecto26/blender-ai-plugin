@@ -21,8 +21,8 @@ The UV checks read the active render UV map.
 Material dependencies read the materials of the evaluated mesh (so a Geometry Nodes Set Material is what gets audited;
 a slot linked to the object keeps the object's material), and follow node groups. `material_slots` FAILs
 when a face uses an empty slot or an index beyond the slots. `material_images` FAILs when an image texture reads a
-file that is not on disk and the image is not packed (generated images pass; a UDIM image passes when any tile file
-exists, a sequence or movie image when its base file exists). `material_color_space` WARNs when an sRGB image's Color output feeds
+file that is not on disk and the image is not packed (generated images pass; a UDIM image passes when every declared tile
+file exists and FAILs naming the missing tile files, a sequence or movie image when its base file exists). `material_color_space` WARNs when an sRGB image's Color output feeds
 Roughness, Metallic, Alpha, Normal (or another data input of a shader), a Normal Map Color input, or a Bump or
 Displacement Height input, and when a Non-Color image feeds Principled Base Color; it follows Reroute nodes and links through node groups.
 The Alpha output of an image is never warned about. Budgets are FAIL only when the measured value is above the limit
@@ -255,20 +255,22 @@ def _material_images(materials):
     return [images[k] for k in order]
 
 
-def _file_exists(img):
-    """Whether the image's file(s) are on disk: every source with a path (UDIM: any tile, tokens resolved)."""
+def _missing_files(img):
+    """Paths of the image's files that are not on disk: [] when all are there. A UDIM image needs every declared tile
+    (tokens resolved); a sequence or movie needs its base file; an image with no path reports "(no path)"."""
     raw = img.filepath
     if not raw:
-        return False
+        return ["(no path)"]
     if img.source == "TILED":
+        out = []
         for tile in (list(img.tiles) or [None]):
             number = tile.number if tile else 1001
             path = raw.replace("<UDIM>", str(number)).replace(
                 "<UVTILE>", f"u{(number - 1001) % 10 + 1}_v{(number - 1001) // 10 + 1}")
-            if os.path.isfile(bpy.path.abspath(path, library=img.library)):
-                return True
-        return False
-    return os.path.isfile(bpy.path.abspath(raw, library=img.library))
+            if not os.path.isfile(bpy.path.abspath(path, library=img.library)):
+                out.append(path)
+        return out
+    return [] if os.path.isfile(bpy.path.abspath(raw, library=img.library)) else [raw]
 
 
 def _material_checks(slots, used_indices, max_materials, max_texture_px, add):
@@ -286,8 +288,9 @@ def _material_checks(slots, used_indices, max_materials, max_texture_px, add):
     for img, _ in images:
         if img.source in ("FILE", "TILED", "SEQUENCE", "MOVIE"):
             packed = img.packed_file is not None or len(img.packed_files) > 0
-            if not packed and not _file_exists(img):
-                missing.append(f"{img.name} ({img.filepath or 'no path'})")
+            gone = [] if packed else _missing_files(img)
+            if gone:
+                missing.append(f"{img.name} (missing: {gone})")
     if missing:
         add("material_images", "FAIL", f"{len(missing)} image(s) not on disk and not packed: {missing}")
     else:
@@ -306,9 +309,13 @@ def _material_checks(slots, used_indices, max_materials, max_texture_px, add):
     add("material_color_space", "PASS" if not warns else "WARN",
         "; ".join(sorted(set(warns))) if warns else f"{len(images)} image(s), colour spaces match their use")
     if max_materials is not None:
-        used = {slots[i].name for i in used_indices if i < len(slots) and slots[i] is not None}
+        used = {}  # distinct datablocks: two linked materials with one name from different libraries are two
+        for i in used_indices:
+            if i < len(slots) and slots[i] is not None:
+                m = slots[i]
+                used[m.as_pointer()] = m.name + (f" [{os.path.basename(m.library.filepath)}]" if m.library else "")
         add("budget_materials", "PASS" if len(used) <= max_materials else "FAIL",
-            f"{len(used)} material(s) used by faces, limit {max_materials}")
+            f"{len(used)} material(s) used by faces ({', '.join(sorted(used.values()))}), limit {max_materials}")
     if max_texture_px is not None:
         biggest, unmeasured = 0, []
         for img, _ in images:

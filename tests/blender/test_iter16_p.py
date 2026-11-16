@@ -649,6 +649,75 @@ def test_r4_registered_engines_only():
     return {"engines": engines}
 
 
+def test_s1_incomplete_udim_set(out_dir):
+    """Round 2, 1: every declared UDIM tile must exist; one missing tile FAILs and the detail names its file."""
+    try:
+        folder = os.path.join(out_dir, "s1_img")
+        os.makedirs(folder, exist_ok=True)
+        cases = {}
+        for key, present in (("partial", (1001,)), ("complete", (1001, 1002)), ("none", ())):
+            for number in present:
+                src, path = file_image(f"s1_{key}_{number}", folder)
+                target = os.path.join(folder, f"{key}.{number}.png")
+                os.replace(path, target)
+                TEMP_FILES.append(target)
+            img = gen_image(f"s1_{key}", 4, 4)
+            img.source = "TILED"
+            img.filepath = os.path.join(folder, key + ".<UDIM>.png")
+            img.tiles.new(tile_number=1002)
+            mat, tree, bsdf = new_mat(f"S1_{key}")
+            tree.links.new(tex_node(tree, img).outputs["Color"], bsdf.inputs["Base Color"])
+            cases[key] = mesh_obj(f"S1_{key}", [mat], [0] * 6)
+        res = run("validate_asset.py", {"objects": [o.name for o in cases.values()], "prefix": ""})
+        got = {k: check(res, o.name, "material_images") for k, o in cases.items()}
+    finally:
+        cleanup()
+    assert got["partial"]["status"] == "FAIL" and "partial.1002.png" in got["partial"]["detail"], got["partial"]
+    assert "partial.1001.png" not in got["partial"]["detail"], got["partial"]
+    assert got["complete"]["status"] == "PASS", got["complete"]
+    assert got["none"]["status"] == "FAIL", got["none"]
+    return {k: v["status"] for k, v in got.items()} | {"partial_detail": got["partial"]["detail"]}
+
+
+def test_s2_linked_materials_same_name(out_dir):
+    """Round 2, 2: two different linked materials both named Paint are two materials, not one."""
+    libs = []
+    try:
+        folder = os.path.join(out_dir, "s2_libs")
+        os.makedirs(folder, exist_ok=True)
+        paths = []
+        for tag in ("a", "b"):
+            mat = bpy.data.materials.new("Paint")
+            path = os.path.join(folder, f"lib_{tag}.blend")
+            bpy.data.libraries.write(path, {mat}, fake_user=True)
+            bpy.data.materials.remove(mat)
+            paths.append(path)
+        linked = []
+        for path in paths:
+            with bpy.data.libraries.load(path, link=True) as (src, dst):
+                dst.materials = ["Paint"]
+            linked.append(dst.materials[0])
+        libs = [m.library for m in linked]
+        assert linked[0] != linked[1] and linked[0].name == linked[1].name == "Paint", linked
+        ob = mesh_obj("S2_Two", linked, [0, 0, 0, 1, 1, 1])
+        one = mesh_obj("S2_One", [linked[0]], [0] * 6)
+        res = run("validate_asset.py", {"objects": [ob.name, one.name], "prefix": "", "max_materials": 1})
+        two_check = check(res, "S2_Two", "budget_materials")
+        one_check = check(res, "S2_One", "budget_materials")
+        ok = run("validate_asset.py", {"objects": [ob.name], "prefix": "", "max_materials": 2})
+        at = check(ok, "S2_Two", "budget_materials")
+    finally:
+        cleanup()
+        for m in [m for m in bpy.data.materials if m.library]:
+            bpy.data.materials.remove(m)
+        for lib in list(bpy.data.libraries):
+            bpy.data.libraries.remove(lib)
+    assert two_check["status"] == "FAIL" and "2 material" in two_check["detail"], two_check
+    assert "lib_a.blend" in two_check["detail"] and "lib_b.blend" in two_check["detail"], two_check
+    assert one_check["status"] == "PASS" and at["status"] == "PASS", (one_check, at)
+    return {"two": two_check["detail"], "at_limit": at["detail"]}
+
+
 def main():
     args = _cli_args()
     out_dir = args.get("out_dir", ".")
@@ -659,7 +728,8 @@ def main():
              test_p2_material_slots, test_p2_material_images, test_p2_color_space, test_p3_max_materials,
              test_p3_max_texture_px, test_p3_max_bones, test_p3_bad_budget_args, test_p23_state_restored,
              test_r1_evaluated_materials, test_r2_udim_movie_sequence_missing, test_r3_group_boundaries,
-             test_r4_registered_engines_only]
+             test_r4_registered_engines_only,
+             test_s1_incomplete_udim_set, test_s2_linked_materials_same_name]
     if CONFIG["validate_script"]:  # old-script run: only the P2/P3 tests are meaningful
         tests = [t for t in tests if t.__name__.startswith(("test_p2", "test_p3", "test_p23", "test_r"))]
     for fn in tests:
