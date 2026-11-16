@@ -30,16 +30,21 @@ object that already has `bap_rt_id` is refused before anything is changed.
 
 Actions. Imported actions are named `<imported armature>|<armature>|<take>`. The script passes
 bake_anim_use_nla_strips=True and bake_anim_use_all_actions=True and models both kinds of take, in the order the
-exporter writes them: one take per unmuted NLA strip that has an action (named after the STRIP, tracks and strips in
-order), then one per clip action: the actions whose every F-curve path resolves on the armature, plus its assigned
-and NLA actions, in Blender's action order. An action that is both strip and clip therefore appears twice. The i-th exported clip is
+exporter writes them (rules read from the exporter's fbx_animations): an armature with no animation_data gets no take
+at all; otherwise one take per unmuted strip of an unmuted NLA track whose action animates something that resolves on
+the armature (named after the STRIP), then, unless the armature's `action` is read-only (NLA tweak mode), one per
+action in Blender's action order that is the assigned action (with a slot) or has a non-empty channelbag whose F-curve
+paths all resolve on it. An action that is both strip and clip appears twice. Not modelled: takes of non-armature
+objects (not compared), drivers, and strip influence/blend settings (a take is written regardless). The i-th exported clip is
 compared with the i-th imported clip (imported actions in creation order, `session_uid`, i.e. the file's take
 order) after dropping the two armature prefixes. The only difference allowed is a `.NNN` the importer added or
 replaced because the full imported name already existed in the file before the import. So `Walk.001` exported and
 `Walk.002` imported is a changed clip name and FAILs, as are missing, extra or swapped clips. Armature dimensions
 are not compared (the importer rebuilds bone lengths).
-Dimensions of a skinned mesh: the exporter writes the rest shape with the other modifiers applied, so the source is
-measured with its Armature modifier(s) switched off and the others evaluated; the switch is undone in `finally`.
+Dimensions: the exporter writes the rest shape with the other modifiers applied and the shape keys as separate keys
+(the base geometry is the Basis). The source is therefore measured with its Armature modifier(s) switched off, the
+others evaluated, and shape keys pinned to the Basis (show_only_shape_key); the imported mesh is read raw, which is its
+Basis. All three switches are undone in `finally`.
 
 Cleanup. Only the temporary scene and the datablocks the import created (objects, meshes, armatures, materials,
 images, actions, cameras, lights, curves, collections, textures, node groups, found by session id before and after)
@@ -117,8 +122,13 @@ def _snapshot():
 def _world_dims(obj, evaluated):
     """Axis-aligned world extent [x, y, z] of a mesh object, or None when it has no vertices. `evaluated`: measure
     what the exporter writes, the mesh with modifiers applied but its Armature modifiers off (rest shape)."""
-    switched = []
+    switched, pinned = [], None
     if evaluated:
+        keys = obj.data.shape_keys
+        if keys and keys.key_blocks:  # the exporter writes the basis shape; the keys come back as shape keys
+            pinned = (obj.show_only_shape_key, obj.active_shape_key_index)
+            obj.show_only_shape_key = True
+            obj.active_shape_key_index = 0
         for m in obj.modifiers:
             if m.type == "ARMATURE" and m.show_viewport:
                 m.show_viewport = False
@@ -140,59 +150,65 @@ def _world_dims(obj, evaluated):
             ev.to_mesh_clear()
         for m in switched:
             m.show_viewport = True
-        if switched:
+        if pinned:
+            obj.show_only_shape_key, obj.active_shape_key_index = pinned
+        if switched or pinned:
             bpy.context.view_layer.update()
     m = np.array([list(r) for r in obj.matrix_world], dtype=np.float64)
     w = co @ m[:3, :3].T + m[:3, 3]
     return [float(x) for x in (w.max(axis=0) - w.min(axis=0))]
 
 
-def _fcurves(action):
-    for layer in action.layers:
+def _resolves(arm, fc):
+    path = fc.data_path + ("[%d]" % fc.array_index if fc.array_index else "")
+    try:
+        arm.path_resolve(path)
+    except (ValueError, TypeError):
+        return False
+    return True
+
+
+def _action_valid_for(arm, act):
+    """The exporter's rule (find_validate_action_slot): some non-empty channelbag of the action has every F-curve
+    resolving on the object."""
+    for layer in act.layers:
         for strip in layer.strips:
             for bag in getattr(strip, "channelbags", []):
-                yield from bag.fcurves
-
-
-def _clip_names(arm):
-    """Names of the actions the exporter writes for this armature: its assigned action, its NLA strip actions and
-    every action whose F-curve paths all resolve on it."""
-    names = set()
-    ad = arm.animation_data
-    if ad:
-        if ad.action:
-            names.add(ad.action.name)
-        for track in ad.nla_tracks:
-            names.update(s.action.name for s in track.strips if s.action)
-    for act in bpy.data.actions:
-        curves = list(_fcurves(act))
-        if not curves:
-            continue
-        ok = True
-        for fc in curves:
-            try:
-                arm.path_resolve(fc.data_path)
-            except (ValueError, TypeError):
-                ok = False
-                break
-        if ok:
-            names.add(act.name)
-    return names
+                if bag.fcurves and all(_resolves(arm, fc) for fc in bag.fcurves):
+                    return True
+    return False
 
 
 def _expected_takes(arm):
     """The takes the exporter writes for this armature with the options main() passes (bake_anim_use_nla_strips and
-    bake_anim_use_all_actions both True): first one take per unmuted NLA strip that has an action, named after the
-    strip (tracks in order, strips in order), then one take per clip action in Blender's action order."""
-    takes = []
+    bake_anim_use_all_actions both True). Rules modelled from the exporter source (fbx_animations):
+      - an object without animation_data gets no take at all;
+      - NLA pass: one take per unmuted strip of an unmuted track, named after the STRIP (tracks and strips in order);
+        only when its action animates something that resolves on the armature;
+      - all-actions pass: skipped when the object's `action` is read-only (NLA tweak mode); otherwise one take per
+        action in Blender's action order that is the assigned action (with a slot) or valid for the object.
+    Not modelled (the rig is then reported as a mismatch rather than guessed): actions on non-armature objects
+    (their takes are not compared), solo/ blend/ influence of strips (a take is written regardless), and drivers."""
     ad = arm.animation_data
-    if ad:
-        for track in ad.nla_tracks:
-            if track.mute:
+    if not ad:
+        return []
+    takes = []
+    for track in ad.nla_tracks:
+        if track.mute:
+            continue
+        for st in track.strips:
+            if st.mute or not st.action:
                 continue
-            takes.extend(st.name for st in track.strips if st.action and not st.mute)
-    names = _clip_names(arm)
-    takes.extend(a.name for a in bpy.data.actions if a.name in names)
+            if any(_resolves(arm, fc) for layer in st.action.layers for strip in layer.strips
+                   for bag in getattr(strip, "channelbags", []) for fc in bag.fcurves):
+                takes.append(st.name)
+    if not ad.is_property_readonly("action"):
+        for act in bpy.data.actions:
+            if act == ad.action:
+                if ad.action_slot:
+                    takes.append(act.name)
+            elif _action_valid_for(arm, act):
+                takes.append(act.name)
     return takes
 
 

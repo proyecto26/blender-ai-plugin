@@ -869,6 +869,56 @@ def test_v2_nla_strip_takes():
     return out
 
 
+# ------------------------------------------------------------------------- review round 4 (Seldon, batch V)
+
+def test_v2_shape_key_value_one():
+    """Round 4 finding 1: a shape key at value 1 changes the evaluated mesh, not the exported base geometry."""
+    reset()
+    o = box("SM_Key", 2.0)
+    o.shape_key_add(name="Basis")
+    k = o.shape_key_add(name="Wide")
+    for v in k.data:
+        v.co.x *= 2.0
+    k.value = 1.0
+    o.active_shape_key_index = 1
+    select("SM_Key")
+    before = snap()
+    r = _rt("key.fbx", ["SM_Key"])
+    d = r["objects"]["SM_Key"]["checks"]["dimensions"]
+    assert r["verdict"] == "PASS" and d["status"] == "PASS", d
+    assert abs(k.value - 1.0) < 1e-6 and o.active_shape_key_index == 1 and not o.show_only_shape_key
+    assert snap() == before
+    bad = fbx(objects=["SM_Key"], global_scale=2.0, out_path=os.path.join(sub("fbx"), "key2.fbx"))
+    assert bad["verdict"] == "FAIL", bad
+    return {"imported": d["imported"], "wrong_scale": bad["objects"]["SM_Key"]["checks"]["dimensions"]["max_relative_difference"]}
+
+
+def test_v2_static_rig_with_stored_action():
+    """Round 4 finding 2: no animation_data, so the exporter writes no takes even though Walk resolves on the rig."""
+    reset()
+    arm = rig("Rig", ("Walk",))
+    bpy.data.actions["Walk"].use_fake_user = True
+    arm.animation_data_clear()
+    assert arm.animation_data is None
+    select("Rig")
+    r = _rt("static.fbx", ["Rig"])
+    assert r["verdict"] == "PASS", r["objects"]["Rig"]["checks"]
+    assert "actions" not in r["objects"]["Rig"]["checks"]
+    return {"checks": sorted(r["objects"]["Rig"]["checks"])}
+
+
+def test_v2_muted_nla_strip_not_expected():
+    reset()
+    arm = rig("Rig", ("Walk",))
+    track = arm.animation_data.nla_tracks.new()
+    track.strips.new("MutedStrip", 1, bpy.data.actions["Walk"]).mute = True
+    select("Rig")
+    r = _rt("muted.fbx", ["Rig"])
+    c = r["objects"]["Rig"]["checks"]["actions"]
+    assert r["verdict"] == "PASS" and c["exported"] == ["Walk"], c
+    return c
+
+
 TESTS = (test_v1_isolate, test_v1_wire, test_v1_contact_sheet_size_and_tiles, test_v1_restores_state,
          test_v1_restores_state_on_failed_first_view, test_v1_restores_state_on_failed_wire_view,
          test_v1_restores_state_on_failed_sheet, test_v1_unknown_view_changes_nothing,
@@ -883,7 +933,8 @@ TESTS = (test_v1_isolate, test_v1_wire, test_v1_contact_sheet_size_and_tiles, te
          test_v2_suffixed_action_name_exact, test_v2_importer_rename_suffix_is_allowed,
          test_v2_dimension_threshold_edges, test_v2_skinned_mesh_with_other_modifier,
          test_v2_scene_unit_scale, test_v2_suffixed_action_collision, test_v2_clip_order_pairing,
-         test_v2_nla_strip_takes)
+         test_v2_nla_strip_takes, test_v2_shape_key_value_one, test_v2_static_rig_with_stored_action,
+         test_v2_muted_nla_strip_not_expected)
 
 
 def main():
