@@ -43,9 +43,10 @@ replaced because the full imported name already existed in the file before the i
 are not compared (the importer rebuilds bone lengths).
 Dimensions: measured the way the exporter decides. If the mesh has a modifier other than Armature that is enabled
 for viewport or render, the exporter evaluates the mesh (current shape key values included) and writes that as the
-base geometry, so the source is evaluated the same way, with its Armature modifier(s) switched off (the exporter puts
-rigs in rest pose). Otherwise the exporter writes the mesh data (the Basis) and the shape keys as shape keys, so the
-source is read raw. The imported mesh is always read raw. The switch is undone in `finally`.
+base geometry, so the source is evaluated the same way, after setting pose_position = 'REST' on every armature its
+Armature modifiers point at (the exporter's own mechanism: anything that follows the rig, such as a bone-parented
+mirror object, moves back to rest too). Otherwise the exporter writes the mesh data (the Basis) and the shape keys as shape keys, so the
+source is read raw. The imported mesh is always read raw. Every pose_position is put back in `finally`.
 
 Cleanup. Only the temporary scene and the datablocks the import created (objects, meshes, armatures, materials,
 images, actions, cameras, lights, curves, collections, textures, node groups, found by session id before and after)
@@ -131,13 +132,15 @@ def _world_dims(obj, exporter_view):
     """Axis-aligned world extent [x, y, z] of a mesh object, or None when it has no vertices. `exporter_view`: measure
     what the exporter writes as base geometry: the evaluated mesh (current shape key values, modifiers applied, rigs
     in rest pose) when the exporter evaluates, else the raw mesh data. The imported object is read raw (False)."""
-    switched, ev = [], None
+    backups, ev = [], None
     try:
         if exporter_view and _exporter_evaluates(obj):
-            for m in obj.modifiers:  # the exporter puts armatures in REST pose; switching the modifier off is the same
-                if m.type == "ARMATURE" and m.show_viewport:
-                    m.show_viewport = False
-                    switched.append(m)
+            for m in obj.modifiers:  # the exporter's own mechanism: every armature the mesh's Armature modifiers
+                if m.type == "ARMATURE" and m.object and m.object.type == "ARMATURE":  # point at goes to REST
+                    arm = m.object.data
+                    if arm.pose_position != "REST":
+                        backups.append((arm, arm.pose_position))
+                        arm.pose_position = "REST"
             bpy.context.view_layer.update()
             ev = obj.evaluated_get(bpy.context.evaluated_depsgraph_get())
             me = ev.to_mesh()
@@ -152,9 +155,9 @@ def _world_dims(obj, exporter_view):
     finally:
         if ev is not None:
             ev.to_mesh_clear()
-        for m in switched:
-            m.show_viewport = True
-        if switched:
+        for arm, mode in backups:
+            arm.pose_position = mode
+        if backups:
             bpy.context.view_layer.update()
     m = np.array([list(r) for r in obj.matrix_world], dtype=np.float64)
     w = co @ m[:3, :3].T + m[:3, 3]

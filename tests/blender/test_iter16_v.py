@@ -996,6 +996,91 @@ def test_v2_measurement_failure_restores_toggles():
     return {"modifiers": mods}
 
 
+# ------------------------------------------------------------------------- review round 6 (Seldon, batch V)
+
+def _mirror_rig_fixture():
+    """Cube with Armature then Mirror; the mirror object is an Empty parented to bone Arm. Rest: Empty at X=0, so the
+    mirrored cube still spans 2. Posed (Arm moved +1 in X): the Empty is at X=1 and the extent is 4."""
+    from mathutils import Matrix
+    reset()
+    rg = rig("Rig", ())
+    skin = box("Skin", 2.0)
+    emp = bpy.data.objects.new("MirrorEmpty", None)
+    bpy.context.scene.collection.objects.link(emp)
+    emp.parent = rg
+    emp.parent_type = "BONE"
+    emp.parent_bone = "Arm"
+    bpy.context.view_layer.update()
+    emp.matrix_world = Matrix.Translation((0.0, 0.0, 1.5))
+    skin.modifiers.new("Armature", "ARMATURE").object = rg
+    mm = skin.modifiers.new("Mirror", "MIRROR")
+    mm.mirror_object = emp
+    rg.pose.bones["Arm"].location = (1.0, 0.0, 0.0)
+    bpy.context.view_layer.update()
+    select("Skin", "Rig")
+    return rg, skin, emp
+
+
+def test_v2_bone_parented_mirror_object():
+    rg, skin, emp = _mirror_rig_fixture()
+    ev = skin.evaluated_get(bpy.context.evaluated_depsgraph_get())
+    me = ev.to_mesh()
+    xs = [v.co.x for v in me.vertices]
+    posed = max(xs) - min(xs)
+    ev.to_mesh_clear()
+    assert abs(posed - 4.0) < 1e-3, f"fixture is not posed as intended ({posed})"
+    before = snap()
+    pose_before = (rg.data.pose_position, tuple(rg.pose.bones["Arm"].location))
+    r = _rt("mirror.fbx", ["Skin", "Rig"])
+    d = r["objects"]["Skin"]["checks"]["dimensions"]
+    assert r["verdict"] == "PASS" and d["status"] == "PASS", d
+    assert abs(d["exported"][0] - 2.0) < 1e-3, d
+    assert (rg.data.pose_position, tuple(rg.pose.bones["Arm"].location)) == pose_before
+    assert snap() == before
+    bad = fbx(objects=["Skin", "Rig"], global_scale=2.0, out_path=os.path.join(sub("fbx"), "mirror2.fbx"))
+    assert bad["verdict"] == "FAIL"
+    return {"rest_extent": d["exported"][0], "posed_extent": posed}
+
+
+def test_v2_measurement_failure_restores_pose_position():
+    rg, skin, emp = _mirror_rig_fixture()
+    before = snap()
+    real_ctx = bpy.context
+
+    class FailingContext:
+        def __getattr__(self, name):
+            if name == "evaluated_depsgraph_get" and \
+                    os.path.basename(sys._getframe(1).f_code.co_filename) == "fbx_roundtrip.py":
+                def boom():
+                    raise RuntimeError("injected measurement failure")
+                return boom
+            return getattr(real_ctx, name)
+
+    bpy.context = FailingContext()
+    try:
+        try:
+            _rt("poseboom.fbx", ["Skin", "Rig"])
+        except RuntimeError as exc:
+            assert "injected" in str(exc), exc
+        else:
+            raise AssertionError("injected failure did not propagate")
+    finally:
+        bpy.context = real_ctx
+    assert rg.data.pose_position == "POSE", rg.data.pose_position
+    assert [(m.name, m.show_viewport) for m in skin.modifiers] == [("Armature", True), ("Mirror", True)]
+    assert snap() == before
+    return {"pose_position": rg.data.pose_position}
+
+
+def test_v2_rest_pose_armature_untouched():
+    """An armature already in REST stays in REST (nothing to back up, nothing to restore wrongly)."""
+    rg, skin, emp = _mirror_rig_fixture()
+    rg.data.pose_position = "REST"
+    r = _rt("rest.fbx", ["Skin", "Rig"])
+    assert r["verdict"] == "PASS" and rg.data.pose_position == "REST", r["objects"]["Skin"]["checks"]
+    return {"ok": True}
+
+
 TESTS = (test_v1_isolate, test_v1_wire, test_v1_contact_sheet_size_and_tiles, test_v1_restores_state,
          test_v1_restores_state_on_failed_first_view, test_v1_restores_state_on_failed_wire_view,
          test_v1_restores_state_on_failed_sheet, test_v1_unknown_view_changes_nothing,
@@ -1012,7 +1097,8 @@ TESTS = (test_v1_isolate, test_v1_wire, test_v1_contact_sheet_size_and_tiles, te
          test_v2_scene_unit_scale, test_v2_suffixed_action_collision, test_v2_clip_order_pairing,
          test_v2_nla_strip_takes, test_v2_shape_key_value_one, test_v2_static_rig_with_stored_action,
          test_v2_muted_nla_strip_not_expected, test_v2_shape_key_with_modifier_evaluated,
-         test_v2_measurement_failure_restores_toggles)
+         test_v2_measurement_failure_restores_toggles, test_v2_bone_parented_mirror_object,
+         test_v2_measurement_failure_restores_pose_position, test_v2_rest_pose_armature_untouched)
 
 
 def main():
