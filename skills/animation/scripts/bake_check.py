@@ -10,7 +10,9 @@ rest orientations or bone rolls can be compared):
                may differ); FAIL above TRANS_MAX_FRAC of the target rig height
   scale        the stretch relative to rest as a matrix in armature space (the bone's local scale carried through
                its rest orientation), so the same stretch in space matches whatever the bone roll, while an X
-               stretch never matches a Z stretch; FAIL when any element differs by more than SCALE_MAX_REL
+               stretch never matches a Z stretch. The two stretches are compared as S_target @ S_source^-1: its
+               eigenvalues are the per-axis ratios along the principal axes, whatever the roll, and the metric is
+               the largest |eigenvalue - 1|; FAIL above SCALE_MAX_REL
 A cyclic check that cannot run (fewer than 3 frames) is NOT_CHECKED, so the overall verdict is at least WARN.
 A mapped bone with no keys in the baked action is still measured (it simply stays at rest); when NO mapped bone has
 keys the run is a FAIL ("measured nothing") and nothing is evaluated. The rig height is the Z extent of the rest
@@ -33,8 +35,9 @@ Each is bracketed by boundary fixtures at 0.5x and 1.5x of the limit, so it sits
 rule asks at least 20%). Measured: a correct bake scores 0.0 on every metric.
   ROT_MAX_DEG = 2.0         boundary 1.0001 (PASS) / 3.0 (FAIL); rotation lost 40 and 80 degrees
   TRANS_MAX_FRAC = 0.01     boundary 0.005 / 0.015; piston bake without location keys 0.1 of the rig height
-  SCALE_MAX_REL = 0.01      boundary 0.005 / 0.015; hydraulic (Stretch To, Y x2) bake without scale keys 1.0
-                            (stretch-matrix element difference); an X stretch against a Z stretch 1.0
+  SCALE_MAX_REL = 0.01      boundary 0.005 / 0.015; hydraulic (Stretch To, Y x2) bake without scale keys 0.5
+                            (max |eigenvalue - 1| of the stretch ratio); an X stretch against a Z stretch 1.0; a 1.5% /
+                            0.5% stretch on a bone rolled 45 degrees 0.015 (FAIL) / 0.005 (PASS)
   LOOP_ROT_DEG = 1.0        boundary 0.4973 / 1.4998; a ramp that never returns 90.0
   LOOP_LOC_FRAC = 0.005     boundary 0.0025 / 0.0075; a pop of 0.2 of the rig height 0.2
   VEL_REL = 0.25, VEL_ROT_FLOOR_DEG = 0.2, VEL_LOC_FLOOR_FRAC = 0.001
@@ -72,6 +75,7 @@ import os
 import sys
 
 import bpy
+import numpy as np
 from mathutils import Matrix, Quaternion, Vector
 
 ROT_MAX_DEG = 2.0
@@ -243,7 +247,9 @@ def _stretch(rest, posed):
 
 
 def _stretch_off(a, b):
-    return max(abs(a[i][j] - b[i][j]) for i in range(3) for j in range(3))
+    """Largest per-axis ratio error between two stretch matrices: max |eigenvalue(b @ a^-1) - 1| (a: target, b: source)."""
+    m = np.array([list(r) for r in a], dtype=float) @ np.linalg.inv(np.array([list(r) for r in b], dtype=float))
+    return float(np.abs(np.linalg.eigvals(m) - 1.0).max())
 
 
 def _loop_checks(bones, series, height, root, root_motion):

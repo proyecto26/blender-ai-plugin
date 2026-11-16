@@ -184,7 +184,7 @@ def test_b1_directx_green_is_flipped_opengl():
     assert np.ptp(gl[..., 1]) > 0.02, "the OpenGL green channel is flat: the test would prove nothing"
     err_g = float(np.abs(dx[..., 1] - (1.0 - gl[..., 1])).max())
     err_rb = float(np.abs(dx[..., [0, 2]] - gl[..., [0, 2]]).max())
-    assert err_g <= 1.5 / 255 and err_rb <= 1.5 / 255, (err_g, err_rb)
+    assert err_g <= 1 / 255 and err_rb <= 1 / 255, (err_g, err_rb)
     assert r1["normal_convention"] == "OPENGL" and r2["normal_convention"] == "DIRECTX"
     MEASURED["b1_directx_green_err"] = round(err_g, 6)
     return {"green_err": err_g, "rb_err": err_rb, "green_range": float(np.ptp(gl[..., 1]))}
@@ -451,11 +451,11 @@ def put_keys(obj, aname, keys, frames):
 
 
 def scenario(src_keys, tgt_keys, frames=range(1, 12), tgt_roll=None, bones=CHAIN, tgt_scale=1.0, tgt_scale_loc=1.0,
-             src_setup=None):
+             src_setup=None, src_roll=None):
     """A source rig playing `src_keys` and a target rig carrying the baked action AN_baked (not assigned)."""
     fresh()
     bpy.context.scene.frame_start, bpy.context.scene.frame_end = min(frames), max(frames)
-    src, tgt = make_rig("SRC", bones), make_rig("TGT", bones, roll=tgt_roll, scale=tgt_scale)
+    src, tgt = make_rig("SRC", bones, roll=src_roll), make_rig("TGT", bones, roll=tgt_roll, scale=tgt_scale)
     if src_setup:
         src_setup(src)
     put_keys(src, "AN_src", src_keys, frames)
@@ -947,6 +947,22 @@ def test_b3_seam_velocity_boundary_fixtures():
     return out
 
 
+def test_b2_scale_percentage_is_exact_on_a_rolled_rest():
+    """Identical rest bones rolled 45 degrees (Y-aligned): a stretch on one local axis is judged by its own percentage."""
+    roll = {"arm": 45.0}
+    src_keys = {"arm": lambda f: {"scale": (1.0, 1.0, 1.0)}}
+    out = {}
+    for amount, want in ((0.005, "PASS"), (0.015, "FAIL")):
+        tgt_keys = {"arm": lambda f, a=amount: {"scale": (1.0 + a, 1.0, 1.0)}}
+        scenario(src_keys, tgt_keys, tgt_roll=roll, src_roll=roll)
+        res = baked()
+        v = res["bones"]["arm"]["scale"]
+        assert v["verdict"] == want, (amount, v)
+        out[str(amount)] = v["max"]
+    assert abs(out["0.015"] - 0.015) < 1e-3 and abs(out["0.005"] - 0.005) < 1e-3, out
+    return out
+
+
 TESTS = (
     test_b1_directx_green_is_flipped_opengl, test_b1_metallic_plain_and_linked_nodes_restored,
     test_b1_orm_channels_equal_separate_maps, test_b1_nodes_identical_when_a_bake_fails_midway,
@@ -960,7 +976,7 @@ TESTS = (
     test_b2_result_file_and_exit_codes, test_b2_thresholds_boundary_fixtures,
     test_b3_clean_loop_passes_and_non_cyclic_is_not_checked, test_b3_seam_pops_fail, test_b3_root_motion,
     test_b3_thresholds_boundary_fixtures, test_b2_scale_is_compared_per_axis_in_the_rest_frame,
-    test_b3_loop_that_cannot_run_is_not_a_pass, test_b3_seam_velocity_boundary_fixtures,
+    test_b2_scale_percentage_is_exact_on_a_rolled_rest, test_b3_loop_that_cannot_run_is_not_a_pass, test_b3_seam_velocity_boundary_fixtures,
 )
 
 
