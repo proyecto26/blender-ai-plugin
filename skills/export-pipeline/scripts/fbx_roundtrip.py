@@ -46,9 +46,12 @@ the file before the import. So `Walk.001` exported and `Walk.002` imported is a
 changed clip name and FAILs, as are missing, extra or swapped takes. Only take NAMES are compared, not their F-curves.
 Not modelled: takes of non-armature objects (not compared), strip influence/blend/solo (a take is written regardless),
 drivers, dupli-instanced objects. Armature dimensions are not compared (the importer rebuilds bone lengths).
-Time: an object whose action animates its transform is measured at the start of its first all-actions take on both
-sides: the source scene at the action's first key frame, the temporary scene at the imported action's first key frame
-(the user's frame is put back). Objects driven by NLA strips are measured at the current frame (not modelled).
+Time: every dimension is measured at one scene-wide frame per side, so animation anywhere (the object, a parent, a
+constraint) is compared at the same moment. Source: the earliest frame any exported take starts from (an action's
+first key for all-actions takes, a strip's frame_start for NLA takes); imported: the earliest first key over all
+actions the import created. With no takes the current frame is used. The user's frame is put back. If takes start at
+different frames no single frame matches all of them: the earliest is used, so an asset whose takes begin at
+different frames and move geometry differently there may not be comparable.
 
 Dimensions: measured the way the exporter decides. If the mesh has a modifier other than Armature that is enabled
 for viewport or render, the exporter evaluates the mesh (current shape key values included) and writes that as the
@@ -273,29 +276,37 @@ def _check(status, **info):
     return info
 
 
-def _take_start(obj, nla_takes):
-    """Frame at which the exporter's first all-actions take of this object starts (the action's first key; takes are
-    baked from there), or None when the object has no such take or NLA takes exist (their time base is the strip's)."""
-    if nla_takes:
-        return None
-    names = [n for n, kind in _expected_takes(obj, nla_takes) if kind == "action"]
-    return math.floor(bpy.data.actions[names[0]].frame_range[0]) if names else None
+def _source_start(exported, nla_takes):
+    """The one scene-wide frame the exporter's takes start from: each all-actions take is baked from its action's first
+    key (`act.frame_range`), each NLA take from its strip's `frame_start`. The earliest of them over every exported
+    object, or None when the export writes no takes (then nothing is animated and the current frame is used)."""
+    starts = []
+    for ob in exported:
+        for name, kind in _expected_takes(ob, []):
+            if kind == "action":
+                starts.append(bpy.data.actions[name].frame_range[0])
+        ad = ob.animation_data
+        if ad:
+            for track in ad.nla_tracks:
+                if not track.mute:
+                    starts.extend(st.frame_start for st in track.strips if not st.mute)
+    return math.floor(min(starts)) if starts else None
 
 
-def _imported_start(imp):
-    """First key frame of the action the importer assigned to the imported object, or None."""
-    ad = imp.animation_data
-    return math.floor(ad.action.frame_range[0]) if ad and ad.action else None
+def _imported_start(new_actions):
+    """The matching imported frame: the earliest first key over all actions the import created, or None."""
+    firsts = [a.frame_range[0] for a in new_actions]
+    return math.floor(min(firsts)) if firsts else None
 
 
-def _dims_at(scene, frame, exporter_view, obj):
-    """_world_dims at `frame` of `scene` (None = leave the frame alone); the scene's frame is put back."""
+def _measure_all(scene, frame, items):
+    """[(obj, exporter_view)] measured with `scene` at `frame` (None = leave it); the scene's frame is put back."""
     if frame is None:
-        return _world_dims(obj, exporter_view)
+        return [_world_dims(o, view) for o, view in items]
     prev = scene.frame_current
     scene.frame_set(frame)
     try:
-        return _world_dims(obj, exporter_view)
+        return [_world_dims(o, view) for o, view in items]
     finally:
         scene.frame_set(prev)
 
@@ -422,19 +433,19 @@ def main(out_path, objects=None, overwrite=False, tol=0.001, global_scale=1.0, r
                 made = [a for a in bpy.data.actions
                         if a.session_uid not in before["actions"] and a.name.startswith(imp.name + "|")]
                 imported_clips[rid] = [a.name for a in sorted(made, key=lambda a: a.session_uid)]
-        # Animated transforms: measure both sides at the start of the take they share (the source at the action's first
-        # key, the temporary scene at the imported action's first key), not at whatever frame each scene sits on.
-        dims = {}
-        for rid, orig in originals.items():
-            imp = (imported_by_id.get(rid) or [None])[0]
-            if orig.type == "MESH" and imp is not None and imp.type == "MESH":
-                a = _dims_at(scene, _take_start(orig, nla_takes), True, orig)
-                window.scene = tmp_scene
-                try:
-                    b = _dims_at(tmp_scene, _imported_start(imp), False, imp)
-                finally:
-                    window.scene = scene
-                dims[rid] = (a, b)
+        # Animated transforms (the object's own, a parent's, a constraint's...): ALL dimensions are measured at one
+        # frame per side, the frame the exporter's takes start from (source) and the earliest first key of the imported
+        # actions (temporary scene), not at whatever frame each scene sits on.
+        pairs = [(rid, o, (imported_by_id.get(rid) or [None])[0]) for rid, o in originals.items()]
+        pairs = [(rid, o, i) for rid, o, i in pairs if o.type == "MESH" and i is not None and i.type == "MESH"]
+        new_actions = [a for a in bpy.data.actions if a.session_uid not in before["actions"]]
+        src = _measure_all(scene, _source_start(targets, nla_takes), [(o, True) for _, o, _ in pairs])
+        window.scene = tmp_scene
+        try:
+            imp_dims = _measure_all(tmp_scene, _imported_start(new_actions), [(i, False) for _, _, i in pairs])
+        finally:
+            window.scene = scene
+        dims = {rid: (a, b) for (rid, _, _), a, b in zip(pairs, src, imp_dims)}
         out = {}
         for rid, orig in originals.items():
             imps = imported_by_id.get(rid) or [None]

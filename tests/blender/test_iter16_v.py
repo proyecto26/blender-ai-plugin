@@ -1194,6 +1194,46 @@ def test_v2_animated_scale_measured_at_the_same_take_time():
     return out
 
 
+# ------------------------------------------------------------------------- review round 10 (Seldon, batch V)
+
+def _spun_parent_prop():
+    """Unanimated [2,4,2] prop parented to an Empty whose action rotates Z 0 -> 90 degrees over frames 1-10."""
+    reset()
+    prop = box("SM_Prop", 2.0)
+    prop.scale = (1.0, 2.0, 1.0)
+    emp = bpy.data.objects.new("Spinner", None)
+    bpy.context.scene.collection.objects.link(emp)
+    emp.animation_data_create()
+    emp.animation_data.action = bpy.data.actions.new("Spin")
+    for frame, z in ((1, 0.0), (10, 1.5707963)):
+        emp.rotation_euler = (0.0, 0.0, z)
+        emp.keyframe_insert("rotation_euler", frame=frame)
+    prop.parent = emp
+    bpy.context.scene.frame_set(1)
+    select("SM_Prop", "Spinner")
+    return prop, emp
+
+
+def test_v2_parent_animated_prop_scene_wide_frame():
+    out = {}
+    for frame in (1, 5, 10):
+        prop, emp = _spun_parent_prop()
+        bpy.context.scene.frame_set(frame)
+        before = snap()
+        r = _rt(f"spin{frame}.fbx", ["SM_Prop", "Spinner"])
+        d = r["objects"]["SM_Prop"]["checks"]["dimensions"]
+        assert r["verdict"] == "PASS" and d["status"] == "PASS", (frame, d)
+        assert abs(d["exported"][1] - 4.0) < 1e-3 and abs(d["exported"][0] - 2.0) < 1e-3, d
+        assert bpy.context.scene.frame_current == frame, "user frame not restored"
+        assert snap() == before
+        out[f"frame_{frame}"] = d["exported"]
+    prop, emp = _spun_parent_prop()
+    bpy.context.scene.frame_set(10)
+    bad = fbx(objects=["SM_Prop", "Spinner"], global_scale=2.0, out_path=os.path.join(sub("fbx"), "spin_bad.fbx"))
+    assert bad["verdict"] == "FAIL" and bpy.context.scene.frame_current == 10
+    return out
+
+
 TESTS = (test_v1_isolate, test_v1_wire, test_v1_contact_sheet_size_and_tiles, test_v1_restores_state,
          test_v1_restores_state_on_failed_first_view, test_v1_restores_state_on_failed_wire_view,
          test_v1_restores_state_on_failed_sheet, test_v1_unknown_view_changes_nothing,
@@ -1214,7 +1254,7 @@ TESTS = (test_v1_isolate, test_v1_wire, test_v1_contact_sheet_size_and_tiles, te
          test_v2_measurement_failure_restores_pose_position, test_v2_rest_pose_armature_untouched,
          test_v2_nla_take_written_for_every_exported_object, test_v2_nla_take_missing_on_static_rig_fails,
          test_v2_strip_take_name_collision, test_v2_strip_take_collision_missing_take_fails,
-         test_v2_animated_scale_measured_at_the_same_take_time)
+         test_v2_animated_scale_measured_at_the_same_take_time, test_v2_parent_animated_prop_scene_wide_frame)
 
 
 def main():
