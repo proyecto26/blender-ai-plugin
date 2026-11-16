@@ -281,8 +281,9 @@ def _sequence_files(img, nodes):
     a user has no frame range (frame_duration 0), so only the base file could be checked."""
     base = bpy.path.abspath(img.filepath, library=img.library)
     folder, name = os.path.split(base)
+    stem, ext = os.path.splitext(name)  # the frame number lives in the stem: ".jp2" is an extension, not a frame
     m = None
-    for m in re.finditer(r"\d+", name):
+    for m in re.finditer(r"\d+", stem):
         pass
     paths, unknown = [base], False
     for node in nodes:
@@ -292,7 +293,7 @@ def _sequence_files(img, nodes):
             continue
         for k in range(1, user.frame_duration + 1):
             number = str(k + user.frame_offset).zfill(len(m.group()))
-            paths.append(os.path.join(folder, name[:m.start()] + number + name[m.end():]))
+            paths.append(os.path.join(folder, stem[:m.start()] + number + stem[m.end():] + ext))
     return list(dict.fromkeys(paths)), unknown
 
 

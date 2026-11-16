@@ -801,6 +801,35 @@ def test_t2_channel_split_and_math():
     return got
 
 
+def test_t3_sequence_extension_digits(out_dir):
+    """Round 4: the frame number is the last digit group of the name WITHOUT its extension (smoke_0001.jp2 is not .jp1)."""
+    try:
+        folder = os.path.join(out_dir, "t3_seq")
+        os.makedirs(folder, exist_ok=True)
+        cases = {}
+        for key, present in (("complete", (1, 2)), ("gap", (1,))):
+            for n in present:
+                path = os.path.join(folder, f"{key}_{n:04d}.jp2")
+                with open(path, "wb") as fh:
+                    fh.write(b"x")
+                TEMP_FILES.append(path)
+            img = gen_image(f"t3_{key}", 4, 4)
+            img.source = "SEQUENCE"
+            img.filepath = os.path.join(folder, f"{key}_0001.jp2")
+            mat, tree, bsdf = new_mat(f"T3_{key}")
+            node = tex_node(tree, img)
+            node.image_user.frame_duration = 2
+            tree.links.new(node.outputs["Color"], bsdf.inputs["Base Color"])
+            cases[key] = mesh_obj(f"T3_{key}", [mat], [0] * 6)
+        res = run("validate_asset.py", {"objects": [o.name for o in cases.values()], "prefix": ""})
+        got = {k: check(res, o.name, "material_images") for k, o in cases.items()}
+    finally:
+        cleanup()
+    assert got["complete"]["status"] == "PASS", got["complete"]
+    assert got["gap"]["status"] == "FAIL" and "gap_0002.jp2" in got["gap"]["detail"] and ".jp1" not in got["gap"]["detail"], got["gap"]
+    return {k: v["status"] for k, v in got.items()}
+
+
 def main():
     args = _cli_args()
     out_dir = args.get("out_dir", ".")
@@ -813,7 +842,8 @@ def main():
              test_r1_evaluated_materials, test_r2_udim_movie_sequence_missing, test_r3_group_boundaries,
              test_r4_registered_engines_only,
              test_s1_incomplete_udim_set, test_s2_linked_materials_same_name,
-             test_t1_image_sequence_frames, test_t2_channel_split_and_math]
+             test_t1_image_sequence_frames, test_t2_channel_split_and_math,
+             test_t3_sequence_extension_digits]
     if CONFIG["validate_script"]:  # old-script run: only the P2/P3 tests are meaningful
         tests = [t for t in tests if t.__name__.startswith(("test_p2", "test_p3", "test_p23", "test_r", "test_s", "test_t")) and t.__name__ != "test_r4_registered_engines_only"]
     for fn in tests:
