@@ -10,7 +10,7 @@ Stages: inspect, brief, model, look_dev, light_camera, animate, validate, export
 | Skill | Stage | Job | Scripts |
 |---|---|---|---|
 | `blender-director` | any | Plans and runs any multi-step Blender production from brief to verified export: model, look, light, camera, validate, export. | run_manifest.py |
-| `blender-mcp-workflow` | any | Safe way to drive Blender through the MCP server and write bpy code that survives Blender 5.x API removals. | capture_views.py, clash_audit.py, compare_to_refs.py, fit_search.py, fix_asset.py, ingest_asset.py, ref_board.py, scene_audit.py, scene_snapshot.py, setup_collections.py, silhouette_score.py, validate_asset.py, work_copy.py |
+| `blender-mcp-workflow` | any | Safe way to drive Blender through the MCP server and write bpy code that survives Blender 5.x API removals. | capture_views.py, clash_audit.py, compare_to_refs.py, env_report.py, fit_search.py, fix_asset.py, ingest_asset.py, ref_board.py, scene_audit.py, scene_snapshot.py, setup_collections.py, silhouette_score.py, validate_asset.py, work_copy.py |
 | `qa-review` | validate | Final QA gate for Blender assets: screenshots, checklists, naming and topology audit, ship/no-ship verdict. | - |
 
 ## Production (film, AI handoff)
@@ -24,16 +24,16 @@ Stages: inspect, brief, model, look_dev, light_camera, animate, validate, export
 
 | Skill | Stage | Job | Scripts |
 |---|---|---|---|
-| `animation` | animate | Game-ready animation: walk, run and idle cycles, combat moves, camera animation, NLA. | turntable.py |
+| `animation` | animate | Game-ready animation: walk, run and idle cycles, combat moves, camera animation, NLA. | bake_check.py, turntable.py |
 | `archviz` | model | Architectural visualization: photoreal interior and exterior renders at real-world scale. | - |
 | `blender-modeler` | model | Core mesh modeling: blockouts, Edit Mode, modifiers, smooth/flat shading. | - |
 | `camera-cinematography` | light_camera | Camera work: framing, lenses, depth of field, hero shots and camera moves. | camera_rig.py |
 | `character-artist` | model | Human character modeling: anatomy, face topology, clothing, animation-ready meshes. | - |
-| `cloth-sim` | animate | Cloth simulation and baking for capes, flags, curtains and garments. | cloth_setup.py |
+| `cloth-sim` | animate | Cloth simulation and baking for capes, flags, curtains and garments. | cloth_setup.py, garment_check.py |
 | `compositing` | light_camera | Compositor work: bloom and glow, color grade, render passes, vignette. | comp_grade.py |
 | `creature-artist` | model | Creature modeling: dragons, monsters and aliens with believable anatomy and muscle flow. | - |
-| `environment-artist` | model | Environment art: greybox/blockout, level layout, modular kits, terrain and buildings. | blockout.py |
-| `geometry-nodes` | model | Geometry Nodes systems: scatter and instance rocks, trees, grass; parametric node groups; curve to mesh. | scatter_points.py |
+| `environment-artist` | model | Environment art: greybox/blockout, level layout, modular kits, terrain and buildings. | blockout.py, kit_check.py |
+| `geometry-nodes` | model | Geometry Nodes systems: scatter and instance rocks, trees, grass; parametric node groups; curve to mesh. | gn_diagnostics.py, scatter_points.py |
 | `hair-groom` | model | Hair and fur grooming: curves, particle hair, game hair cards. | - |
 | `hard-surface` | model | Hard-surface modeling for sci-fi, vehicles, weapons and robots with booleans, bevels and panel lines. | bevel_stack.py |
 | `lighting` | light_camera | Lighting setups: three-point, HDRI, rim, volumetrics and mood. | light_rig.py |
@@ -44,9 +44,9 @@ Stages: inspect, brief, model, look_dev, light_camera, animate, validate, export
 | `prop-artist` | model | Prop modeling: furniture, tools, bottles, household objects, kitbash parts. | - |
 | `rendering` | light_camera | Final render setup: Cycles/Eevee sampling, denoise, resolution, color management. | background_render.py, render_preset.py |
 | `retopology` | model | Retopology: clean quad-dominant, animation-ready topology from sculpts or messy meshes. | topology_report.py |
-| `rigging` | animate | Rigging: armatures, IK/FK, weight painting, facial rigs, drivers. | rig_check.py, stress_check.py |
+| `rigging` | animate | Rigging: armatures, IK/FK, weight painting, facial rigs, drivers. | rig_check.py, shape_key_audit.py, stress_check.py |
 | `scene-assembly` | model | Scene assembly: collections, linking, library overrides, collection instances. | - |
-| `sculpting` | model | Sculpting: Dyntopo, multires, brushes, wrinkles and damage detail. | - |
+| `sculpting` | model | Sculpting: Dyntopo, multires, brushes, wrinkles and damage detail. | sculpt_prep.py |
 | `set-dressing` | model | Set dressing: prop placement and environmental storytelling. | scatter_props.py |
 | `texture-workflow` | look_dev | Texture baking and atlases: AO, curvature, normal and roughness maps from high-poly, decals, texture memory. | bake_maps.py, import_painter_textures.py |
 | `uv-workflow` | look_dev | Unwrap UVs: seams, packing, texel density, UDIM, lightmap UVs. | uv_unwrap_check.py |
@@ -60,7 +60,7 @@ Stages: inspect, brief, model, look_dev, light_camera, animate, validate, export
 |---|---|---|---|
 | `asset-optimization` | validate | Cut an asset to budget, tested scripts: polycount, stray geometry, duplicate verts, extra materials. | optimize_mesh.py |
 | `collision-proxy` | validate | Game colliders, tested scripts: UCX/UHX convex hulls, boxes, capsules, engine naming. | make_collision.py |
-| `export-pipeline` | export | Engine-agnostic export, tested scripts: FBX, GLB, OBJ, USD scale, axis, pivot, batch. | export_asset.py |
+| `export-pipeline` | export | Engine-agnostic export, tested scripts: FBX, GLB, OBJ, USD scale, axis, pivot, batch. | export_asset.py, fbx_roundtrip.py |
 | `godot-export` | export | Godot 4 export, tested scripts: GLB scale, PBR, clips, -col collision. | export_godot.py |
 | `lod-pipeline` | validate | LOD chains, tested scripts: LOD1..N copies, naming, screen-size switch distances. | generate_lods.py |
 | `unity-export` | export | Unity export, tested scripts: FBX axis, scale, materials, humanoid rigs. | export_unity.py |

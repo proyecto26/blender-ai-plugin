@@ -4,7 +4,7 @@ This starts real Blender processes, so run it with plain Python, not inside Blen
 
     python3 tests/blender/test_iter15_exit_codes.py --blender <path to blender> [--out-dir <new folder>]
 
-It runs validate_asset.py and clash_audit.py the way SKILL.md documents,
+It runs validate_asset.py, clash_audit.py and uv_unwrap_check.py the way SKILL.md documents,
 
     blender -b f.blend --python-exit-code 1 --python <script> -- --args-file args.json
 
@@ -61,7 +61,28 @@ for ob in list(bpy.data.objects):
     bpy.data.objects.remove(ob)
 which = sys.argv[sys.argv.index("--") + 1]
 path = sys.argv[sys.argv.index("--") + 2]
-if which == "good":
+
+
+def uv_quad(name, stacked=False):
+    """One quad whose UVs fill the tile; stacked adds a second quad on the very same UVs."""
+    me = bpy.data.meshes.new(name)
+    verts = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+    faces = [(0, 1, 2, 3)]
+    if stacked:
+        verts += [(2, 0, 0), (3, 0, 0), (3, 1, 0), (2, 1, 0)]
+        faces.append((4, 5, 6, 7))
+    me.from_pydata(verts, [], faces)
+    layer = me.uv_layers.new(name="UVMap")
+    for li in range(len(me.loops)):
+        layer.uv[li].vector = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)][li % 4]
+    bpy.context.scene.collection.objects.link(bpy.data.objects.new(name, me))
+
+
+if which == "uvgood":  # one quad filling the tile: no overlap, full coverage, no stretch -> PASS
+    uv_quad("UV_Good")
+elif which == "uvbad":  # two faces of one mesh on identical UVs -> overlap -> FAIL
+    uv_quad("UV_Bad", stacked=True)
+elif which == "good":
     cube("SM_Good")
 elif which == "nofaces":  # a mesh with vertices and no faces: clash_audit has nothing to audit
     me = bpy.data.meshes.new("Loose")
@@ -107,12 +128,13 @@ def main():
     with open(build, "w", encoding="utf-8") as fh:
         fh.write(BUILD)
     blends = {}
-    for which in ("good", "bad", "nofaces"):
+    for which in ("good", "bad", "nofaces", "uvgood", "uvbad"):
         blends[which] = os.path.join(folder, f"{which}.blend")
         subprocess.run([blender, "-b", "--factory-startup", "--python", build, "--", which, blends[which]],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=TIMEOUT_S, check=True)
     validate = os.path.join(SCRIPTS, "validate_asset.py")
     clash = os.path.join(SCRIPTS, "clash_audit.py")
+    uvcheck = os.path.join(ROOT, "skills", "uv-workflow", "scripts", "uv_unwrap_check.py")
     cases = []
 
     def case(name, script, blend, args, want_codes, want_file, want_verdict=None, pre_stale=False):
@@ -147,6 +169,10 @@ def main():
     # nothing to audit is a FAIL verdict (exit 2) and must still leave the result file, like every other FAIL
     case("clash_nothing_to_audit", clash, blends["nofaces"], {"objects": ["Loose"]}, (2,), True, "FAIL")
     case("clash_exception", clash, blends["good"], {"objects": ["NoSuchObject"]}, (1,), False)
+    # uv_unwrap_check.py as its own process: same contract (0 PASS, 2 FAIL, 1 on an exception and no file)
+    case("uv_pass", uvcheck, blends["uvgood"], {"objects": ["UV_Good"]}, (0,), True, "PASS")
+    case("uv_fail", uvcheck, blends["uvbad"], {"objects": ["UV_Bad"]}, (2,), True, "FAIL")
+    case("uv_exception", uvcheck, blends["uvgood"], {"objects": ["UV_Good"], "method": "bogus"}, (1,), False)
     # a script path that does not exist: whatever Blender returns, no result file can exist, so the rule rejects it
     missing = os.path.join(folder, "no_such_script.py")
     case("missing_script", missing, blends["good"], {"objects": ["SM_Good"]}, None, False)

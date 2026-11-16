@@ -129,6 +129,7 @@ path of this installed script and their ARGS. Don't inline or rewrite the script
 | Script | What it does |
 |--------|--------------|
 | `scripts/turntable.py` | Create a looping 360-degree turntable: a pivot empty with linear Z rotation and a camera parented to it, framed on the target. Non-destructive (adds objects to COL_Turntable only); sets the frame range. |
+| `scripts/bake_check.py` | Check that a baked action alone reproduces the source motion: the target is played with its constraints, drivers and NLA switched off (and put back), and every mapped bone's rotation, translation and scale relative to rest is compared with the source (rig heights may differ, rest orientations may differ). For a cyclic action it also checks the loop seam: first and last pose, and the speed across the seam; `root_motion=True` leaves the root's travel out of the pose comparison. Writes `result_path` with `run_id`; exits 2 on FAIL in a background run. |
 
 ```python
 import runpy
@@ -136,6 +137,8 @@ result = runpy.run_path("<skill_dir>/scripts/turntable.py", init_globals={"ARGS"
 ```
 
 ARGS: `target`, `frames`, `lens_mm`, `elevation_deg`, `set_active`
+
+`bake_check.py` ARGS: `source`, `target`, `action`, `bone_map`, `frames`, `cyclic`, `root_motion`, `root_bone`, `result_path`, `run_id`. Limits: 2 degrees, 1% of the rig height, 1% scale; loop 1 degree and 0.5% of the height.
 
 ## Reference Guide
 

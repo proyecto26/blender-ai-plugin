@@ -134,16 +134,10 @@ Measured limits left after the iteration 13 fixes.
 Done in iteration 15 (plan `docs/plans/iteration-15-agent-skills-comparison.md`): A1-A16 script fixes, headless result
 files and exit codes, UV measurement, geometry checks, `rig_check` additions and `stress_check.py`.
 
-Next (verified gaps, medium value):
-- [ ] `env_report.py` preflight: version, engines, add-ons, enum values, read-only
-- [ ] Material dependency checks: used empty slots, missing image files, color data on non-color sockets
-- [ ] `capture_views.py`: isolate the asset, wire view, contact sheet
-- [ ] FBX round trip in a temporary scene: dimensions within 0.1%, bone hierarchy, clip names
-- [ ] Material, texture and bone budgets
-- [ ] Bake controls: several high sources, cage, UV layer, ray distance, normal convention, metallic and ORM
-- [ ] Retarget and visual bake checked on evaluated playback; animation loop seam check
-- [ ] Garment penetration over stress poses; shape key audit
-- [ ] Modular kit check; scatter spacing, slope and height limits; GN diagnostics; sculpt preparation on a duplicate
+Done in iteration 16 (plan `docs/plans/iteration-16-phase-2-medium.md`): `env_report.py`, material dependency
+checks and budgets in `validate_asset.py`, `capture_views.py` isolate/wire/contact sheet, `fbx_roundtrip.py`, bake
+controls and ORM in `bake_maps.py`, `bake_check.py` (baked motion and loop seam), `garment_check.py`,
+`shape_key_audit.py`, `kit_check.py`, scatter limits, `gn_diagnostics.py` and `sculpt_prep.py`.
 
 Low: numeric PBR statistics, auto retopology on a duplicate, outline normals, hair card checks.
 
@@ -156,6 +150,10 @@ Open limits:
 - [ ] `clash_audit.py` ignores coplanar overlap below 1e-6 m² (a 1 mm x 1 mm patch)
 - [ ] LOD sets made before iteration 15 have no tag, so `generate_lods.py` refuses to replace them; the same holds
   for `scatter_props.py` props made before iteration 15 (rename or delete them by hand)
+- [ ] `fbx_roundtrip.py` compares take names only, for armatures; it does not model takes of other object types,
+  NLA strip influence, blend or solo, drivers, dupli-instances or the F-curves inside a take
+- [ ] `bake_check.py` mutes the baked action's constraint F-curves while measuring; other animated properties that
+  change the pose (for example a driven custom property) are not isolated
 
 ## Not planned, and why
 

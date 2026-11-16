@@ -144,7 +144,7 @@ path of this installed script and their ARGS. Don't inline or rewrite the script
 
 | Script | What it does |
 |--------|--------------|
-| `scripts/bake_maps.py` | Bake high-poly -> low-poly maps in Cycles (normal, AO, roughness, diffuse color) to PNG files, with cage extrusion. Restores the render engine afterwards. Requires the low-poly to have a UV map. Refuses an existing image of the same name at another size, raises if a bake does not return FINISHED, and reports the real size of every image (`sizes`). Selection, active object, bake settings and material node selection are restored afterwards. |
+| `scripts/bake_maps.py` | Bake high-poly -> low-poly maps in Cycles (normal, AO, roughness, diffuse color) to PNG files, with cage extrusion. Restores the render engine afterwards. Requires the low-poly to have a UV map. Also takes several high-poly sources, a `cage` object or `extrusion`, `max_ray_distance`, the `uv_layer` to bake into, `normal_convention` (`OPENGL` or `DIRECTX`, green flipped), a `metallic` map (Cycles has no metallic pass, so the metallic value is routed through a temporary Emission node and put back) and `orm=True` (AO, roughness, metallic in R, G, B of one image). Refuses an existing image of a target name (any size) or an existing output file unless `overwrite=True`, raises if a bake does not return FINISHED (a failed run removes the images and nodes it created), and reports the real size of every image (`sizes`). Selection, active object, bake settings, UV map and material node selection are restored afterwards. |
 | `scripts/import_painter_textures.py` | Wire exported PBR maps from a folder into a NEW Principled BSDF material by file name: sRGB for colour maps, Non-Color for data maps, Normal Map (optional DirectX green flip), Bump from height, packed ORM split. Refuses an existing material name. Tested with synthetic maps only; Substance Painter itself was not run. |
 
 ```python
@@ -152,7 +152,7 @@ import runpy
 result = runpy.run_path("<skill_dir>/scripts/bake_maps.py", init_globals={"ARGS": {...}})["result"]
 ```
 
-ARGS: `low`, `high`, `maps`, `size`, `extrusion`, `samples`, `out_dir`
+ARGS: `low`, `high` (name or list), `maps`, `size`, `extrusion`, `cage`, `max_ray_distance`, `uv_layer`, `normal_convention`, `orm`, `overwrite`, `samples`, `out_dir`
 
 Import ARGS (`import_painter_textures.py`): `folder`, `material`, `texture_set`, `normal_convention` (`OPENGL`, `DIRECTX` or `AUTO`), `patterns`, `ao` (`skip` or `multiply`), `height_strength`, `assign_to`, `pack`. Read the result: `files`
 (which file went where), `unmatched`, `ambiguous`, `skipped_udim`. UDIM tiles are not wired. A normal map's convention comes from the argument, then the file name, else OPENGL: the pixels never flip green on their own. With no argument and no name hint, a map whose pixels look like DirectX is still wired as OpenGL, with a warning and `normal_convention_suggestion: "directx"`; pass `normal_convention="DIRECTX"` if that is right. `normal_convention="AUTO"` lets the pixels decide (curl of the height-gradient field under both green conventions, measured at full resolution, decided only with a 4x margin; `normal_convention_source` says which rule won). AUTO can be wrong for a map that is not height-derived (painted, some bakes) or whose red channel is inverted, which swaps the two scores. Measured on 216 synthetic height-derived maps (512 to 4096 px, square and 2048x64) at margin 4.0: 174 correct, 0 wrong, 42 default; with the red channel inverted, 60 of 72 maps were confidently wrong under AUTO. See

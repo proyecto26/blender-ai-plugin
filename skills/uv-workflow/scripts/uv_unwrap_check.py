@@ -18,7 +18,8 @@ ARGS:
     seams_from_angle (float) before a seams/min_stretch unwrap, mark seams on edges sharper than this many
                              degrees (default None = keep the seams already marked)
     texture_px       (int)   texture resolution used for density (default 2048)
-    target_px_per_m  (float) target texel density; flags objects outside +/-25 %
+    target_px_per_m  (float) target texel density in pixels per metre (lengths are converted with the
+                             scene's unit scale_length, so surface_m2 is real m2); flags objects outside +/-25 %
     uv_layer         (str|int) channel to measure, by name or index (default the active render channel).
                              A missing channel is an error. The result names the channel measured
     allow_overlap    (bool)  the layout is declared mirrored or stacked: skip the overlap rule (default False)
@@ -195,8 +196,14 @@ def _resolve_layer(me, uv_layer):
     return layers.get(str(uv_layer))
 
 
+def _metres_per_unit():
+    """Metres per Blender unit (scene.unit_settings.scale_length); 1.0 when unset or not positive."""
+    k = float(bpy.context.scene.unit_settings.scale_length)
+    return k if math.isfinite(k) and k > 0 else 1.0
+
+
 def _tri_arrays(obj, layer):
-    """World-space 3D triangle corners (T,3,3), UV corners (T,3,2), polygon index per triangle,
+    """World-space 3D triangle corners (T,3,3) in metres, UV corners (T,3,2), polygon index per triangle,
     plus per-loop data needed for islands."""
     me = obj.data
     me.calc_loop_triangles()
@@ -211,7 +218,7 @@ def _tri_arrays(obj, layer):
     me.vertices.foreach_get("co", co)
     co = co.reshape(-1, 3).astype(np.float64)
     m = np.array(obj.matrix_world, dtype=np.float64)
-    co = co @ m[:3, :3].T + m[:3, 3]
+    co = (co @ m[:3, :3].T + m[:3, 3]) * _metres_per_unit()
     loop_vert = np.empty(nl, np.int32)
     me.loops.foreach_get("vertex_index", loop_vert)
     loop_edge = np.empty(nl, np.int32)

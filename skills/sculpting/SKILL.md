@@ -104,6 +104,12 @@ Base Mesh → Multires or Dyntopo → Primary Forms → Secondary Detail
 4. Export high-poly for bake handoff
 5. Keep sculpt mesh separate from game mesh
 
+Ships a tested script (a `runpy` call with `ARGS`, as in the other skills):
+
+| Script | What it does |
+|--------|--------------|
+| `scripts/sculpt_prep.py` | Makes a sculpt-ready copy: duplicates the object (the original is never changed), applies the copy's modifiers, voxel-remeshes it at `voxel_size_m`, and reports vertex counts plus proof the original is unchanged. Refuses a voxel size that would be too fine (`max_voxels`). |
+
 ## Handoff to Retopology
 
 Before retopo handoff provide:

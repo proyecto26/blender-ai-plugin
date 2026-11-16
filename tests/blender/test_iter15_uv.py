@@ -301,7 +301,7 @@ def test_a3_bake_size_mismatch():
     except ValueError as exc:
         assert "32x32" in str(exc), exc
         assert tuple(bpy.data.images["T_Bake_Ao"].size) == (32, 32)
-        r3 = run("texture-workflow", "bake_maps.py", args)  # same size reruns fine
+        r3 = run("texture-workflow", "bake_maps.py", dict(args, overwrite=True))  # same size reruns with overwrite
         assert r3["sizes"] == {"ao": [32, 32]} and r3["size"] == 32, r3
         assert tuple(bpy.data.images["T_Bake_Ao"].size) == (32, 32)
         return {"refused": str(exc)[:80], "sizes": r3["sizes"]}
@@ -993,7 +993,26 @@ def test_s_scatter_refuses_foreign_mesh():
     raise AssertionError("a foreign mesh named ME_Prop_box was silently reused or overwritten")
 
 
-TESTS = (test_a1_measure_only_no_uv, test_a2_union_coverage, test_c_stacked_and_declared,
+def test_s_unit_scale_metres():
+    """Density, island density and surface_m2 are metres: scene.unit_settings.scale_length converts them."""
+    reset()
+    bpy.context.scene.unit_settings.scale_length = 0.01
+    quads("Big", [sq(0, 0, 100)], {"UVMap": [uvsq(0, 0, 1)]})
+    e = uvc(objects=["Big"], texture_px=1024, target_px_per_m=1024)["objects"]["Big"]
+    assert abs(e["texel_density_px_per_m"] - 1024.0) < 1.0, e["texel_density_px_per_m"]
+    assert abs(e["surface_m2"] - 1.0) < 1e-3, e["surface_m2"]
+    assert abs(e["island_density_min"] - 1024.0) < 1.0 and abs(e["island_density_max"] - 1024.0) < 1.0, e
+    assert e["density_status"] == "PASS", e["density_status"]
+    scaled = e["texel_density_px_per_m"]
+    reset()  # control: scale_length 1.0 keeps Blender units == metres
+    assert bpy.context.scene.unit_settings.scale_length == 1.0
+    quads("Big", [sq(0, 0, 100)], {"UVMap": [uvsq(0, 0, 1)]})
+    c = uvc(objects=["Big"], texture_px=1024)["objects"]["Big"]
+    assert abs(c["texel_density_px_per_m"] - 10.24) < 0.05 and abs(c["surface_m2"] - 10000.0) < 1.0, c
+    return {"scaled_density": scaled, "control_density": c["texel_density_px_per_m"], "control_m2": c["surface_m2"]}
+
+
+TESTS = (test_s_unit_scale_metres, test_a1_measure_only_no_uv, test_a2_union_coverage, test_c_stacked_and_declared,
          test_c_shared_edges_not_overlap, test_c_collapsed_face, test_c_density_spread,
          test_c_stretched_cylinder, test_c_two_channels_opposite_verdicts, test_c_unwrap_methods_per_object,
          test_c_result_file_contract, test_c_speed_20k, test_a3_bake_size_mismatch, test_a4_bake_cancelled,

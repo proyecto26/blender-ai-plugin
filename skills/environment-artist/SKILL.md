@@ -151,6 +151,7 @@ Run these through the Blender MCP (`execute_blender_code`) with `runpy`; each ta
 | Script | Purpose |
 |--------|---------|
 | `scripts/blockout.py` | Greybox / blockout: floor-pivoted, ground-snapped primitives (box, cylinder, cone, rock, ramp, stairs, flickering light) in ring/line/grid layouts, and room/corridor shells with inward normals and emissive ceiling fixtures. Shared meshes, box UVs, grey materials; re-running a `group` replaces only that group. |
+| `scripts/kit_check.py` | Read-only check that modular kit pieces sit on a grid (`grid_m`): size is a multiple of the grid, origin on a grid point, and the vertices on each of the six outer faces sit on grid lines so neighbours meet. PASS/FAIL per piece, within 1e-4 m. |
 
 ```python
 import runpy
