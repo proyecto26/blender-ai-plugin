@@ -1234,6 +1234,73 @@ def test_v2_parent_animated_prop_scene_wide_frame():
     return out
 
 
+# ------------------------------------------------------------------------- review round 11 (Seldon, batch V)
+
+def _door(active):
+    """[2,4,2] door parented to an Empty with two actions over frames 1-10: Close (Z 90 -> 0), Open (Z 0 -> 90)."""
+    reset()
+    door = box("SM_Door", 2.0)
+    door.scale = (1.0, 2.0, 1.0)
+    hinge = bpy.data.objects.new("Hinge", None)
+    bpy.context.scene.collection.objects.link(hinge)
+    hinge.animation_data_create()
+    acts = {}
+    for name, (z0, z1) in (("Close", (1.5707963, 0.0)), ("Open", (0.0, 1.5707963))):
+        a = bpy.data.actions.new(name)
+        hinge.animation_data.action = a
+        for frame, z in ((1, z0), (10, z1)):
+            hinge.rotation_euler = (0.0, 0.0, z)
+            hinge.keyframe_insert("rotation_euler", frame=frame)
+        acts[name] = a
+    hinge.animation_data.action = acts[active] if active else None
+    door.parent = hinge
+    bpy.context.scene.frame_set(1)
+    select("SM_Door", "Hinge")
+    return door, hinge, acts
+
+
+def test_v2_active_take_matches():
+    out = {}
+    for active, expect_x in (("Open", 2.0), ("Close", 4.0), (None, None)):
+        door, hinge, acts = _door(active)
+        r = _rt(f"door_{active}.fbx", ["SM_Door", "Hinge"])
+        d = r["objects"]["SM_Door"]["checks"]["dimensions"]
+        assert r["verdict"] in ("PASS", "WARN") and d["status"] == "PASS", (active, d)
+        if expect_x:
+            assert abs(d["exported"][0] - expect_x) < 1e-3, (active, d)
+        a_after = hinge.animation_data.action
+        assert (a_after.name if a_after else None) == active, "source active action changed"
+        out[str(active)] = d["exported"]
+    door, hinge, acts = _door("Open")
+    bad = fbx(objects=["SM_Door", "Hinge"], global_scale=2.0, out_path=os.path.join(sub("fbx"), "door_bad.fbx"))
+    assert bad["verdict"] == "FAIL"
+    return out
+
+
+def test_v2_active_take_without_imported_counterpart_is_not_checked():
+    """If the imported take for the source's active action is gone, dimensions are NOT_CHECKED, never FAIL."""
+    _door("Open")
+
+    def drop_open():
+        for a in [a for a in bpy.data.actions if a.name.endswith("|Open")]:
+            bpy.data.actions.remove(a)
+
+    with fake_import_then(drop_open):
+        r = _rt("door_missing.fbx", ["SM_Door", "Hinge"])
+    d = r["objects"]["SM_Door"]["checks"]["dimensions"]
+    assert d["status"] == "NOT_CHECKED" and "Hinge" in d["reason"] and "Open" in d["reason"], d
+    return d
+
+
+def test_v2_nla_driven_mesh_dimensions_not_checked():
+    door, hinge, acts = _door("Open")
+    hinge.animation_data.nla_tracks.new().strips.new("OpenStrip", 1, acts["Open"])
+    r = _rt("door_nla.fbx", ["SM_Door", "Hinge"])
+    d = r["objects"]["SM_Door"]["checks"]["dimensions"]
+    assert d["status"] == "NOT_CHECKED" and "NLA" in d["reason"], d
+    return d
+
+
 TESTS = (test_v1_isolate, test_v1_wire, test_v1_contact_sheet_size_and_tiles, test_v1_restores_state,
          test_v1_restores_state_on_failed_first_view, test_v1_restores_state_on_failed_wire_view,
          test_v1_restores_state_on_failed_sheet, test_v1_unknown_view_changes_nothing,
@@ -1254,7 +1321,9 @@ TESTS = (test_v1_isolate, test_v1_wire, test_v1_contact_sheet_size_and_tiles, te
          test_v2_measurement_failure_restores_pose_position, test_v2_rest_pose_armature_untouched,
          test_v2_nla_take_written_for_every_exported_object, test_v2_nla_take_missing_on_static_rig_fails,
          test_v2_strip_take_name_collision, test_v2_strip_take_collision_missing_take_fails,
-         test_v2_animated_scale_measured_at_the_same_take_time, test_v2_parent_animated_prop_scene_wide_frame)
+         test_v2_animated_scale_measured_at_the_same_take_time, test_v2_parent_animated_prop_scene_wide_frame,
+         test_v2_active_take_matches, test_v2_active_take_without_imported_counterpart_is_not_checked,
+         test_v2_nla_driven_mesh_dimensions_not_checked)
 
 
 def main():

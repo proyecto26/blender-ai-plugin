@@ -46,12 +46,23 @@ the file before the import. So `Walk.001` exported and `Walk.002` imported is a
 changed clip name and FAILs, as are missing, extra or swapped takes. Only take NAMES are compared, not their F-curves.
 Not modelled: takes of non-armature objects (not compared), strip influence/blend/solo (a take is written regardless),
 drivers, dupli-instanced objects. Armature dimensions are not compared (the importer rebuilds bone lengths).
-Time: every dimension is measured at one scene-wide frame per side, so animation anywhere (the object, a parent, a
-constraint) is compared at the same moment. Source: the earliest frame any exported take starts from (an action's
-first key for all-actions takes, a strip's frame_start for NLA takes); imported: the earliest first key over all
-actions the import created. With no takes the current frame is used. The user's frame is put back. If takes start at
-different frames no single frame matches all of them: the earliest is used, so an asset whose takes begin at
+Time and state: every dimension is measured at one scene-wide frame per side, so animation anywhere (the object, a
+parent, a constraint) is compared at the same moment. Source: the earliest frame any exported take starts from (an
+action's first key for all-actions takes, a strip's frame_start for NLA takes); imported: the earliest first key over
+all actions the import created. With no takes the current frame is used. The user's frame is put back. If takes
+start at different frames no single frame matches all of them: the earliest is used, so an asset whose takes begin at
 different frames and move geometry differently there may not be comparable.
+The active take must match too: each imported object is given the imported action of its source object's active
+action (cleared when the source has none); the imported scene is temporary, so nothing is restored there. Every piece
+of state that decides an evaluated transform at measurement time:
+  - frame: matched (scene-wide, above);
+  - active action: matched (above); no counterpart imported -> dimensions NOT_CHECKED, never FAIL;
+  - action slot: an active action without a slot animates nothing and is treated as "no action"; imported actions
+    hold a single slot, so slot choice is not applicable;
+  - NLA tweak mode, and unmuted NLA tracks/strips on any exported object: the import has no NLA tracks, so
+    dimensions are NOT_CHECKED; muted tracks and strips do not count (they do not evaluate);
+  - constraints, drivers, animated shape-key values: not modelled (the exporter bakes the evaluated result at the
+    source frame; the importer keeps the value from the user's frame), so such assets may report a false FAIL.
 
 Dimensions: measured the way the exporter decides. If the mesh has a modifier other than Armature that is enabled
 for viewport or render, the exporter evaluates the mesh (current shape key values included) and writes that as the
@@ -299,6 +310,51 @@ def _imported_start(new_actions):
     return math.floor(min(firsts)) if firsts else None
 
 
+def _pose_state_mismatch(exported):
+    """Why the evaluated transforms cannot be matched on the import, or None. NLA strips (unmuted track, unmuted strip)
+    and NLA tweak mode contribute to the source's evaluated transforms, but the import has no NLA tracks."""
+    for ob in exported:
+        ad = ob.animation_data
+        if not ad:
+            continue
+        if ad.use_tweak_mode:
+            return f"{ob.name} is in NLA tweak mode; the import has no NLA tracks"
+        if any(not t.mute and any(not st.mute for st in t.strips) for t in ad.nla_tracks):
+            return f"NLA strips on {ob.name} drive the source transforms; the import has no NLA tracks"
+    return None
+
+
+def _set_imported_actions(originals, imported_by_id, new_actions, pre_names):
+    """Give each imported object the imported action that corresponds to its source object's active action (cleared
+    when the source has none), so both sides are evaluated in the same take. Returns a reason string when some
+    active take has no imported counterpart (dimensions are then NOT_CHECKED), else None. Temporary data: nothing to
+    restore."""
+    by_name = {a.name: a for a in new_actions}
+    for rid, orig in originals.items():
+        imp = (imported_by_id.get(rid) or [None])[0]
+        ad = orig.animation_data
+        if imp is None or not ad:
+            continue
+        src = ad.action if ad.action and ad.action_slot else None  # no slot: nothing is animated
+        if imp.animation_data is None:
+            if src is None:
+                continue
+            imp.animation_data_create()
+        if src is None:
+            imp.animation_data.action = None
+            continue
+        full = f"{imp.name}|{orig.name}|{src.name}"
+        hit = by_name.get(full)
+        if hit is None and full in pre_names:  # the importer renumbered it
+            hit = next((a for n, a in by_name.items() if SUFFIX_RE.sub("", n) == full), None)
+        if hit is None:
+            return f"the active action {src.name} of {orig.name} has no imported take to evaluate"
+        imp.animation_data.action = hit
+        if imp.animation_data.action_slot is None and len(hit.slots):
+            imp.animation_data.action_slot = hit.slots[0]
+    return None
+
+
 def _measure_all(scene, frame, items):
     """[(obj, exporter_view)] measured with `scene` at `frame` (None = leave it); the scene's frame is put back."""
     if frame is None:
@@ -320,6 +376,9 @@ def _compare(orig, imp, tol, expected_clips, imported_clips, imp_name, pre_names
         checks["type"] = _check("FAIL", exported=orig.type, imported=imp.type)
         return checks
     if orig.type == "MESH":
+        if isinstance(dims, dict):
+            checks["dimensions"] = _check("NOT_CHECKED", reason=dims["skip"])
+            return checks
         a, b = dims if dims is not None else (_world_dims(orig, True), _world_dims(imp, False))
         if a is None or b is None:
             checks["dimensions"] = _check("NOT_CHECKED", reason="a mesh with no vertices has no extent")
@@ -439,13 +498,20 @@ def main(out_path, objects=None, overwrite=False, tol=0.001, global_scale=1.0, r
         pairs = [(rid, o, (imported_by_id.get(rid) or [None])[0]) for rid, o in originals.items()]
         pairs = [(rid, o, i) for rid, o, i in pairs if o.type == "MESH" and i is not None and i.type == "MESH"]
         new_actions = [a for a in bpy.data.actions if a.session_uid not in before["actions"]]
-        src = _measure_all(scene, _source_start(targets, nla_takes), [(o, True) for _, o, _ in pairs])
+        skip = _pose_state_mismatch(targets)
         window.scene = tmp_scene
         try:
-            imp_dims = _measure_all(tmp_scene, _imported_start(new_actions), [(i, False) for _, _, i in pairs])
+            if skip is None:
+                skip = _set_imported_actions(originals, imported_by_id, new_actions, pre_action_names)
+            if skip is None:
+                imp_dims = _measure_all(tmp_scene, _imported_start(new_actions), [(i, False) for _, _, i in pairs])
         finally:
             window.scene = scene
-        dims = {rid: (a, b) for (rid, _, _), a, b in zip(pairs, src, imp_dims)}
+        if skip is None:
+            src = _measure_all(scene, _source_start(targets, nla_takes), [(o, True) for _, o, _ in pairs])
+            dims = {rid: (a, b) for (rid, _, _), a, b in zip(pairs, src, imp_dims)}
+        else:
+            dims = {rid: {"skip": skip} for rid, _, _ in pairs}
         out = {}
         for rid, orig in originals.items():
             imps = imported_by_id.get(rid) or [None]
