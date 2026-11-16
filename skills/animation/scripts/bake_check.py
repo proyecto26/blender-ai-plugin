@@ -27,7 +27,8 @@ height per frame). A pop at the seam FAILs. With `root_motion=True` the root's t
 comparison and only its velocity is checked; the other bones are compared relative to the root's travel.
 
 State: the scene frame, the target's action (and slot, influence, blend type, NLA switch), the mute flags of its
-bone constraints, drivers and NLA tracks, every pose bone's transform and both armatures' pose position are put
+bone constraints, drivers and NLA tracks (and of the baked action's own F-curves on constraint properties, which
+are muted while measuring so that an animated `mute` or `influence` cannot switch a constraint back on), every pose bone's transform and both armatures' pose position are put
 back in `finally`, also on failure. Nothing is saved and no datablock is created or removed.
 
 Thresholds (the plan's values; tests/blender/test_iter16_b.py measures them and writes the numbers into its report).
@@ -180,6 +181,7 @@ class _Isolation:
         self.constraints = [(c, c.mute) for pb in target.pose.bones for c in pb.constraints]
         self.drivers, self.tracks = [], []
         self.ad_state = None
+        self.curves = []  # F-curves of the baked action that animate constraint properties: (fcurve, mute)
         for holder in (target, target.data):
             hd = holder.animation_data
             if hd is not None:
@@ -211,6 +213,15 @@ class _Isolation:
         slot = _pick_slot(ad, self.target)
         if slot is not None:
             ad.action_slot = slot
+        for layer in action.layers:
+            for strip in layer.strips:
+                if strip.type != "KEYFRAME" or ad.action_slot is None:
+                    continue
+                cb = strip.channelbag(ad.action_slot)
+                for fc in (cb.fcurves if cb is not None else []):
+                    if ".constraints[" in fc.data_path:  # animated mute / influence would undo the muting
+                        self.curves.append((fc, fc.mute))
+                        fc.mute = True
         return ad.action_slot
 
     def restore(self):
@@ -223,6 +234,8 @@ class _Isolation:
             ad.action_influence, ad.action_blend_type, ad.use_nla = infl, blend, use_nla
         elif ad is not None and not self.had_ad:
             self.target.animation_data_clear()
+        for fc, m in self.curves:
+            fc.mute = m
         for t, m in self.tracks:
             t.mute = m
         for fc, m in self.drivers:
@@ -247,9 +260,12 @@ def _stretch(rest, posed):
 
 
 def _stretch_off(a, b):
-    """Largest per-axis ratio error between two stretch matrices: max |eigenvalue(b @ a^-1) - 1| (a: target, b: source)."""
-    m = np.array([list(r) for r in a], dtype=float) @ np.linalg.inv(np.array([list(r) for r in b], dtype=float))
-    return float(np.abs(np.linalg.eigvals(m) - 1.0).max())
+    """Per-axis ratio error of target stretch `a` against source stretch `b`: max |eigenvalue(a @ b^-1) - 1|.
+    A singular source stretch (a zero scale) has no ratio: the matrices are then compared element by element."""
+    ma, mb = np.array([list(r) for r in a], dtype=float), np.array([list(r) for r in b], dtype=float)
+    if abs(np.linalg.det(mb)) < 1e-9:
+        return float(np.abs(ma - mb).max())
+    return float(np.abs(np.linalg.eigvals(ma @ np.linalg.inv(mb)) - 1.0).max())
 
 
 def _loop_checks(bones, series, height, root, root_motion):

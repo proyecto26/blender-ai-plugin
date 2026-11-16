@@ -963,6 +963,43 @@ def test_b2_scale_percentage_is_exact_on_a_rolled_rest():
     return out
 
 
+def test_b2_animated_constraint_mute_keys_cannot_unmute_the_mask():
+    wrong = {"arm": lambda f: {"eul": (-(f - 1) * K, 0.0, 0.0)}, "spine": lift}
+    src, tgt = scenario(GOOD, wrong)
+    c = tgt.pose.bones["arm"].constraints.new("COPY_ROTATION")
+    c.target, c.subtarget = src, "arm"
+    act = bpy.data.actions["AN_baked"]
+    ad = tgt.animation_data
+    ad.action = act
+    ad.action_slot = ad.action_suitable_slots[0]
+    for f in (1, 11):
+        c.mute = False
+        c.keyframe_insert("mute", frame=f)
+    ad.action = None
+    bpy.context.scene.frame_set(1)
+    muted_keys = [fc.data_path for lay in act.layers for st in lay.strips for cb in st.channelbags
+                  for fc in cb.fcurves if fc.data_path.endswith(".mute")]
+    assert muted_keys, "the fixture has no mute F-curve"
+    res = baked()
+    assert res["verdict"] == "FAIL" and res["bones"]["arm"]["rotation"]["verdict"] == "FAIL", res["bones"]["arm"]
+    assert c.mute is False
+    fcs = [fc for lay in act.layers for st in lay.strips for cb in st.channelbags for fc in cb.fcurves]
+    assert all(not fc.mute for fc in fcs), "an F-curve of the baked action was left muted"
+    return {"rotation_deg": res["bones"]["arm"]["rotation"]["max"], "mute_curves": muted_keys}
+
+
+def test_b2_zero_source_scale_does_not_raise():
+    zero = {"arm": lambda f: {"scale": (0.0, 1.0, 1.0)}}
+    one = {"arm": lambda f: {"scale": (1.0, 1.0, 1.0)}}
+    scenario(zero, zero)
+    same = baked()
+    assert same["bones"]["arm"]["scale"]["verdict"] == "PASS", same["bones"]["arm"]
+    scenario(zero, one)
+    res = baked()
+    assert res["bones"]["arm"]["scale"]["verdict"] == "FAIL" and res["verdict"] == "FAIL", res["bones"]["arm"]
+    return {"zero_vs_one": res["bones"]["arm"]["scale"]["max"]}
+
+
 TESTS = (
     test_b1_directx_green_is_flipped_opengl, test_b1_metallic_plain_and_linked_nodes_restored,
     test_b1_orm_channels_equal_separate_maps, test_b1_nodes_identical_when_a_bake_fails_midway,
@@ -976,7 +1013,8 @@ TESTS = (
     test_b2_result_file_and_exit_codes, test_b2_thresholds_boundary_fixtures,
     test_b3_clean_loop_passes_and_non_cyclic_is_not_checked, test_b3_seam_pops_fail, test_b3_root_motion,
     test_b3_thresholds_boundary_fixtures, test_b2_scale_is_compared_per_axis_in_the_rest_frame,
-    test_b2_scale_percentage_is_exact_on_a_rolled_rest, test_b3_loop_that_cannot_run_is_not_a_pass, test_b3_seam_velocity_boundary_fixtures,
+    test_b2_scale_percentage_is_exact_on_a_rolled_rest,
+    test_b2_animated_constraint_mute_keys_cannot_unmute_the_mask, test_b2_zero_source_scale_does_not_raise, test_b3_loop_that_cannot_run_is_not_a_pass, test_b3_seam_velocity_boundary_fixtures,
 )
 
 
