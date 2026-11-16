@@ -41,10 +41,11 @@ order) after dropping the two armature prefixes. The only difference allowed is 
 replaced because the full imported name already existed in the file before the import. So `Walk.001` exported and
 `Walk.002` imported is a changed clip name and FAILs, as are missing, extra or swapped clips. Armature dimensions
 are not compared (the importer rebuilds bone lengths).
-Dimensions: the exporter writes the rest shape with the other modifiers applied and the shape keys as separate keys
-(the base geometry is the Basis). The source is therefore measured with its Armature modifier(s) switched off, the
-others evaluated, and shape keys pinned to the Basis (show_only_shape_key); the imported mesh is read raw, which is its
-Basis. All three switches are undone in `finally`.
+Dimensions: measured the way the exporter decides. If the mesh has a modifier other than Armature that is enabled
+for viewport or render, the exporter evaluates the mesh (current shape key values included) and writes that as the
+base geometry, so the source is evaluated the same way, with its Armature modifier(s) switched off (the exporter puts
+rigs in rest pose). Otherwise the exporter writes the mesh data (the Basis) and the shape keys as shape keys, so the
+source is read raw. The imported mesh is always read raw. The switch is undone in `finally`.
 
 Cleanup. Only the temporary scene and the datablocks the import created (objects, meshes, armatures, materials,
 images, actions, cameras, lights, curves, collections, textures, node groups, found by session id before and after)
@@ -119,26 +120,29 @@ def _snapshot():
     return {c: {i.session_uid for i in getattr(bpy.data, c)} for c in COLLECTIONS}
 
 
-def _world_dims(obj, evaluated):
-    """Axis-aligned world extent [x, y, z] of a mesh object, or None when it has no vertices. `evaluated`: measure
-    what the exporter writes, the mesh with modifiers applied but its Armature modifiers off (rest shape)."""
-    switched, pinned = [], None
-    if evaluated:
-        keys = obj.data.shape_keys
-        if keys and keys.key_blocks:  # the exporter writes the basis shape; the keys come back as shape keys
-            pinned = (obj.show_only_shape_key, obj.active_shape_key_index)
-            obj.show_only_shape_key = True
-            obj.active_shape_key_index = 0
-        for m in obj.modifiers:
-            if m.type == "ARMATURE" and m.show_viewport:
-                m.show_viewport = False
-                switched.append(m)
-        bpy.context.view_layer.update()
-        ev = obj.evaluated_get(bpy.context.evaluated_depsgraph_get())
-        me = ev.to_mesh()
-    else:
-        ev, me = None, obj.data
+def _exporter_evaluates(obj):
+    """The exporter's own test (fbx_data_from_scene, use_mesh_modifiers=True, ARMATURE exported): it evaluates the
+    mesh when some modifier other than an Armature modifier is enabled for viewport or render. Otherwise it writes
+    the mesh data (the Basis) and the shape keys as shape keys."""
+    return any(m.type != "ARMATURE" and (m.show_render or m.show_viewport) for m in obj.modifiers)
+
+
+def _world_dims(obj, exporter_view):
+    """Axis-aligned world extent [x, y, z] of a mesh object, or None when it has no vertices. `exporter_view`: measure
+    what the exporter writes as base geometry: the evaluated mesh (current shape key values, modifiers applied, rigs
+    in rest pose) when the exporter evaluates, else the raw mesh data. The imported object is read raw (False)."""
+    switched, ev = [], None
     try:
+        if exporter_view and _exporter_evaluates(obj):
+            for m in obj.modifiers:  # the exporter puts armatures in REST pose; switching the modifier off is the same
+                if m.type == "ARMATURE" and m.show_viewport:
+                    m.show_viewport = False
+                    switched.append(m)
+            bpy.context.view_layer.update()
+            ev = obj.evaluated_get(bpy.context.evaluated_depsgraph_get())
+            me = ev.to_mesh()
+        else:
+            me = obj.data
         n = len(me.vertices)
         if not n:
             return None
@@ -150,9 +154,7 @@ def _world_dims(obj, evaluated):
             ev.to_mesh_clear()
         for m in switched:
             m.show_viewport = True
-        if pinned:
-            obj.show_only_shape_key, obj.active_shape_key_index = pinned
-        if switched or pinned:
+        if switched:
             bpy.context.view_layer.update()
     m = np.array([list(r) for r in obj.matrix_world], dtype=np.float64)
     w = co @ m[:3, :3].T + m[:3, 3]
@@ -260,8 +262,8 @@ def _compare(orig, imp, tol, expected_clips, imported_clips, imp_name, pre_names
         checks["type"] = _check("FAIL", exported=orig.type, imported=imp.type)
         return checks
     if orig.type == "MESH":
-        a = _world_dims(orig, evaluated=True)
-        b = _world_dims(imp, evaluated=False)
+        a = _world_dims(orig, exporter_view=True)
+        b = _world_dims(imp, exporter_view=False)
         if a is None or b is None:
             checks["dimensions"] = _check("NOT_CHECKED", reason="a mesh with no vertices has no extent")
         else:

@@ -919,6 +919,83 @@ def test_v2_muted_nla_strip_not_expected():
     return c
 
 
+# ------------------------------------------------------------------------- review round 5 (Seldon, batch V)
+
+def _keyed_box(name="SM_Key"):
+    o = box(name, 2.0)
+    o.shape_key_add(name="Basis")
+    k = o.shape_key_add(name="Wide")
+    for v in k.data:
+        v.co.x *= 2.0
+    k.value = 1.0
+    o.active_shape_key_index = 1
+    return o, k
+
+
+def test_v2_shape_key_with_modifier_evaluated():
+    """Round 5 finding 1: with an applied modifier the exporter evaluates the mesh WITH the shape key value."""
+    reset()
+    o, k = _keyed_box()
+    m = o.modifiers.new("Sub", "SUBSURF")
+    m.subdivision_type = "SIMPLE"
+    m.levels = 1
+    select("SM_Key")
+    before = snap()
+    r = _rt("keysub.fbx", ["SM_Key"])
+    d = r["objects"]["SM_Key"]["checks"]["dimensions"]
+    assert r["verdict"] == "PASS" and d["status"] == "PASS" and abs(d["exported"][0] - 4.0) < 1e-3, d
+    assert snap() == before and not o.show_only_shape_key and o.active_shape_key_index == 1
+    bad = fbx(objects=["SM_Key"], global_scale=2.0, out_path=os.path.join(sub("fbx"), "keysub2.fbx"))
+    assert bad["verdict"] == "FAIL", bad
+    # a modifier that is off in viewport and render is not applied: the Basis is exported, the key stays a key
+    m.show_viewport = False
+    m.show_render = False
+    off = _rt("keyoff.fbx", ["SM_Key"])
+    do = off["objects"]["SM_Key"]["checks"]["dimensions"]
+    assert off["verdict"] == "PASS" and abs(do["exported"][0] - 2.0) < 1e-3, do
+    return {"with_modifier_x": d["exported"][0], "modifier_off_x": do["exported"][0]}
+
+
+def test_v2_measurement_failure_restores_toggles():
+    """Round 5 finding 2: a failure while measuring puts the Armature modifier switch back."""
+    reset()
+    rg = rig("Rig", ("Idle",))
+    skin = box("Skin", 2.0)
+    vg = skin.vertex_groups.new(name="Arm")
+    vg.add(list(range(len(skin.data.vertices))), 1.0, "REPLACE")
+    skin.modifiers.new("Armature", "ARMATURE").object = rg
+    skin.modifiers.new("Sub", "SUBSURF").levels = 1
+    select("Skin", "Rig")
+    before = snap()
+    mods = [(m.name, m.show_viewport) for m in skin.modifiers]
+    real_ctx = bpy.context
+
+    class FailingContext:
+        """Delegates to the real context, but evaluated_depsgraph_get fails when fbx_roundtrip.py asks for it."""
+
+        def __getattr__(self, name):
+            if name == "evaluated_depsgraph_get" and \
+                    os.path.basename(sys._getframe(1).f_code.co_filename) == "fbx_roundtrip.py":
+                def boom():
+                    raise RuntimeError("injected measurement failure")
+                return boom
+            return getattr(real_ctx, name)
+
+    bpy.context = FailingContext()
+    try:
+        try:
+            _rt("measfail.fbx", ["Skin", "Rig"])
+        except RuntimeError as exc:
+            assert "injected" in str(exc), exc
+        else:
+            raise AssertionError("injected failure did not propagate")
+    finally:
+        bpy.context = real_ctx
+    assert [(m.name, m.show_viewport) for m in skin.modifiers] == mods, "modifier switch not restored"
+    assert snap() == before
+    return {"modifiers": mods}
+
+
 TESTS = (test_v1_isolate, test_v1_wire, test_v1_contact_sheet_size_and_tiles, test_v1_restores_state,
          test_v1_restores_state_on_failed_first_view, test_v1_restores_state_on_failed_wire_view,
          test_v1_restores_state_on_failed_sheet, test_v1_unknown_view_changes_nothing,
@@ -934,7 +1011,8 @@ TESTS = (test_v1_isolate, test_v1_wire, test_v1_contact_sheet_size_and_tiles, te
          test_v2_dimension_threshold_edges, test_v2_skinned_mesh_with_other_modifier,
          test_v2_scene_unit_scale, test_v2_suffixed_action_collision, test_v2_clip_order_pairing,
          test_v2_nla_strip_takes, test_v2_shape_key_value_one, test_v2_static_rig_with_stored_action,
-         test_v2_muted_nla_strip_not_expected)
+         test_v2_muted_nla_strip_not_expected, test_v2_shape_key_with_modifier_evaluated,
+         test_v2_measurement_failure_restores_toggles)
 
 
 def main():
