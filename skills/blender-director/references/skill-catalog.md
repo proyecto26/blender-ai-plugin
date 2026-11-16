@@ -10,7 +10,7 @@ Stages: inspect, brief, model, look_dev, light_camera, animate, validate, export
 | Skill | Stage | Job | Scripts |
 |---|---|---|---|
 | `blender-director` | any | Plans and runs any multi-step Blender production from brief to verified export: model, look, light, camera, validate, export. | run_manifest.py |
-| `blender-mcp-workflow` | any | Safe way to drive Blender through the MCP server and write bpy code that survives Blender 5.x API removals. | capture_views.py, clash_audit.py, compare_to_refs.py, fit_search.py, fix_asset.py, ingest_asset.py, ref_board.py, scene_audit.py, scene_snapshot.py, setup_collections.py, silhouette_score.py, validate_asset.py, work_copy.py |
+| `blender-mcp-workflow` | any | Safe way to drive Blender through the MCP server and write bpy code that survives Blender 5.x API removals. | capture_views.py, clash_audit.py, compare_to_refs.py, env_report.py, fit_search.py, fix_asset.py, ingest_asset.py, ref_board.py, scene_audit.py, scene_snapshot.py, setup_collections.py, silhouette_score.py, validate_asset.py, work_copy.py |
 | `qa-review` | validate | Final QA gate for Blender assets: screenshots, checklists, naming and topology audit, ship/no-ship verdict. | - |
 
 ## Production (film, AI handoff)
