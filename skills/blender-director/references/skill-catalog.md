@@ -29,7 +29,7 @@ Stages: inspect, brief, model, look_dev, light_camera, animate, validate, export
 | `blender-modeler` | model | Core mesh modeling: blockouts, Edit Mode, modifiers, smooth/flat shading. | - |
 | `camera-cinematography` | light_camera | Camera work: framing, lenses, depth of field, hero shots and camera moves. | camera_rig.py |
 | `character-artist` | model | Human character modeling: anatomy, face topology, clothing, animation-ready meshes. | - |
-| `cloth-sim` | animate | Cloth simulation and baking for capes, flags, curtains and garments. | cloth_setup.py |
+| `cloth-sim` | animate | Cloth simulation and baking for capes, flags, curtains and garments. | cloth_setup.py, garment_check.py |
 | `compositing` | light_camera | Compositor work: bloom and glow, color grade, render passes, vignette. | comp_grade.py |
 | `creature-artist` | model | Creature modeling: dragons, monsters and aliens with believable anatomy and muscle flow. | - |
 | `environment-artist` | model | Environment art: greybox/blockout, level layout, modular kits, terrain and buildings. | blockout.py |
@@ -44,7 +44,7 @@ Stages: inspect, brief, model, look_dev, light_camera, animate, validate, export
 | `prop-artist` | model | Prop modeling: furniture, tools, bottles, household objects, kitbash parts. | - |
 | `rendering` | light_camera | Final render setup: Cycles/Eevee sampling, denoise, resolution, color management. | background_render.py, render_preset.py |
 | `retopology` | model | Retopology: clean quad-dominant, animation-ready topology from sculpts or messy meshes. | topology_report.py |
-| `rigging` | animate | Rigging: armatures, IK/FK, weight painting, facial rigs, drivers. | rig_check.py, stress_check.py |
+| `rigging` | animate | Rigging: armatures, IK/FK, weight painting, facial rigs, drivers. | rig_check.py, shape_key_audit.py, stress_check.py |
 | `scene-assembly` | model | Scene assembly: collections, linking, library overrides, collection instances. | - |
 | `sculpting` | model | Sculpting: Dyntopo, multires, brushes, wrinkles and damage detail. | - |
 | `set-dressing` | model | Set dressing: prop placement and environmental storytelling. | scatter_props.py |
