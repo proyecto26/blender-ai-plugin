@@ -771,6 +771,7 @@ def test_v2_scene_unit_scale():
     out = {}
     for scale in (0.01, 1.0):
         reset()
+        bpy.context.scene.unit_settings.system = "METRIC"
         bpy.context.scene.unit_settings.scale_length = scale
         box("SM_Box", 2.0)
         select("SM_Box")
@@ -782,6 +783,7 @@ def test_v2_scene_unit_scale():
         assert snap() == before
         out[f"faithful_{scale}"] = d["max_relative_difference"]
     reset()
+    bpy.context.scene.unit_settings.system = "METRIC"
     bpy.context.scene.unit_settings.scale_length = 0.01
     box("SM_Box", 2.0)
     select("SM_Box")
@@ -829,6 +831,44 @@ def test_v2_clip_order_pairing():
     return {"order": c["exported"]}
 
 
+# ------------------------------------------------------------------------- review round 3 (Seldon, batch V)
+
+def _nla_rig(assigned):
+    """Rig with keyed action Walk and one unmuted NLA strip WalkStrip that references it."""
+    reset()
+    arm = rig("Rig", ("Walk",))
+    walk = bpy.data.actions["Walk"]
+    track = arm.animation_data.nla_tracks.new()
+    strip = track.strips.new("WalkStrip", 1, walk)
+    assert strip.action == walk
+    if not assigned:
+        arm.animation_data.action = None
+    select("Rig")
+    return arm
+
+
+def test_v2_nla_strip_takes():
+    """Round 3 finding 1: the exporter writes a take for the NLA strip and one for the action."""
+    out = {}
+    for assigned in (True, False):
+        _nla_rig(assigned)
+        r = _rt(f"nla{int(assigned)}.fbx", ["Rig"])
+        c = r["objects"]["Rig"]["checks"]["actions"]
+        assert r["verdict"] == "PASS" and c["status"] == "PASS", (assigned, c)
+        out[f"assigned_{assigned}"] = c["imported"]
+    # a missing take still FAILs
+    _nla_rig(True)
+
+    def drop_one():
+        a = sorted((a for a in bpy.data.actions if a.name.count("|") == 2), key=lambda a: a.session_uid)[-1]
+        bpy.data.actions.remove(a)
+
+    with fake_import_then(drop_one):
+        r = _rt("nla_missing.fbx", ["Rig"])
+    assert r["verdict"] == "FAIL" and r["objects"]["Rig"]["checks"]["actions"]["status"] == "FAIL"
+    return out
+
+
 TESTS = (test_v1_isolate, test_v1_wire, test_v1_contact_sheet_size_and_tiles, test_v1_restores_state,
          test_v1_restores_state_on_failed_first_view, test_v1_restores_state_on_failed_wire_view,
          test_v1_restores_state_on_failed_sheet, test_v1_unknown_view_changes_nothing,
@@ -842,7 +882,8 @@ TESTS = (test_v1_isolate, test_v1_wire, test_v1_contact_sheet_size_and_tiles, te
          test_v2_negative_missing_action, test_v2_negative_renamed_action,
          test_v2_suffixed_action_name_exact, test_v2_importer_rename_suffix_is_allowed,
          test_v2_dimension_threshold_edges, test_v2_skinned_mesh_with_other_modifier,
-         test_v2_scene_unit_scale, test_v2_suffixed_action_collision, test_v2_clip_order_pairing)
+         test_v2_scene_unit_scale, test_v2_suffixed_action_collision, test_v2_clip_order_pairing,
+         test_v2_nla_strip_takes)
 
 
 def main():

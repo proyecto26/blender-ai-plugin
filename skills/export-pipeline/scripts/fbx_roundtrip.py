@@ -28,9 +28,11 @@ counter) and the exporter writes custom properties; the imported objects are the
 import and are matched by that id, never by name. The property is removed from the originals in `finally`. An
 object that already has `bap_rt_id` is refused before anything is changed.
 
-Actions. Imported actions are named `<imported armature>|<armature>|<action>`. The clips of one armature are the
-actions whose every F-curve path resolves on it (what the exporter writes) plus its assigned action and NLA strip
-actions, taken in Blender's action order, which is the order the exporter writes takes. The i-th exported clip is
+Actions. Imported actions are named `<imported armature>|<armature>|<take>`. The script passes
+bake_anim_use_nla_strips=True and bake_anim_use_all_actions=True and models both kinds of take, in the order the
+exporter writes them: one take per unmuted NLA strip that has an action (named after the STRIP, tracks and strips in
+order), then one per clip action: the actions whose every F-curve path resolves on the armature, plus its assigned
+and NLA actions, in Blender's action order. An action that is both strip and clip therefore appears twice. The i-th exported clip is
 compared with the i-th imported clip (imported actions in creation order, `session_uid`, i.e. the file's take
 order) after dropping the two armature prefixes. The only difference allowed is a `.NNN` the importer added or
 replaced because the full imported name already existed in the file before the import. So `Walk.001` exported and
@@ -178,6 +180,22 @@ def _clip_names(arm):
     return names
 
 
+def _expected_takes(arm):
+    """The takes the exporter writes for this armature with the options main() passes (bake_anim_use_nla_strips and
+    bake_anim_use_all_actions both True): first one take per unmuted NLA strip that has an action, named after the
+    strip (tracks in order, strips in order), then one take per clip action in Blender's action order."""
+    takes = []
+    ad = arm.animation_data
+    if ad:
+        for track in ad.nla_tracks:
+            if track.mute:
+                continue
+            takes.extend(st.name for st in track.strips if st.action and not st.mute)
+    names = _clip_names(arm)
+    takes.extend(a.name for a in bpy.data.actions if a.name in names)
+    return takes
+
+
 def _strip_prefixes(name, prefixes):
     for p in prefixes:
         if name.startswith(p + "|"):
@@ -286,8 +304,7 @@ def main(out_path, objects=None, overwrite=False, tol=0.001, global_scale=1.0, r
     expected = {}
     for o in targets:
         if o.type == "ARMATURE":
-            names = _clip_names(o)
-            expected[o.name] = [a.name for a in bpy.data.actions if a.name in names]  # export order
+            expected[o.name] = _expected_takes(o)
     pre_action_names = {a.name for a in bpy.data.actions}
     arm_names = {o.name: o for o in targets if o.type == "ARMATURE"}
     originals = {}
@@ -305,7 +322,8 @@ def main(out_path, objects=None, overwrite=False, tol=0.001, global_scale=1.0, r
         view_layer.objects.active = targets[0]
         status = bpy.ops.export_scene.fbx(filepath=out_path, use_selection=True, use_mesh_modifiers=True,
                                           object_types=EXPORT_TYPES, add_leaf_bones=False, use_custom_props=True,
-                                          bake_anim=True, global_scale=global_scale)
+                                          bake_anim=True, bake_anim_use_nla_strips=True,
+                                          bake_anim_use_all_actions=True, global_scale=global_scale)
         if status != {"FINISHED"}:
             raise RuntimeError(f"FBX export did not finish (operator returned {status})")
         after_file = _stamp(out_path)
