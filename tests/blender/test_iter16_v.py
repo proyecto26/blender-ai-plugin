@@ -764,6 +764,71 @@ def test_v2_skinned_mesh_with_other_modifier():
 
 
 
+# ------------------------------------------------------------------------- review round 2 (Seldon, batch V)
+
+def test_v2_scene_unit_scale():
+    """Round 2 finding 1: a scene with scale_length 0.01 must not make a faithful round trip FAIL."""
+    out = {}
+    for scale in (0.01, 1.0):
+        reset()
+        bpy.context.scene.unit_settings.scale_length = scale
+        box("SM_Box", 2.0)
+        select("SM_Box")
+        before = snap()
+        r = _rt(f"u{scale}.fbx", ["SM_Box"])
+        d = r["objects"]["SM_Box"]["checks"]["dimensions"]
+        assert r["verdict"] == "PASS" and d["status"] == "PASS", (scale, d)
+        assert abs(bpy.context.scene.unit_settings.scale_length - scale) < 1e-7
+        assert snap() == before
+        out[f"faithful_{scale}"] = d["max_relative_difference"]
+    reset()
+    bpy.context.scene.unit_settings.scale_length = 0.01
+    box("SM_Box", 2.0)
+    select("SM_Box")
+    r = fbx(objects=["SM_Box"], global_scale=2.0, out_path=os.path.join(sub("fbx"), "u2.fbx"))
+    d = r["objects"]["SM_Box"]["checks"]["dimensions"]
+    assert r["verdict"] == "FAIL" and d["status"] == "FAIL" and abs(d["max_relative_difference"] - 0.5) < 0.01, d
+    out["global_scale_2_at_0.01"] = d["max_relative_difference"]
+    return out
+
+
+def test_v2_suffixed_action_collision():
+    """Round 2 finding 2: Walk.001 on the rig while Rig.001|Rig|Walk.001 already exists: the import adds its own number."""
+    reset()
+    rig("Rig", ("Walk.001",))
+    squat = bpy.data.actions.new("Rig.001|Rig|Walk.001")
+    squat.use_fake_user = True
+    select("Rig")
+    r = _rt("coll.fbx", ["Rig"])
+    c = r["objects"]["Rig"]["checks"]["actions"]
+    assert r["verdict"] == "PASS" and c["status"] == "PASS" and len(c["importer_renamed"]) == 1, c
+    return c
+
+
+def test_v2_clip_order_pairing():
+    """Round 2 finding 3: clips pair by position in export order, so swapped names are a FAIL."""
+    reset()
+    rig("Rig", ("Walk", "Idle"))  # created in the opposite order to their names
+    select("Rig")
+    good = _rt("ord.fbx", ["Rig"])
+    c = good["objects"]["Rig"]["checks"]["actions"]
+    assert good["verdict"] == "PASS" and c["exported"] == c["imported"] and len(c["imported"]) == 2, c
+
+    def swap():
+        acts = sorted((a for a in bpy.data.actions if a.name.count("|") == 2), key=lambda a: a.session_uid)
+        assert len(acts) == 2
+        n0, n1 = acts[0].name, acts[1].name
+        acts[0].name = "tmp_swap"
+        acts[1].name = n0
+        acts[0].name = n1
+
+    with fake_import_then(swap):
+        bad = _rt("ord2.fbx", ["Rig"])
+    cb = bad["objects"]["Rig"]["checks"]["actions"]
+    assert bad["verdict"] == "FAIL" and cb["status"] == "FAIL", cb
+    return {"order": c["exported"]}
+
+
 TESTS = (test_v1_isolate, test_v1_wire, test_v1_contact_sheet_size_and_tiles, test_v1_restores_state,
          test_v1_restores_state_on_failed_first_view, test_v1_restores_state_on_failed_wire_view,
          test_v1_restores_state_on_failed_sheet, test_v1_unknown_view_changes_nothing,
@@ -776,7 +841,8 @@ TESTS = (test_v1_isolate, test_v1_wire, test_v1_contact_sheet_size_and_tiles, te
          test_v2_negative_bone_name_changed, test_v2_negative_bone_parent_changed,
          test_v2_negative_missing_action, test_v2_negative_renamed_action,
          test_v2_suffixed_action_name_exact, test_v2_importer_rename_suffix_is_allowed,
-         test_v2_dimension_threshold_edges, test_v2_skinned_mesh_with_other_modifier)
+         test_v2_dimension_threshold_edges, test_v2_skinned_mesh_with_other_modifier,
+         test_v2_scene_unit_scale, test_v2_suffixed_action_collision, test_v2_clip_order_pairing)
 
 
 def main():

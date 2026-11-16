@@ -30,17 +30,18 @@ object that already has `bap_rt_id` is refused before anything is changed.
 
 Actions. Imported actions are named `<imported armature>|<armature>|<action>`. The clips of one armature are the
 actions whose every F-curve path resolves on it (what the exporter writes) plus its assigned action and NLA strip
-actions, taken in export order (Blender's action order). Each expected name is matched exactly against an imported
-name after dropping the two armature prefixes. The only difference allowed is a `.NNN` the importer added because
-the full imported name already existed in the file before the import. So `Walk.001` exported and `Walk.002` imported
-is a changed clip name and FAILs; imported actions nobody expected also FAIL. Armature dimensions are not compared
-(the importer rebuilds bone lengths).
+actions, taken in Blender's action order, which is the order the exporter writes takes. The i-th exported clip is
+compared with the i-th imported clip (imported actions in creation order, `session_uid`, i.e. the file's take
+order) after dropping the two armature prefixes. The only difference allowed is a `.NNN` the importer added or
+replaced because the full imported name already existed in the file before the import. So `Walk.001` exported and
+`Walk.002` imported is a changed clip name and FAILs, as are missing, extra or swapped clips. Armature dimensions
+are not compared (the importer rebuilds bone lengths).
 Dimensions of a skinned mesh: the exporter writes the rest shape with the other modifiers applied, so the source is
 measured with its Armature modifier(s) switched off and the others evaluated; the switch is undone in `finally`.
 
 Cleanup. Only the temporary scene and the datablocks the import created (objects, meshes, armatures, materials,
 images, actions, cameras, lights, curves, collections, textures, node groups, found by session id before and after)
-are removed. Selection, active object, the window's scene and the current frame are restored, also on failure.
+are removed. The temporary scene gets the source scene's unit settings (the importer scales by them). Selection, active object, the window's scene and the current frame are restored, also on failure.
 The user's .blend file is never saved or opened.
 
 Measured on Blender 5.3 (fixtures in tests/blender/test_iter16_v.py): a faithful round trip gives a relative
@@ -185,28 +186,26 @@ def _strip_prefixes(name, prefixes):
 
 
 def _match_actions(expected, imported, imp_name, arm_name, pre_names):
-    """Match expected clip names (export order) to imported action names. Exact, except a `.NNN` the importer added
-    because the full imported name existed before the import. Returns (imported labels, importer_renamed, ok)."""
-    stripped = [(n, _strip_prefixes(n, [imp_name, arm_name])) for n in imported]
-    used, labels, renamed = set(), [], []
-    ok = True
-    for e in expected:
-        hit = next((i for i, (n, s) in enumerate(stripped) if i not in used and s == e), None)
-        if hit is None:
-            hit = next((i for i, (n, s) in enumerate(stripped)
-                        if i not in used and s.startswith(e) and re.fullmatch(r"\.\d{3,}", s[len(e):])
-                        and SUFFIX_RE.sub("", n) in pre_names), None)
-            if hit is not None:
-                renamed.append(stripped[hit][0])
-        if hit is None:
+    """Pair the i-th expected clip (export order) with the i-th imported clip (creation order, see main) and compare
+    names. Exact, except that the importer renames a take whose full name `<imported rig>|<rig>|<clip>` already
+    existed before the import: it then ends in its own `.NNN` (added, or replacing the clip's own number).
+    Returns (imported labels, importer_renamed, ok)."""
+    labels, renamed = [], []
+    ok = len(expected) == len(imported)
+    for i, name in enumerate(imported):
+        got = _strip_prefixes(name, [imp_name, arm_name])
+        e = expected[i] if i < len(expected) else None
+        if e is None:
+            labels.append(got)
+        elif got == e:
+            labels.append(e)
+        elif got != e and SUFFIX_RE.sub("", got) == SUFFIX_RE.sub("", e) and f"{imp_name}|{arm_name}|{e}" in pre_names:
+            labels.append(e)
+            renamed.append(name)
+        else:
+            labels.append(got)
             ok = False
-            continue
-        used.add(hit)
-        labels.append(e)
-    extras = [s for i, (n, s) in enumerate(stripped) if i not in used]
-    if extras:
-        ok = False
-    return labels + extras, renamed, ok
+    return labels, renamed, ok
 
 
 def _bones(arm):
@@ -315,6 +314,9 @@ def main(out_path, objects=None, overwrite=False, tol=0.001, global_scale=1.0, r
 
         before = _snapshot()
         tmp_scene = bpy.data.scenes.new("__bap_roundtrip")
+        for prop in scene.unit_settings.bl_rna.properties:  # the importer scales by the scene's units
+            if not prop.is_readonly and prop.identifier != "rna_type":
+                setattr(tmp_scene.unit_settings, prop.identifier, getattr(scene.unit_settings, prop.identifier))
         window.scene = tmp_scene
         try:
             status = bpy.ops.import_scene.fbx(filepath=out_path)
@@ -332,8 +334,10 @@ def main(out_path, objects=None, overwrite=False, tol=0.001, global_scale=1.0, r
         for rid, orig in originals.items():
             imp = (imported_by_id.get(rid) or [None])[0]
             if orig.type == "ARMATURE" and imp is not None:
-                imported_clips[rid] = [a.name for a in bpy.data.actions
-                                       if a.session_uid not in before["actions"] and a.name.startswith(imp.name + "|")]
+                # session_uid grows with creation, so this is the order the importer made them: the file's take order
+                made = [a for a in bpy.data.actions
+                        if a.session_uid not in before["actions"] and a.name.startswith(imp.name + "|")]
+                imported_clips[rid] = [a.name for a in sorted(made, key=lambda a: a.session_uid)]
         out = {}
         for rid, orig in originals.items():
             imps = imported_by_id.get(rid) or [None]
