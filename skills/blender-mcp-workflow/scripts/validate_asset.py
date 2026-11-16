@@ -22,9 +22,12 @@ Material dependencies read the materials of the evaluated mesh (so a Geometry No
 a slot linked to the object keeps the object's material), and follow node groups. `material_slots` FAILs
 when a face uses an empty slot or an index beyond the slots. `material_images` FAILs when an image texture reads a
 file that is not on disk and the image is not packed (generated images pass; a UDIM image passes when every declared tile
-file exists and FAILs naming the missing tile files, a sequence or movie image when its base file exists). `material_color_space` WARNs when an sRGB image's Color output feeds
+file exists and FAILs naming the missing tile files, a sequence image when every frame its image users can sample exists
+(frames 1..frame_duration, file number = frame + frame_offset; frame_duration 0 means the range is unknown and the check
+is NOT_CHECKED unless a file is missing), a movie image when its file exists; at most 5 missing files are listed). `material_color_space` WARNs when an sRGB image's Color output feeds
 Roughness, Metallic, Alpha, Normal (or another data input of a shader), a Normal Map Color input, or a Bump or
-Displacement Height input, and when a Non-Color image feeds Principled Base Color; it follows Reroute nodes and links through node groups.
+Displacement Height input, and when a Non-Color image feeds Principled Base Color; it follows Reroute nodes, node groups, Separate Color/RGB/XYZ and
+single-value Math, Map Range, Clamp and Invert nodes.
 The Alpha output of an image is never warned about. Budgets are FAIL only when the measured value is above the limit
 (a value exactly at the limit passes) and are not checked when unset: `max_materials` counts distinct materials used
 by faces, `max_texture_px` is the largest width or height among the images of the slot materials (each image once;
@@ -58,6 +61,7 @@ ARGS:
 import datetime
 import json
 import os
+import re
 import sys
 
 import bmesh
@@ -198,6 +202,17 @@ def _trees(material):
     return out
 
 
+SPLIT_NODES = {"SEPARATE_COLOR", "SEPARATE_RGB", "SEPARATE_XYZ"}
+VALUE_INPUT = {"MATH": None, "MAP_RANGE": "Value", "CLAMP": "Value", "INVERT": "Color"}  # None = any input
+
+
+def _passes_value(node, socket):
+    """Channel splits and single-value helpers hand an image's values on to their outputs."""
+    if node.type in SPLIT_NODES:
+        return True
+    return node.type in VALUE_INPUT and VALUE_INPUT[node.type] in (None, socket.name)
+
+
 def _users(materials):
     """{node tree pointer: [(parent tree, group node)]} for every node group used inside these materials."""
     users = {}
@@ -230,6 +245,8 @@ def _consumers(tree, node, users):
                 for inner in to.node_tree.nodes:
                     if inner.type == "GROUP_INPUT" and idx < len(inner.outputs):
                         stack.append((to.node_tree, inner, inner.outputs[idx].identifier, ctx + ((cur_tree, to),)))
+            elif _passes_value(to, link.to_socket):
+                stack.extend((cur_tree, to, out.identifier, ctx) for out in to.outputs)
             elif to.type == "GROUP_OUTPUT":
                 parents = [ctx[-1]] if ctx else users.get(cur_tree.as_pointer(), [])
                 for parent_tree, group in parents:
@@ -255,12 +272,36 @@ def _material_images(materials):
     return [images[k] for k in order]
 
 
-def _missing_files(img):
-    """Paths of the image's files that are not on disk: [] when all are there. A UDIM image needs every declared tile
-    (tokens resolved); a sequence or movie needs its base file; an image with no path reports "(no path)"."""
+MAX_LISTED = 5
+
+
+def _sequence_files(img, nodes):
+    """([paths the image users can sample], unknown) for a sequence: frames 1..frame_duration of each image user, the
+    file number being the frame plus frame_offset, written like the base file's last digit group. unknown is True when
+    a user has no frame range (frame_duration 0), so only the base file could be checked."""
+    base = bpy.path.abspath(img.filepath, library=img.library)
+    folder, name = os.path.split(base)
+    m = None
+    for m in re.finditer(r"\d+", name):
+        pass
+    paths, unknown = [base], False
+    for node in nodes:
+        user = node.image_user
+        if user.frame_duration <= 0 or m is None:
+            unknown = True
+            continue
+        for k in range(1, user.frame_duration + 1):
+            number = str(k + user.frame_offset).zfill(len(m.group()))
+            paths.append(os.path.join(folder, name[:m.start()] + number + name[m.end():]))
+    return list(dict.fromkeys(paths)), unknown
+
+
+def _missing_files(img, nodes=()):
+    """(paths of the image's files that are not on disk, frame range unknown). A UDIM image needs every declared tile
+    (tokens resolved), a sequence every frame its image users can sample, a movie its file."""
     raw = img.filepath
     if not raw:
-        return ["(no path)"]
+        return ["(no path)"], False
     if img.source == "TILED":
         out = []
         for tile in (list(img.tiles) or [None]):
@@ -269,8 +310,11 @@ def _missing_files(img):
                 "<UVTILE>", f"u{(number - 1001) % 10 + 1}_v{(number - 1001) // 10 + 1}")
             if not os.path.isfile(bpy.path.abspath(path, library=img.library)):
                 out.append(path)
-        return out
-    return [] if os.path.isfile(bpy.path.abspath(raw, library=img.library)) else [raw]
+        return out, False
+    if img.source == "SEQUENCE":
+        paths, unknown = _sequence_files(img, nodes)
+        return [x for x in paths if not os.path.isfile(x)], unknown
+    return ([] if os.path.isfile(bpy.path.abspath(raw, library=img.library)) else [raw]), False
 
 
 def _material_checks(slots, used_indices, max_materials, max_texture_px, add):
@@ -284,15 +328,21 @@ def _material_checks(slots, used_indices, max_materials, max_texture_px, add):
             f"indices beyond the slots: {beyond}")
     mats = [m for m in slots if m is not None]
     images = _material_images(mats)
-    missing = []
-    for img, _ in images:
+    missing, unknown = [], []
+    for img, uses in images:
         if img.source in ("FILE", "TILED", "SEQUENCE", "MOVIE"):
             packed = img.packed_file is not None or len(img.packed_files) > 0
-            gone = [] if packed else _missing_files(img)
+            gone, no_range = ([], False) if packed else _missing_files(img, [n for _, n in uses])
             if gone:
-                missing.append(f"{img.name} (missing: {gone})")
+                more = f" and {len(gone) - MAX_LISTED} more" if len(gone) > MAX_LISTED else ""
+                missing.append(f"{img.name} (missing: {gone[:MAX_LISTED]}{more})")
+            elif no_range:
+                unknown.append(img.name)
     if missing:
         add("material_images", "FAIL", f"{len(missing)} image(s) not on disk and not packed: {missing}")
+    elif unknown:
+        add("material_images", "NOT_CHECKED", f"only the base file of sequence(s) {unknown} was checked: an image user "
+            "has frame_duration 0, so the frame range is unknown")
     else:
         add("material_images", "PASS", f"{len(images)} image(s), every file found, packed or generated")
     warns, users = [], _users(mats)

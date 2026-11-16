@@ -718,6 +718,89 @@ def test_s2_linked_materials_same_name(out_dir):
     return {"two": two_check["detail"], "at_limit": at["detail"]}
 
 
+def test_t1_image_sequence_frames(out_dir):
+    """Round 3, 1: every frame an image sequence can sample must exist; the detail names the first missing files."""
+    try:
+        folder = os.path.join(out_dir, "t1_seq")
+        os.makedirs(folder, exist_ok=True)
+        cases = {}
+
+        def sequence(key, present, duration, offset=0):
+            for n in present:
+                src, path = file_image(f"t1_{key}_{n}", folder)
+                target = os.path.join(folder, f"{key}_{n:04d}.png")
+                os.replace(path, target)
+                TEMP_FILES.append(target)
+            img = gen_image(f"t1_{key}", 4, 4)
+            img.source = "SEQUENCE"
+            img.filepath = os.path.join(folder, f"{key}_{1 + offset:04d}.png")
+            mat, tree, bsdf = new_mat(f"T1_{key}")
+            node = tex_node(tree, img)
+            node.image_user.frame_duration = duration
+            node.image_user.frame_offset = offset
+            tree.links.new(node.outputs["Color"], bsdf.inputs["Base Color"])
+            cases[key] = mesh_obj(f"T1_{key}", [mat], [0] * 6)
+        sequence("gap", (1, 3), 3)
+        sequence("full", (1, 2, 3), 3)
+        sequence("offset", (11, 12), 2, offset=10)
+        sequence("short", (1, 2), 5)
+        sequence("unknown", (1, 2), 0)
+        res = run("validate_asset.py", {"objects": [o.name for o in cases.values()], "prefix": ""})
+        got = {k: check(res, o.name, "material_images") for k, o in cases.items()}
+    finally:
+        cleanup()
+    assert got["gap"]["status"] == "FAIL" and "gap_0002.png" in got["gap"]["detail"], got["gap"]
+    assert "gap_0001.png" not in got["gap"]["detail"] and "gap_0003.png" not in got["gap"]["detail"], got["gap"]
+    assert got["full"]["status"] == "PASS" and got["offset"]["status"] == "PASS", got
+    assert got["short"]["status"] == "FAIL" and "short_0003.png" in got["short"]["detail"], got["short"]
+    assert got["unknown"]["status"] == "NOT_CHECKED", got["unknown"]
+    return {k: v["status"] for k, v in got.items()} | {"gap_detail": got["gap"]["detail"]}
+
+
+def test_t2_channel_split_and_math():
+    """Round 3, 2: colour-space tracing continues through Separate Color/XYZ and single-value Math, Map Range, Clamp."""
+    results = {}
+    try:
+        def case(key, wire):
+            mat, tree, bsdf = new_mat(f"T2_{key}")
+            wire(tree, bsdf)
+            results[key] = mesh_obj(f"T2_{key}", [mat], [0] * 6)
+
+        def orm(colorspace):
+            def wire(tree, bsdf):
+                sep = tree.nodes.new("ShaderNodeSeparateColor")
+                tree.links.new(tex_node(tree, gen_image(f"t2_orm_{colorspace}", 8, 8, colorspace)).outputs["Color"],
+                               sep.inputs["Color"])
+                tree.links.new(sep.outputs["Green"], bsdf.inputs["Roughness"])
+                tree.links.new(sep.outputs["Blue"], bsdf.inputs["Metallic"])
+            return wire
+
+        def chain(colorspace, kind):
+            def wire(tree, bsdf):
+                node = tree.nodes.new({"math": "ShaderNodeMath", "range": "ShaderNodeMapRange",
+                                       "clamp": "ShaderNodeClamp", "xyz": "ShaderNodeSeparateXYZ"}[kind])
+                src = tex_node(tree, gen_image(f"t2_{kind}_{colorspace}", 8, 8, colorspace))
+                if kind == "xyz":
+                    tree.links.new(src.outputs["Color"], node.inputs[0])
+                    tree.links.new(node.outputs["X"], bsdf.inputs["Roughness"])
+                else:
+                    tree.links.new(src.outputs["Color"], node.inputs[0] if kind == "math" else node.inputs["Value"])
+                    tree.links.new(node.outputs[0], bsdf.inputs["Roughness"])
+            return wire
+        case("bad_srgb_orm", orm("sRGB"))
+        case("bad_srgb_math", chain("sRGB", "math"))
+        case("bad_srgb_map_range", chain("sRGB", "range"))
+        case("bad_srgb_clamp", chain("sRGB", "clamp"))
+        case("good_noncolor_orm", orm("Non-Color"))
+        case("good_noncolor_math", chain("Non-Color", "math"))
+        res = run("validate_asset.py", {"objects": [o.name for o in results.values()], "prefix": ""})
+        got = {k: check(res, o.name, "material_color_space")["status"] for k, o in results.items()}
+    finally:
+        cleanup()
+    assert got == {k: ("WARN" if k.startswith("bad") else "PASS") for k in got}, got
+    return got
+
+
 def main():
     args = _cli_args()
     out_dir = args.get("out_dir", ".")
@@ -729,9 +812,10 @@ def main():
              test_p3_max_texture_px, test_p3_max_bones, test_p3_bad_budget_args, test_p23_state_restored,
              test_r1_evaluated_materials, test_r2_udim_movie_sequence_missing, test_r3_group_boundaries,
              test_r4_registered_engines_only,
-             test_s1_incomplete_udim_set, test_s2_linked_materials_same_name]
+             test_s1_incomplete_udim_set, test_s2_linked_materials_same_name,
+             test_t1_image_sequence_frames, test_t2_channel_split_and_math]
     if CONFIG["validate_script"]:  # old-script run: only the P2/P3 tests are meaningful
-        tests = [t for t in tests if t.__name__.startswith(("test_p2", "test_p3", "test_p23", "test_r"))]
+        tests = [t for t in tests if t.__name__.startswith(("test_p2", "test_p3", "test_p23", "test_r", "test_s", "test_t")) and t.__name__ != "test_r4_registered_engines_only"]
     for fn in tests:
         try:
             takes_dir = fn.__code__.co_argcount == 1
