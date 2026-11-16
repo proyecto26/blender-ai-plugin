@@ -1081,6 +1081,46 @@ def test_v2_rest_pose_armature_untouched():
     return {"ok": True}
 
 
+# ------------------------------------------------------------------------- review round 7 (Seldon, batch V)
+
+def _body_weapon():
+    """Animated BodyRig with an unmuted NLA strip WalkStrip, plus a static WeaponRig (bones, no animation_data)."""
+    reset()
+    body = rig("BodyRig", ("Walk",))
+    walk = bpy.data.actions["Walk"]
+    body.animation_data.nla_tracks.new().strips.new("WalkStrip", 1, walk)
+    weapon = rig("WeaponRig", ())
+    weapon.animation_data_clear()
+    assert weapon.animation_data is None
+    select("BodyRig", "WeaponRig")
+    return body, weapon
+
+
+def test_v2_nla_take_written_for_every_exported_object():
+    """Round 7: the NLA pass writes each strip take across ALL exported objects, so the static rig gets one too."""
+    _body_weapon()
+    r = _rt("bw.fbx", ["BodyRig", "WeaponRig"])
+    cb = r["objects"]["BodyRig"]["checks"]["actions"]
+    cw = r["objects"]["WeaponRig"]["checks"]["actions"]
+    assert r["verdict"] == "PASS", (cb, cw)
+    assert cb["imported"] == ["WalkStrip", "Walk"] and cw["imported"] == ["WalkStrip"], (cb, cw)
+    assert r["takes"]["expected"] == r["takes"]["imported"] == ["Walk", "WalkStrip"], r["takes"]
+    return {"body": cb["imported"], "weapon": cw["imported"]}
+
+
+def test_v2_nla_take_missing_on_static_rig_fails():
+    _body_weapon()
+
+    def drop_weapon_take():
+        a = [a for a in bpy.data.actions if a.name.startswith("WeaponRig") and a.name.endswith("|WalkStrip")][0]
+        bpy.data.actions.remove(a)
+
+    with fake_import_then(drop_weapon_take):
+        r = _rt("bw2.fbx", ["BodyRig", "WeaponRig"])
+    assert r["verdict"] == "FAIL" and r["objects"]["WeaponRig"]["checks"]["actions"]["status"] == "FAIL", r["objects"]
+    return {"weapon": r["objects"]["WeaponRig"]["checks"]["actions"]}
+
+
 TESTS = (test_v1_isolate, test_v1_wire, test_v1_contact_sheet_size_and_tiles, test_v1_restores_state,
          test_v1_restores_state_on_failed_first_view, test_v1_restores_state_on_failed_wire_view,
          test_v1_restores_state_on_failed_sheet, test_v1_unknown_view_changes_nothing,
@@ -1098,7 +1138,8 @@ TESTS = (test_v1_isolate, test_v1_wire, test_v1_contact_sheet_size_and_tiles, te
          test_v2_nla_strip_takes, test_v2_shape_key_value_one, test_v2_static_rig_with_stored_action,
          test_v2_muted_nla_strip_not_expected, test_v2_shape_key_with_modifier_evaluated,
          test_v2_measurement_failure_restores_toggles, test_v2_bone_parented_mirror_object,
-         test_v2_measurement_failure_restores_pose_position, test_v2_rest_pose_armature_untouched)
+         test_v2_measurement_failure_restores_pose_position, test_v2_rest_pose_armature_untouched,
+         test_v2_nla_take_written_for_every_exported_object, test_v2_nla_take_missing_on_static_rig_fails)
 
 
 def main():

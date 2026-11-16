@@ -28,19 +28,23 @@ counter) and the exporter writes custom properties; the imported objects are the
 import and are matched by that id, never by name. The property is removed from the originals in `finally`. An
 object that already has `bap_rt_id` is refused before anything is changed.
 
-Actions. Imported actions are named `<imported armature>|<armature>|<take>`. The script passes
-bake_anim_use_nla_strips=True and bake_anim_use_all_actions=True and models both kinds of take, in the order the
-exporter writes them (rules read from the exporter's fbx_animations): an armature with no animation_data gets no take
-at all; otherwise one take per unmuted strip of an unmuted NLA track whose action animates something that resolves on
-the armature (named after the STRIP), then, unless the armature's `action` is read-only (NLA tweak mode), one per
-action in Blender's action order that is the assigned action (with a slot) or has a non-empty channelbag whose F-curve
-paths all resolve on it. An action that is both strip and clip appears twice. Not modelled: takes of non-armature
-objects (not compared), drivers, and strip influence/blend settings (a take is written regardless). The i-th exported clip is
-compared with the i-th imported clip (imported actions in creation order, `session_uid`, i.e. the file's take
-order) after dropping the two armature prefixes. The only difference allowed is a `.NNN` the importer added or
-replaced because the full imported name already existed in the file before the import. So `Walk.001` exported and
-`Walk.002` imported is a changed clip name and FAILs, as are missing, extra or swapped clips. Armature dimensions
-are not compared (the importer rebuilds bone lengths).
+Actions. Imported actions are named `<imported armature>|<armature>|<take>` (all-actions takes) or
+`<imported armature>|<strip>` (NLA takes). The script passes bake_anim_use_nla_strips=True and
+bake_anim_use_all_actions=True and models the exporter's take rules (read from its fbx_animations):
+  - NLA pass, scene-wide: one take per unmuted strip of an unmuted track of EVERY exported object with animation_data,
+    named after the strip, and each take bakes every exported object. So a static armature (no animation_data)
+    exported next to an animated one still gets an action for each strip take, and is expected to;
+  - all-actions pass, per object: nothing for an object without animation_data or with a read-only `action` (NLA tweak
+    mode); otherwise one take per action in Blender's action order that is the assigned action (with a slot) or has a
+    non-empty channelbag whose F-curve paths all resolve on the object.
+Per armature the expected list is the scene's NLA takes followed by its own all-actions takes; the i-th expected take
+is compared with the i-th imported action of that armature (imported actions in creation order, `session_uid`, i.e.
+the file's take order) after dropping the two armature prefixes. `takes` in the result is the same comparison as a
+set over all armatures. The only name difference allowed is a `.NNN` the importer added or replaced because the full
+imported name already existed in the file before the import. So `Walk.001` exported and `Walk.002` imported is a
+changed clip name and FAILs, as are missing, extra or swapped takes. Only take NAMES are compared, not their F-curves.
+Not modelled: takes of non-armature objects (not compared), strip influence/blend/solo (a take is written regardless),
+drivers, dupli-instanced objects. Armature dimensions are not compared (the importer rebuilds bone lengths).
 Dimensions: measured the way the exporter decides. If the mesh has a modifier other than Armature that is enabled
 for viewport or render, the exporter evaluates the mesh (current shape key values included) and writes that as the
 base geometry, so the source is evaluated the same way, after setting pose_position = 'REST' on every armature its
@@ -184,30 +188,35 @@ def _action_valid_for(arm, act):
     return False
 
 
-def _expected_takes(arm):
+def _nla_takes(exported):
+    """Scene-wide NLA takes: the exporter's NLA pass (bake_anim_use_nla_strips) writes one take per unmuted strip of an
+    unmuted track of every exported object that has animation_data, named after the STRIP, and bakes EVERY exported
+    object into each of them (force_keep), so every imported armature gets an action for each of these takes, also a
+    static one. `exported` is in the exporter's object order (view layer order)."""
+    takes = []
+    for ob in exported:
+        ad = ob.animation_data
+        if not ad:
+            continue
+        for track in ad.nla_tracks:
+            if track.mute:
+                continue
+            takes.extend(st.name for st in track.strips if not st.mute)
+    return takes
+
+
+def _expected_takes(arm, nla_takes):
     """The takes the exporter writes for this armature with the options main() passes (bake_anim_use_nla_strips and
     bake_anim_use_all_actions both True). Rules modelled from the exporter source (fbx_animations):
-      - an object without animation_data gets no take at all;
-      - NLA pass: one take per unmuted strip of an unmuted track, named after the STRIP (tracks and strips in order);
-        only when its action animates something that resolves on the armature;
-      - all-actions pass: skipped when the object's `action` is read-only (NLA tweak mode); otherwise one take per
-        action in Blender's action order that is the assigned action (with a slot) or valid for the object.
-    Not modelled (the rig is then reported as a mismatch rather than guessed): actions on non-armature objects
-    (their takes are not compared), solo/ blend/ influence of strips (a take is written regardless), and drivers."""
+      - NLA pass, scene-wide (see _nla_takes): every NLA take of every exported object appears on this armature too;
+      - all-actions pass, per object: nothing for an object without animation_data, nothing when its `action` is
+        read-only (NLA tweak mode); otherwise one take per action in Blender's action order that is the assigned
+        action (with a slot) or has a non-empty channelbag whose F-curve paths all resolve on the object.
+    Not modelled: takes of non-armature objects (not compared), strip influence/blend/solo (a take is written
+    regardless), drivers, dupli-instanced objects, and the F-curves inside a take (names only are compared)."""
+    takes = list(nla_takes)
     ad = arm.animation_data
-    if not ad:
-        return []
-    takes = []
-    for track in ad.nla_tracks:
-        if track.mute:
-            continue
-        for st in track.strips:
-            if st.mute or not st.action:
-                continue
-            if any(_resolves(arm, fc) for layer in st.action.layers for strip in layer.strips
-                   for bag in getattr(strip, "channelbags", []) for fc in bag.fcurves):
-                takes.append(st.name)
-    if not ad.is_property_readonly("action"):
+    if ad and not ad.is_property_readonly("action"):
         for act in bpy.data.actions:
             if act == ad.action:
                 if ad.action_slot:
@@ -322,10 +331,12 @@ def main(out_path, objects=None, overwrite=False, tol=0.001, global_scale=1.0, r
     prev_frame = scene.frame_current
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
     before_file = _stamp(out_path)
+    exported_order = [o for o in view_layer.objects if o in targets]
+    nla_takes = _nla_takes(exported_order)
     expected = {}
     for o in targets:
         if o.type == "ARMATURE":
-            expected[o.name] = _expected_takes(o)
+            expected[o.name] = _expected_takes(o, nla_takes)
     pre_action_names = {a.name for a in bpy.data.actions}
     arm_names = {o.name: o for o in targets if o.type == "ARMATURE"}
     originals = {}
@@ -403,7 +414,14 @@ def main(out_path, objects=None, overwrite=False, tol=0.001, global_scale=1.0, r
             scene.frame_set(prev_frame)
 
     verdicts = [v["verdict"] for v in out.values()]
+    exp_set, got_set = set(), set()
+    for v in out.values():
+        c = v["checks"].get("actions")
+        if c:
+            exp_set.update(c["exported"])
+            got_set.update(c["imported"])
     result = {"verdict": _worst(verdicts) if verdicts else "FAIL", "run_id": run_id, "path": out_path,
+              "takes": {"expected": sorted(exp_set), "imported": sorted(got_set)},
               "bytes": os.path.getsize(out_path), "objects": out, "skipped": skipped,
               "imported_without_id": extras}
     if not verdicts:
