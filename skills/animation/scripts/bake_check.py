@@ -261,11 +261,21 @@ def _stretch(rest, posed):
 
 def _stretch_off(a, b):
     """Per-axis ratio error of target stretch `a` against source stretch `b`: max |eigenvalue(a @ b^-1) - 1|.
-    A singular source stretch (a zero scale) has no ratio: the matrices are then compared element by element."""
+    A source stretch with a zero axis has no ratio on that axis: the axes are taken from the source's own eigen
+    decomposition, the others are compared as ratios, the null axes by absolute difference, and so is any cross
+    term of the target in that frame (so (0, 0.1, 1) against (0, 0.102, 1) is still a 2% error)."""
     ma, mb = np.array([list(r) for r in a], dtype=float), np.array([list(r) for r in b], dtype=float)
-    if abs(np.linalg.det(mb)) < 1e-9:
-        return float(np.abs(ma - mb).max())
-    return float(np.abs(np.linalg.eigvals(ma @ np.linalg.inv(mb)) - 1.0).max())
+    if abs(np.linalg.det(mb)) >= 1e-9:
+        return float(np.abs(np.linalg.eigvals(ma @ np.linalg.inv(mb)) - 1.0).max())
+    vals, vecs = np.linalg.eigh(mb)
+    t = vecs.T @ ma @ vecs
+    err = 0.0
+    for i, v in enumerate(vals):
+        err = max(err, abs(t[i, i] - v) / v if v > 1e-6 else abs(t[i, i] - v))
+        for j in range(3):
+            if j != i:
+                err = max(err, abs(t[i, j]))
+    return float(err)
 
 
 def _loop_checks(bones, series, height, root, root_motion):

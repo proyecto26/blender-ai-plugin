@@ -28,7 +28,8 @@ ARGS:
 
 Metallic: Cycles has no metallic pass, so for the bake the Surface of every material on the bake source (the
 high-poly when given, else the low-poly) is temporarily fed by an Emission node carrying the Principled
-metallic value (or the node linked into it); the original link and the temporary node are put back in `finally`,
+metallic value (or the node linked into it; a colour is turned into grey by a temporary RGB to BW node, which is
+Blender's own implicit colour -> float rule, and a vector by the average of its components); the original link and the temporary node are put back in `finally`,
 also when the bake fails. A material with no Principled BSDF bakes 0. Group nodes are not looked into.
 
 If a bake fails midway, the images and SK_BakeTarget nodes this run created are removed again (files already
@@ -102,7 +103,7 @@ def _socket(node, identifier, outputs=False):
 @contextlib.contextmanager
 def _metallic_as_emission(objs):
     """Feed every material Surface on `objs` from an Emission node that carries the metallic value; undo in finally."""
-    done = []  # (tree, emission name, output node name, original (node, identifier, muted) or None)
+    done = []  # (tree, emission name, output node name, original (node, identifier, muted) or None, extra node names)
     try:
         seen = set()
         for o in objs:
@@ -124,24 +125,40 @@ def _metallic_as_emission(objs):
                 if prin is None or prin.bl_idname != "ShaderNodeBsdfPrincipled":
                     prin = next((n for n in tree.nodes if n.bl_idname == "ShaderNodeBsdfPrincipled"), None)
                 src = prin.inputs["Metallic"] if prin is not None else None
-                feed = (src.links[0].from_node.name, src.links[0].from_socket.identifier) \
-                    if src is not None and src.links else None
+                feed = (src.links[0].from_node.name, src.links[0].from_socket.identifier,
+                        src.links[0].from_socket.type) if src is not None and src.links else None
                 value = float(src.default_value) if src is not None and not feed else 0.0
                 em = tree.nodes.new("ShaderNodeEmission")
                 em.name = "SK_BakeMetallic"
-                done.append((tree, em.name, out.name, orig))
+                extra = []
+                done.append((tree, em.name, out.name, orig, extra))
                 if feed:
-                    tree.links.new(_socket(tree.nodes[feed[0]], feed[1], outputs=True), em.inputs["Color"])
+                    source = _socket(tree.nodes[feed[0]], feed[1], outputs=True)
+                    if feed[2] == "RGBA":  # Blender's implicit colour -> float is the luminance: do it explicitly
+                        conv = tree.nodes.new("ShaderNodeRGBToBW")
+                        extra.append(conv.name)
+                        tree.links.new(source, conv.inputs["Color"])
+                        tree.links.new(conv.outputs["Val"], em.inputs["Color"])
+                    elif feed[2] == "VECTOR":  # vector -> float is the average of the components
+                        conv = tree.nodes.new("ShaderNodeVectorMath")
+                        conv.operation = "DOT_PRODUCT"
+                        extra.append(conv.name)
+                        conv.inputs[1].default_value = (1 / 3, 1 / 3, 1 / 3)
+                        tree.links.new(source, conv.inputs[0])
+                        tree.links.new(conv.outputs["Value"], em.inputs["Color"])
+                    else:
+                        tree.links.new(source, em.inputs["Color"])
                 else:
                     em.inputs["Color"].default_value = (value, value, value, 1.0)
                 em.inputs["Strength"].default_value = 1.0
                 tree.links.new(em.outputs["Emission"], surf)
         yield len(done)
     finally:
-        for tree, em_name, out_name, orig in done:
-            em = tree.nodes.get(em_name)
-            if em is not None:
-                tree.nodes.remove(em)
+        for tree, em_name, out_name, orig, extra in done:
+            for name in [em_name] + extra:
+                node = tree.nodes.get(name)
+                if node is not None:
+                    tree.nodes.remove(node)
             out = tree.nodes.get(out_name)
             if orig is not None and out is not None and tree.nodes.get(orig[0]) is not None:
                 sock = _socket(tree.nodes[orig[0]], orig[1], outputs=True)

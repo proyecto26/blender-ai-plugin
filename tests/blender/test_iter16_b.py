@@ -218,6 +218,44 @@ def test_b1_metallic_plain_and_linked_nodes_restored():
     return {"plain": 0.75, "linked": 0.4}
 
 
+def test_b1_colour_linked_to_metallic_uses_blenders_grey_conversion():
+    def build(kind):
+        fresh()
+        low = plane("SM_Low")
+        mat = pbr("MAT_C", metallic=1.0, rough=0.3)
+        low.data.materials.append(mat)
+        nt = mat.node_tree
+        rgb = nt.nodes.new("ShaderNodeRGB")
+        rgb.outputs[0].default_value = (0.0, 1.0, 0.0, 1.0)
+        target = nt.nodes["Principled BSDF"].inputs["Metallic"]
+        if kind == "reference":  # Blender's own implicit colour -> float conversion, done by a Math node input
+            m = nt.nodes.new("ShaderNodeMath")
+            m.operation = "ADD"
+            nt.links.new(rgb.outputs[0], m.inputs[0])
+            m.inputs[1].default_value = 0.0
+            nt.links.new(m.outputs[0], target)
+        else:
+            nt.links.new(rgb.outputs[0], target)
+        return nt
+
+    vals = {}
+    for kind in ("reference", "colour"):
+        nt = build(kind)
+        before = node_sig()
+        r = bake(low="SM_Low", maps=["ao"], orm=True, size=32, samples=1, out_dir=os.path.join(WORK, f"col_{kind}"))
+        d = os.path.dirname(r["images"][0])
+        met = read_png(os.path.join(d, "T_Low_Metallic.png"))
+        orm = read_png(os.path.join(d, "T_Low_Orm.png"))
+        assert node_sig() == before, f"{kind}: nodes changed"
+        assert "SK_BakeMetallic" not in nt.nodes
+        vals[kind] = (float(met[..., 0].mean()), float(orm[..., 2].mean()), float(np.ptp(met[..., :3], axis=-1).max()))
+    ref, col = vals["reference"], vals["colour"]
+    assert 0.1 < ref[0] < 0.95, f"the reference conversion should be a grey between 0 and 1: {ref}"
+    assert abs(col[0] - ref[0]) <= 1.5 / 255 and abs(col[1] - ref[0]) <= 1.5 / 255, (vals)
+    assert col[2] < 1.5 / 255, "the metallic map is not grey"
+    return {"reference": ref[0], "colour": col[0], "orm_blue": col[1]}
+
+
 def test_b1_orm_channels_equal_separate_maps():
     fresh()
     low = plane("SM_Low")
@@ -1000,8 +1038,22 @@ def test_b2_zero_source_scale_does_not_raise():
     return {"zero_vs_one": res["bones"]["arm"]["scale"]["max"]}
 
 
+def test_b2_singular_source_scale_keeps_percentage_on_the_other_axes():
+    src = {"arm": lambda f: {"scale": (0.0, 0.1, 1.0)}}
+    out = {}
+    for y, want in ((0.1, "PASS"), (0.102, "FAIL")):
+        tgt = {"arm": lambda f, y=y: {"scale": (0.0, y, 1.0)}}
+        scenario(src, tgt)
+        v = baked()["bones"]["arm"]["scale"]
+        assert v["verdict"] == want, (y, v)
+        out[str(y)] = v["max"]
+    assert abs(out["0.102"] - 0.02) < 1e-3, out
+    return out
+
+
 TESTS = (
     test_b1_directx_green_is_flipped_opengl, test_b1_metallic_plain_and_linked_nodes_restored,
+    test_b1_colour_linked_to_metallic_uses_blenders_grey_conversion,
     test_b1_orm_channels_equal_separate_maps, test_b1_nodes_identical_when_a_bake_fails_midway,
     test_b1_collisions_refused_without_overwrite, test_b1_several_high_sources,
     test_b1_cage_ray_distance_and_uv_layer_set_and_restored, test_b1_uv_layer_chooses_the_bake_target_area,
@@ -1014,7 +1066,7 @@ TESTS = (
     test_b3_clean_loop_passes_and_non_cyclic_is_not_checked, test_b3_seam_pops_fail, test_b3_root_motion,
     test_b3_thresholds_boundary_fixtures, test_b2_scale_is_compared_per_axis_in_the_rest_frame,
     test_b2_scale_percentage_is_exact_on_a_rolled_rest,
-    test_b2_animated_constraint_mute_keys_cannot_unmute_the_mask, test_b2_zero_source_scale_does_not_raise, test_b3_loop_that_cannot_run_is_not_a_pass, test_b3_seam_velocity_boundary_fixtures,
+    test_b2_animated_constraint_mute_keys_cannot_unmute_the_mask, test_b2_zero_source_scale_does_not_raise, test_b2_singular_source_scale_keeps_percentage_on_the_other_axes, test_b3_loop_that_cannot_run_is_not_a_pass, test_b3_seam_velocity_boundary_fixtures,
 )
 
 
