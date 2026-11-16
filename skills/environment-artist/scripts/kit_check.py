@@ -11,7 +11,7 @@ ARGS:
     result_path (str)                 write the result (plus run_id) as JSON here, atomically, on success
     run_id      (str)                 copied into the result and the file
 
-Everything is measured in world space on the evaluated mesh (modifiers included), so rotation, scale and
+Everything is measured in world space, in metres (scene unit scale applied), on the evaluated mesh (modifiers included), so rotation, scale and
 modifiers count. Per object, three checks (PASS, FAIL; NOT_CHECKED when there is nothing to measure):
     dimensions   each bounding-box extent is a multiple of grid_m
     origin       the object origin (its world location) is on a grid point
@@ -87,7 +87,8 @@ def _world_points(obj):
     if n == 0:
         return co
     mw = np.array(obj.matrix_world, dtype=np.float64)
-    return co @ mw[:3, :3].T + mw[:3, 3]
+    sl = bpy.context.scene.unit_settings.scale_length or 1.0  # metres per Blender unit
+    return (co @ mw[:3, :3].T + mw[:3, 3]) * sl
 
 
 def _object(obj, grid, tol):
@@ -103,7 +104,7 @@ def _object(obj, grid, tol):
     checks["dimensions"] = {"status": "FAIL" if bad else "PASS", "dimensions_m": [float(d) for d in dims],
                             "off_grid": [{"axis": a, "size_m": s, "off_by_m": o} for a, s, o in bad]}
 
-    loc = np.array(obj.matrix_world.translation, dtype=np.float64)
+    loc = np.array(obj.matrix_world.translation, dtype=np.float64) * (bpy.context.scene.unit_settings.scale_length or 1.0)
     bad = [(AXES[i], float(loc[i]), float(_off_grid(loc[i], grid))) for i in range(3)
            if _off_grid(loc[i], grid) > tol]
     checks["origin"] = {"status": "FAIL" if bad else "PASS", "origin_m": [float(v) for v in loc],

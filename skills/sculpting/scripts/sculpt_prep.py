@@ -8,7 +8,9 @@ vertex counts and proof that the original is unchanged.
 
 ARGS:
     object        (str, required)   mesh object to prepare
-    voxel_size_m  (float, required) voxel size of the remesh, metres (> 0); smaller means more vertices
+    voxel_size_m  (float, required) voxel size of the remesh in world metres (> 0); smaller means more vertices.
+                                    Converted to mesh units with the object scale and the scene unit scale; the
+                                    budget uses the mesh-space bounding box. Non-uniform scale is refused (apply it).
     name          (str)             name for the copy (default "<object>_sculpt"); an existing name gets Blender's
                                     numeric suffix, so nothing is overwritten
     max_voxels    (float)           refuse before doing anything when the bounding box holds more than this many
@@ -30,6 +32,7 @@ import sys
 
 import bpy
 import numpy as np
+from mathutils import Vector
 
 
 def _cli_args():
@@ -87,8 +90,18 @@ def main(object=None, voxel_size_m=None, name=None, max_voxels=2e8, result_path=
         raise ValueError(f"{object} is not a mesh")
     if voxel_size_m is None or not voxel_size_m > 0:
         raise ValueError("voxel_size_m must be a number > 0")
-    dims = obj.dimensions
-    voxels = (dims.x / voxel_size_m + 1) * (dims.y / voxel_size_m + 1) * (dims.z / voxel_size_m + 1)
+    # The remesher works in mesh (object-space) units, so convert the world voxel size in metres to mesh units.
+    scale = obj.matrix_world.to_scale()
+    s = max(abs(v) for v in scale)
+    if s <= 0 or min(abs(v) for v in scale) < s * (1 - 1e-4):
+        raise ValueError(f"{obj.name} has non-uniform scale {tuple(round(v, 6) for v in scale)}; apply its scale "
+                         "(Object > Apply > Scale) or make it uniform first (this script does not change the original)")
+    unit = bpy.context.scene.unit_settings.scale_length or 1.0  # metres per Blender unit
+    mesh_voxel = voxel_size_m / (s * unit)
+    ev0 = obj.evaluated_get(bpy.context.evaluated_depsgraph_get())
+    corners = [Vector(c) for c in ev0.bound_box]
+    local = [max(c[i] for c in corners) - min(c[i] for c in corners) for i in range(3)]
+    voxels = (local[0] / mesh_voxel + 1) * (local[1] / mesh_voxel + 1) * (local[2] / mesh_voxel + 1)
     if voxels > max_voxels:
         raise ValueError(f"the bounding box holds about {voxels:.3g} voxels at voxel_size_m={voxel_size_m}; "
                          f"raise voxel_size_m (limit max_voxels={max_voxels:g})")
@@ -116,7 +129,7 @@ def main(object=None, voxel_size_m=None, name=None, max_voxels=2e8, result_path=
         if not copy.users_collection:
             bpy.context.scene.collection.objects.link(copy)
         new_mesh.name = f"{copy.name}_mesh"
-        new_mesh.remesh_voxel_size = float(voxel_size_m)
+        new_mesh.remesh_voxel_size = float(mesh_voxel)
         new_mesh.use_remesh_preserve_volume = False
         for o in prev_selected:
             o.select_set(False)

@@ -708,6 +708,134 @@ def test_e4_result_file_contract():
     return {}
 
 
+# ================================================================ review round 1 (Seldon findings)
+def set_unit_scale(v):
+    bpy.context.scene.unit_settings.scale_length = v
+
+
+def mean_edge_world_m(ob):
+    me = ob.data
+    co = np.empty(len(me.vertices) * 3)
+    me.vertices.foreach_get("co", co)
+    co = co.reshape(-1, 3)
+    ev = np.empty(len(me.edges) * 2, dtype=np.int64)
+    me.edges.foreach_get("vertices", ev)
+    ev = ev.reshape(-1, 2)
+    local = np.linalg.norm(co[ev[:, 0]] - co[ev[:, 1]], axis=1).mean()
+    return float(local * max(abs(v) for v in ob.matrix_world.to_scale()) * bpy.context.scene.unit_settings.scale_length)
+
+
+def cube_obj(size, scale=1.0, name="SM_Head"):
+    fresh()
+    bpy.ops.mesh.primitive_cube_add(size=size)
+    ob = bpy.context.object
+    ob.name = name
+    ob.scale = (scale, scale, scale)
+    bpy.context.view_layer.update()
+    return ob
+
+
+def test_r1_e4_scaled_object_gets_world_voxel_size():
+    ob = cube_obj(20, 0.1)  # 2 m cube
+    r = run("sculpting", "sculpt_prep.py", object="SM_Head", voxel_size_m=0.2)
+    edge = mean_edge_world_m(bpy.data.objects[r["copy"]])
+    assert 0.1 <= edge <= 0.3, f"mean edge {edge} m for a 0.2 m voxel"
+    return {"mean_edge_m": edge}
+
+
+def test_r1_e4_scene_unit_scale_is_honoured():
+    cube_obj(200)  # 200 units
+    set_unit_scale(0.01)  # = 2 m
+    r = run("sculpting", "sculpt_prep.py", object="SM_Head", voxel_size_m=0.2)
+    edge = mean_edge_world_m(bpy.data.objects[r["copy"]])
+    assert 0.1 <= edge <= 0.3, edge
+    return {"mean_edge_m": edge}
+
+
+def test_r1_e4_large_mesh_tiny_scale_is_accepted_correctly_and_fast():
+    """The reviewed case: a 2000-unit cube scaled 0.001 is a 2 m object; 0.1 m voxels need ~20 cells per axis."""
+    cube_obj(2000, 0.001)
+    r = run("sculpting", "sculpt_prep.py", object="SM_Head", voxel_size_m=0.1)
+    edge = mean_edge_world_m(bpy.data.objects[r["copy"]])
+    assert 0.05 <= edge <= 0.15 and r["vertices_after_remesh"] < 20000, (edge, r)
+    return {"mean_edge_m": edge, "vertices": r["vertices_after_remesh"]}
+
+
+def test_r1_e4_budget_uses_mesh_space_and_refuses_the_huge_case():
+    cube_obj(2000, 0.001)
+    counts = (len(bpy.data.objects), len(bpy.data.meshes))
+    try:
+        run("sculpting", "sculpt_prep.py", object="SM_Head", voxel_size_m=1e-5)  # 2 m object at 10 micron voxels
+    except ValueError as exc:
+        assert "voxels" in str(exc)
+    else:
+        raise AssertionError("huge budget accepted")
+    assert (len(bpy.data.objects), len(bpy.data.meshes)) == counts
+    return {}
+
+
+def test_r1_e4_non_uniform_scale_refused():
+    ob = cube_obj(2)
+    ob.scale = (1, 2, 1)
+    bpy.context.view_layer.update()
+    counts = (len(bpy.data.objects), len(bpy.data.meshes))
+    try:
+        run("sculpting", "sculpt_prep.py", object="SM_Head", voxel_size_m=0.2)
+    except ValueError as exc:
+        assert "non-uniform" in str(exc) and "apply" in str(exc)
+    else:
+        raise AssertionError("non-uniform scale accepted")
+    assert (len(bpy.data.objects), len(bpy.data.meshes)) == counts
+    return {}
+
+
+def test_r1_e1_scene_unit_scale():
+    fresh()
+    box("Small", (2, 2, 2))
+    set_unit_scale(0.01)  # 2 units = 0.02 m
+    o = kit(objects=["Small"], grid_m=1.0)["objects"]["Small"]
+    assert o["checks"]["dimensions"]["status"] == "FAIL", o
+    fresh()
+    box("Big", (200, 200, 200))
+    set_unit_scale(0.01)  # 2 m
+    o = kit(objects=["Big"], grid_m=1.0)["objects"]["Big"]
+    assert o["verdict"] == "PASS", o
+    assert abs(o["checks"]["dimensions"]["dimensions_m"][0] - 2.0) < 1e-6
+    return {}
+
+
+def test_r1_e2_limits_are_metres_with_scene_unit_scale():
+    scatter_setup()
+    set_unit_scale(0.5)  # 1 unit = 0.5 m
+    r = scat(min_spacing_m=1.3, height_range_m=[-0.01, 0.25], count=4, max_dist=6)
+    objs = [bpy.data.objects[p["name"]] for p in r["props"]]
+    pts = [o.location.xy for o in objs]
+    dmin_units = min((a - b).length for i, a in enumerate(pts) for b in pts[:i])
+    assert dmin_units >= 1.3 / 0.5 - 1e-6, dmin_units  # 2.6 units
+    assert all(o.location.z * 0.5 <= 0.25 + 1e-6 for o in objs)
+    assert abs(r["measured"]["min_spacing_m"] - dmin_units * 0.5) < 1e-6 and r["verdict"] == "PASS", r["measured"]
+    assert r["measured"]["height_range_m"][1] <= 0.25 + 1e-6
+    return r["measured"]
+
+
+def test_r1_e3_real_warning_message_warns():
+    fresh()
+
+    def build(ng, gi, go):
+        w = ng.nodes.new("GeometryNodeWarning")  # Blender 5.x Warning node
+        w.warning_type = "WARNING"
+        w.inputs["Message"].default_value = "custom warn"
+        link(ng, gi.outputs[0], go.inputs[0])
+
+    gn_fixture("W", build)
+    m = only(gn())
+    nw = m["checks"]["node_warnings"]
+    assert nw["status"] == "WARN" and nw["messages"][0]["type"] == "WARNING", m
+    assert m["verdict"] == "WARN" and m["checks"]["evaluated_geometry"]["status"] == "PASS"
+    return nw
+
+
+
 def main():
     os.makedirs(OUT, exist_ok=True)
     tests = [v for k, v in sorted(globals().items(), key=lambda kv: list(globals()).index(kv[0]))

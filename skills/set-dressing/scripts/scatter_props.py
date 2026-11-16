@@ -29,7 +29,7 @@ ARGS:
 Limits are honoured while placing, then measured again on the props actually placed (slope by a fresh ray
 cast with the props hidden for the measurement, spacing and height from the finished objects) and compared with each
 limit with a 1e-6 m / 1e-4 degree tolerance. The result has "measured" (min_spacing_m, max_slope_deg,
-height_range_m of the placed props; null when there is nothing to measure), and when any limit was given
+height_range_m of the placed props, in metres (scene unit scale applied); null when there is nothing to measure), and when any limit was given
 "limits" (limit, measured, ok per limit) and "verdict": FAIL if any limit is violated, else PASS.
 """
 import json
@@ -185,7 +185,7 @@ def _slope_deg(nrm):
     return math.degrees(math.acos(max(-1.0, min(1.0, abs(nrm.z)))))
 
 
-def _measure(objs, gnd, top):
+def _measure(objs, gnd, top, sl=1.0):
     """Measured spacing, slope and height of the placed prop objects. Slope is a fresh ray cast at each prop
     with the props hidden (restored afterwards)."""
     out = {"min_spacing_m": None, "max_slope_deg": None, "height_range_m": None}
@@ -193,9 +193,9 @@ def _measure(objs, gnd, top):
         return out
     pts = [o.location.xy.copy() for o in objs]
     if len(pts) > 1:
-        out["min_spacing_m"] = min((a - b).length for i, a in enumerate(pts) for b in pts[:i])
+        out["min_spacing_m"] = min((a - b).length for i, a in enumerate(pts) for b in pts[:i]) * sl
     zs = [o.location.z for o in objs]
-    out["height_range_m"] = [min(zs), max(zs)]
+    out["height_range_m"] = [min(zs) * sl, max(zs) * sl]
     hidden = [(o, o.hide_viewport) for o in objs]
     try:
         for o in objs:
@@ -239,6 +239,7 @@ def main(target, count=8, kinds=None, clusters=3, min_dist=0.4, max_dist=3.5, gr
     bad = [k for k in kinds if k not in KINDS]
     if bad:
         raise ValueError(f"unknown kinds {bad}; use {list(KINDS)}")
+    sl = bpy.context.scene.unit_settings.scale_length or 1.0  # metres per Blender unit; limits are in metres
     limits = {}
     if min_spacing_m is not None:
         if not min_spacing_m >= 0:
@@ -320,8 +321,8 @@ def main(target, count=8, kinds=None, clusters=3, min_dist=0.4, max_dist=3.5, gr
             continue
         z, nrm = hit
         if (max_slope_deg is not None and _slope_deg(nrm) > max_slope_deg) or \
-           (height_range_m is not None and not height_range_m[0] <= z <= height_range_m[1]) or \
-           (min_spacing_m is not None and any((xy - p).length < min_spacing_m for p, _r in placed)):
+           (height_range_m is not None and not height_range_m[0] / sl <= z <= height_range_m[1] / sl) or \
+           (min_spacing_m is not None and any((xy - p).length < min_spacing_m / sl for p, _r in placed)):
             fails[ci] += 1
             continue
         obj = bpy.data.objects.new(f"PROP_{'ABCDEFGH'[ci]}_{kind}_{len(made):02d}", _mesh(kind))
@@ -333,7 +334,7 @@ def main(target, count=8, kinds=None, clusters=3, min_dist=0.4, max_dist=3.5, gr
         fails[ci] = 0
         made.append({"name": obj.name, "kind": kind, "cluster": ci,
                      "loc": [round(v, 3) for v in obj.location]})
-    measured = _measure([bpy.data.objects[m["name"]] for m in made], gnd, hi.z)
+    measured = _measure([bpy.data.objects[m["name"]] for m in made], gnd, hi.z, sl)
     result = {"count": len(made), "collection": col.name, "props": made,
               "shared_meshes": len({m["kind"] for m in made}), "max_dist": max_dist, "measured": measured,
               "verdict": "PASS"}
