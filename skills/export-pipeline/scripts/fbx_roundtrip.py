@@ -303,13 +303,14 @@ def _check(status, **info):
     return info
 
 
-def _source_start(exported, nla_takes):
+def _source_start(exported, takes_all):
     """The one scene-wide frame the exporter's takes start from: each all-actions take is baked from its action's first
     key (`act.frame_range`), each NLA take from its strip's `frame_start`. The earliest of them over every exported
-    object, or None when the export writes no takes (then nothing is animated and the current frame is used)."""
+    object, or None when the export writes no takes (then nothing is animated and the current frame is used). Called
+    BEFORE the export: it reads bpy.data.actions, which after the import also holds the imported actions."""
     starts = []
     for ob in exported:
-        for name, kind in _expected_takes(ob, []):
+        for name, kind in takes_all[ob.name]:
             if kind == "action":
                 starts.append(bpy.data.actions[name].frame_range[0])
         ad = ob.animation_data
@@ -340,7 +341,7 @@ def _pose_state_mismatch(exported):
     return None
 
 
-def _set_imported_actions(originals, imported_by_id, new_actions, pre_names):
+def _set_imported_actions(originals, imported_by_id, new_actions, pre_names, takes_all):
     """Give each imported object the imported action that corresponds to its source object's active action (cleared
     when the source has none), so both sides are evaluated in the same take. Returns a reason string when some
     active take has no imported counterpart (dimensions are then NOT_CHECKED), else None. Temporary data: nothing to
@@ -362,7 +363,7 @@ def _set_imported_actions(originals, imported_by_id, new_actions, pre_names):
         full = f"{imp.name}|{orig.name}|{src.name}"
         hit = by_name.get(full)
         if hit is None and full in pre_names:  # the importer renumbered it (`Walk.001` -> `Walk.002`, `Walk` -> `Walk.001`)
-            others = {f"{imp.name}|{orig.name}|{n}" for n, kind in _expected_takes(orig, []) if kind == "action"} - {full}
+            others = {f"{imp.name}|{orig.name}|{n}" for n, kind in takes_all[orig.name] if kind == "action"} - {full}
             hit = next((a for n, a in by_name.items()
                         if n not in others and SUFFIX_RE.sub("", n) == SUFFIX_RE.sub("", full)), None)
         if hit is None:
@@ -456,10 +457,11 @@ def main(out_path, objects=None, overwrite=False, tol=0.001, global_scale=1.0, r
     before_file = _stamp(out_path)
     exported_order = [o for o in view_layer.objects if o in targets]
     nla_takes = _nla_takes(exported_order)
-    expected = {}
-    for o in targets:
-        if o.type == "ARMATURE":
-            expected[o.name] = _expected_takes(o, nla_takes)
+    # Everything about the SOURCE is computed here, once, from the pre-import action set: nothing source-side may read
+    # bpy.data.actions after the import (it then also holds the imported actions, which resolve on the originals).
+    takes_all = {o.name: _expected_takes(o, nla_takes) for o in targets}
+    expected = {o.name: takes_all[o.name] for o in targets if o.type == "ARMATURE"}
+    src_start = _source_start(exported_order, takes_all)
     pre_action_names = {a.name for a in bpy.data.actions}
     arm_names = {o.name: o for o in targets if o.type == "ARMATURE"}
     originals = {}
@@ -467,6 +469,8 @@ def main(out_path, objects=None, overwrite=False, tol=0.001, global_scale=1.0, r
     before = None
     imported_by_id, imported_clips, extras = {}, {}, []
     try:
+        # The exporter freezes the geometry at the user's frame: take the source's object-space points now.
+        src_pts_by_name = {o.name: _local_points(o, True) for o in targets if o.type == "MESH"}
         for i, o in enumerate(targets, 1):
             o[TAG] = i
             originals[i] = o
@@ -520,18 +524,18 @@ def main(out_path, objects=None, overwrite=False, tol=0.001, global_scale=1.0, r
         skip = _pose_state_mismatch(targets)
         # Shape and transform are written at different times: the geometry is frozen at the user's frame (taken here,
         # before any frame change), the transform chain is read at the take start below.
-        src_pts = [_local_points(o, True) for _, o, _ in pairs]
+        src_pts = [src_pts_by_name[o.name] for _, o, _ in pairs]
         imp_pts = [_local_points(i, False) for _, _, i in pairs]
         window.scene = tmp_scene
         try:
             if skip is None:
-                skip = _set_imported_actions(originals, imported_by_id, new_actions, pre_action_names)
+                skip = _set_imported_actions(originals, imported_by_id, new_actions, pre_action_names, takes_all)
             if skip is None:
                 imp_dims = _measure_all(tmp_scene, _imported_start(new_actions), [(i, c) for (_, _, i), c in zip(pairs, imp_pts)])
         finally:
             window.scene = scene
         if skip is None:
-            src = _measure_all(scene, _source_start(targets, nla_takes), [(o, c) for (_, o, _), c in zip(pairs, src_pts)])
+            src = _measure_all(scene, src_start, [(o, c) for (_, o, _), c in zip(pairs, src_pts)])
             dims = {rid: (a, b) for (rid, _, _), a, b in zip(pairs, src, imp_dims)}
         else:
             dims = {rid: {"skip": skip} for rid, _, _ in pairs}

@@ -1366,6 +1366,79 @@ def test_v2_active_take_suffixed_name_collision_mesh():
     return d
 
 
+# ------------------------------------------------------------------------- review round 13 (Seldon, batch V)
+
+def _linear_extrapolated(action):
+    for layer in action.layers:
+        for strip in layer.strips:
+            for bag in strip.channelbags:
+                for fc in bag.fcurves:
+                    fc.extrapolation = "LINEAR"
+                    for kp in fc.keyframe_points:
+                        kp.interpolation = "LINEAR"
+
+
+def test_v2_clip_starting_at_frame_10_fan_blade():
+    """Round 13: the source start frame comes from the pre-import actions, not from the imported ones (first key 1)."""
+    import math as _m
+    out = {}
+
+    def blade():
+        reset()
+        o = box("SM_Blade", 2.0)
+        o.scale = (1.0, 2.0, 0.1)
+        o.animation_data_create()
+        o.animation_data.action = bpy.data.actions.new("Spin")
+        for frame, z in ((10, 0.0), (50, 2 * _m.pi)):
+            o.rotation_euler = (0.0, 0.0, z)
+            o.keyframe_insert("rotation_euler", frame=frame)
+        _linear_extrapolated(o.animation_data.action)
+        select("SM_Blade")
+        return o
+
+    for frame in (10, 30, 50):
+        blade()
+        bpy.context.scene.frame_set(frame)
+        before = snap()
+        r = _rt(f"blade{frame}.fbx", ["SM_Blade"])
+        d = r["objects"]["SM_Blade"]["checks"]["dimensions"]
+        assert r["verdict"] == "PASS" and d["status"] == "PASS", (frame, d)
+        assert bpy.context.scene.frame_current == frame and snap() == before
+        out[f"frame_{frame}"] = d["exported"]
+    blade()
+    bpy.context.scene.frame_set(30)
+    bad = fbx(objects=["SM_Blade"], global_scale=2.0, out_path=os.path.join(sub("fbx"), "blade_bad.fbx"))
+    assert bad["verdict"] == "FAIL"
+    return out
+
+
+def test_v2_armature_clip_starting_at_frame_10():
+    """A mesh parented to a bone whose clip starts at frame 10 (linear, extrapolated)."""
+    import math as _m
+    reset()
+    rg = rig("Rig", ())
+    rg.animation_data.action = bpy.data.actions.new("Swing")
+    pb = rg.pose.bones["Arm"]
+    pb.rotation_mode = "XYZ"
+    for frame, z in ((10, 0.0), (20, _m.pi / 2)):
+        pb.rotation_euler = (0.0, 0.0, z)
+        pb.keyframe_insert("rotation_euler", frame=frame)
+    _linear_extrapolated(rg.animation_data.action)
+    blade = box("SM_Plank", 2.0)
+    blade.scale = (1.0, 2.0, 0.1)
+    blade.parent = rg
+    blade.parent_type = "BONE"
+    blade.parent_bone = "Arm"
+    bpy.context.scene.frame_set(10)
+    select("SM_Plank", "Rig")
+    before = snap()
+    r = _rt("plank.fbx", ["SM_Plank", "Rig"])
+    d = r["objects"]["SM_Plank"]["checks"]["dimensions"]
+    assert r["verdict"] == "PASS" and d["status"] == "PASS", d
+    assert bpy.context.scene.frame_current == 10 and snap() == before
+    return d
+
+
 TESTS = (test_v1_isolate, test_v1_wire, test_v1_contact_sheet_size_and_tiles, test_v1_restores_state,
          test_v1_restores_state_on_failed_first_view, test_v1_restores_state_on_failed_wire_view,
          test_v1_restores_state_on_failed_sheet, test_v1_unknown_view_changes_nothing,
@@ -1390,7 +1463,8 @@ TESTS = (test_v1_isolate, test_v1_wire, test_v1_contact_sheet_size_and_tiles, te
          test_v2_active_take_matches, test_v2_active_take_without_imported_counterpart_is_not_checked,
          test_v2_nla_driven_mesh_dimensions_not_checked,
          test_v2_animated_modifier_geometry_frozen_at_export_frame,
-         test_v2_active_take_suffixed_name_collision_mesh)
+         test_v2_active_take_suffixed_name_collision_mesh, test_v2_clip_starting_at_frame_10_fan_blade,
+         test_v2_armature_clip_starting_at_frame_10)
 
 
 def main():
