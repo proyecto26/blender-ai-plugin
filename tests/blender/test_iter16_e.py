@@ -836,6 +836,20 @@ def test_r1_e3_real_warning_message_warns():
 
 
 
+def test_r2_e4_fingerprint_covers_selection_and_active():
+    ob, other = sculpt_fixture()
+    n = ns("sculpting", "sculpt_prep.py", object="SM_Head", voxel_size_m=0.5)
+    fp = n["_fingerprint"]
+    a = fp(ob)
+    assert a["selected"] == ["Other"] and a["active"] == "Other", a
+    ob.select_set(True)
+    assert not n["_same"](a, fp(ob)), "selection change not detected"
+    ob.select_set(False)
+    bpy.context.view_layer.objects.active = ob
+    assert not n["_same"](a, fp(ob)), "active change not detected"
+    return {}
+
+
 def main():
     os.makedirs(OUT, exist_ok=True)
     tests = [v for k, v in sorted(globals().items(), key=lambda kv: list(globals()).index(kv[0]))

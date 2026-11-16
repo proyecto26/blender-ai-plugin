@@ -75,6 +75,8 @@ def _fingerprint(obj):
         "matrix": tuple(tuple(r) for r in obj.matrix_world),
         "collections": sorted(c.name for c in obj.users_collection),
         "mesh_users": me.users,
+        "selected": sorted(o.name for o in bpy.context.view_layer.objects if o.select_get()),
+        "active": (bpy.context.view_layer.objects.active.name if bpy.context.view_layer.objects.active else None),
     }
 
 
