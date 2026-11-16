@@ -24,7 +24,7 @@ Stages: inspect, brief, model, look_dev, light_camera, animate, validate, export
 
 | Skill | Stage | Job | Scripts |
 |---|---|---|---|
-| `animation` | animate | Game-ready animation: walk, run and idle cycles, combat moves, camera animation, NLA. | turntable.py |
+| `animation` | animate | Game-ready animation: walk, run and idle cycles, combat moves, camera animation, NLA. | bake_check.py, turntable.py |
 | `archviz` | model | Architectural visualization: photoreal interior and exterior renders at real-world scale. | - |
 | `blender-modeler` | model | Core mesh modeling: blockouts, Edit Mode, modifiers, smooth/flat shading. | - |
 | `camera-cinematography` | light_camera | Camera work: framing, lenses, depth of field, hero shots and camera moves. | camera_rig.py |
