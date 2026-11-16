@@ -1,6 +1,8 @@
 """Add the standard non-destructive hard-surface finishing stack:
 Bevel (angle-limited, harden normals) -> Weighted Normal (keep sharp) -> optional Triangulate.
-Existing modifiers with the same names are updated, not duplicated.
+Existing modifiers with the same names are updated, not duplicated and moved (not recreated) into one block in that order,
+starting where the first of them was. Modifiers you added keep their order among themselves: those before the
+first owned one stay before the block, the rest end up after it.
 
     import runpy
     result = runpy.run_path("<skill_dir>/scripts/bevel_stack.py",
@@ -40,6 +42,21 @@ def _modifier(obj, name, kind):
     return mod if mod and mod.type == kind else obj.modifiers.new(name, kind)
 
 
+def _move_to(obj, mod, index):
+    obj.modifiers.move(list(obj.modifiers).index(mod), index)
+
+
+def _order_owned(obj, bevel, wn, tri):
+    """Make the owned modifiers one contiguous block in bevel -> weighted normal -> triangulate order, starting
+    where the first of them was. The modifiers themselves are moved, never recreated (settings and animation
+    stay). User modifiers keep their order among themselves; those that sat before the first owned one stay
+    before the block, all others end up after it."""
+    ordered = [m for m in (bevel, wn, tri) if m is not None]
+    start = min(list(obj.modifiers).index(m) for m in ordered)
+    for k, mod in enumerate(ordered):
+        _move_to(obj, mod, start + k)
+
+
 def main(objects, width=0.003, segments=2, angle_deg=30.0, triangulate=False):
     report = {}
     for name in objects:
@@ -59,9 +76,11 @@ def main(objects, width=0.003, segments=2, angle_deg=30.0, triangulate=False):
         wn.keep_sharp = True
         wn.weight = 50
         wn.mode = "FACE_AREA"
+        tri = None
         if triangulate:
             tri = _modifier(obj, "HS_Triangulate", "TRIANGULATE")
             tri.keep_custom_normals = True
+        _order_owned(obj, bevel, wn, tri if triangulate else obj.modifiers.get("HS_Triangulate"))
         # Smooth shading is required for weighted normals to take effect.
         for poly in obj.data.polygons:
             poly.use_smooth = True

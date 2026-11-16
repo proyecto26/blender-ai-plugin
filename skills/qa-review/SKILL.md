@@ -50,6 +50,19 @@ Use `get_screenshot_of_area_as_image("VIEW_3D")` via MCP when connected.
 
 ## Scripted Checks
 
+Run these instead of judging by eye, in this order, and report the numbers they return:
+
+| When | Script (skill) | Fails on |
+|---|---|---|
+| After every modeling pass | `validate_asset.py` (`blender-mcp-workflow`) | degenerate faces or edges, inconsistent winding, inside-out shells, collapsed or overlapping UVs, budget, naming |
+| Before baking or export | `uv_unwrap_check.py` (`uv-workflow`), with `uv_layer` set to the channel you ship | collapsed faces, overlap on a unique-bake or lightmap channel; warns on density spread, low coverage, stretch |
+| After skinning | `rig_check.py`, then `stress_check.py` (`rigging`) | weights, bone axes, unapplied transforms; then poses not reached, twist collapse, stretch |
+| Multi-object asset or scene | `clash_audit.py` (`blender-mcp-workflow`) | penetration, containment, floating parts (`within_mesh=True` for parts inside one mesh) |
+
+`NOT_CHECKED` is never a pass: say what was not measured. Headless, pass `result_path` and a new `run_id`, and count
+the run only if that file exists with that `run_id` (exit code 2 means the verdict was FAIL; any other non-zero code
+means the script did not finish).
+
 For a multi-object asset or scene, run the `blender-mcp-workflow` skill's `clash_audit.py` script next to the checklists.
 It reports penetrating pairs with an estimated depth, objects hidden inside others, and floating parts, on the evaluated
 meshes (modifiers count; touching faces do not clash). Any clash, contained object or floating part is a defect: a clash

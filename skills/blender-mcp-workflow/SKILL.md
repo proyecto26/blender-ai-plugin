@@ -72,6 +72,20 @@ blender -b asset.blend --python <skill_dir>/scripts/validate_asset.py -- '{"tri_
 blender -b asset.blend --python <skill_dir>/scripts/validate_asset.py -- --args-file args.json
 ```
 
+For a verdict you will act on (`validate_asset.py`, `clash_audit.py`; the other verdict scripts take the same two
+arguments), use `--python-exit-code 1`, pass `--args-file`, and give the ARGS a fresh `run_id` and a `result_path`:
+
+```bash
+# args.json: {"objects": ["SM_Crate"], "result_path": "C:/work/validate.json", "run_id": "crate-007"}
+blender -b asset.blend --python-exit-code 1 --python <skill_dir>/scripts/validate_asset.py -- --args-file args.json
+```
+
+The script writes its result dict plus `"run_id"` to `result_path` (temp file, then replace) when it finishes. The run
+succeeded only if the exit code is 0 or 2 **and** `result_path` exists with this `run_id`. Exit code 0 is PASS or WARN, 2
+is a FAIL verdict, 1 is a script error (Blender's own exit code for an exception, a missing script file or a bad
+argument; no file is written). A missing file or another `run_id` (an older run's file) is a failed run, never a pass.
+Only a background command-line run exits with 2; a `runpy` call inside a live Blender never ends the session.
+
 Read a script before running it the first time in a session; pass only the documented ARGS.
 
 When Blender is not connected and the user will paste code into Blender's Scripting workspace, give them
@@ -95,7 +109,7 @@ Python and Blender accept forward slashes on every OS; macOS and Linux paths nee
 | `scripts/capture_views.py` | Front / 3-4 / side / back / top / camera PNGs with a temporary camera; restores settings | No (temp camera removed) |
 | `scripts/ref_board.py` | Reads a folder of reference images, writes `style_bible.json` (palette, value/saturation histograms, contrast, warm/cool) | No (writes the JSON only) |
 | `scripts/compare_to_refs.py` | Scores renders, viewport captures or engine screenshots against the bible: distances, score, plain-language drift list | No |
-| `scripts/clash_audit.py` | Clash gate for several meshes: penetrating pairs with an estimated depth, objects fully inside others, floating parts (groups by contact within `gap_max_m`); modifiers count, touching faces do not; optional `evidence_path` writes its own result file into a run folder | No (writes the evidence file only when asked) |
+| `scripts/clash_audit.py` | Clash gate for several meshes: penetrating pairs with an estimated depth, objects fully inside others, floating parts (groups by contact within `gap_max_m`); modifiers count, touching faces do not; opt-in `within_mesh=True` also audits the islands of one mesh (coplanar overlap is reported from 1e-6 m2, smaller slivers are not); optional `evidence_path` writes its own result file into a run folder | No (writes the evidence file only when asked) |
 | `scripts/silhouette_score.py` | Projects the named meshes through named cameras and scores the silhouette against reference masks (alpha, or background from the corners): IoU, bbox and centroid drift per view, PASS/FAIL against `min_iou`; no render needed | No |
 | `scripts/fit_search.py` | Coordinate search over named numeric properties (scale, location, a modifier value) that raises the `silhouette_score.py` IoU; bounded by `max_evals`, restores every value unless `apply` is true | Only with `apply: true` |
 | `scripts/ingest_asset.py` | Imports a local GLB / glTF (external `.bin`) / FBX / OBJ / USD file into a new collection, scales it to a target size, puts its base centre at the origin, prefixes names, bakes transforms, then runs `validate_asset.py`; refuses URLs and `.blend` | Adds the imported objects only |

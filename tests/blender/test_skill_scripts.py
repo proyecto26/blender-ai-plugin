@@ -46,7 +46,17 @@ def _cube(name, size=1.0, loc=(0, 0, 0), collection=None, segments=0):
     bmesh.ops.translate(bm, verts=bm.verts, vec=(0, 0, size / 2))
     bm.to_mesh(me)
     bm.free()
-    me.uv_layers.new(name="UVMap")
+    uvl = me.uv_layers.new(name="UVMap")
+    # A real layout, one cell of a 3x2 grid per cube side (all-zero UVs are flagged by validate_asset's collapsed-UV check)
+    lo = [min(v.co[i] for v in me.vertices) for i in range(3)]
+    for poly in me.polygons:
+        ax = max(range(3), key=lambda i: abs(poly.normal[i]))
+        cell = ax * 2 + (poly.normal[ax] < 0)
+        u_i, v_i = [i for i in range(3) if i != ax]
+        for li in poly.loop_indices:
+            co = me.vertices[me.loops[li].vertex_index].co
+            uvl.uv[li].vector = ((cell % 3) / 3 + 0.02 + 0.29 * (co[u_i] - lo[u_i]) / size,
+                                 (cell // 3) / 2 + 0.02 + 0.46 * (co[v_i] - lo[v_i]) / size)
     obj = bpy.data.objects.new(name, me)
     (collection or bpy.context.scene.collection).objects.link(obj)
     obj.location = loc

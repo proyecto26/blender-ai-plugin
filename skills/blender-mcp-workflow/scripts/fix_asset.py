@@ -12,7 +12,12 @@ ARGS:
     apply       (str)   "scale" (default), "rotation_scale", or "" to keep transforms
     uv          (str)   "box" (default): world-size box projection, 1 UV unit = `uv_scale` m;
                         "smart": Smart UV Project; "" to skip. Never replaces an existing UV layer.
-    uv_scale    (float) metres per UV unit for "box" (default 1.0)
+    uv_scale    (float) metres per UV unit for "box" (default 1.0); must be > 0
+
+Arguments are checked before anything changes: any other `apply` or `uv` value, or a `uv_scale` that is not a
+positive number, raises and leaves every object as it was. An object that is in Edit Mode is switched to Object Mode before anything is changed (its Edit Mode mesh would otherwise
+overwrite the fix) and put back in Edit Mode at the end. Smart UV leaves the mode (Object or Edit) and the active object as
+they were, also when it fails, and a Smart UV operator that does not return FINISHED raises.
 
 A mesh shared by several objects is made single-user first, so siblings are never changed.
 Children of a fixed object keep their world transform (their parent inverse absorbs the change). Vertex- and
@@ -108,40 +113,82 @@ def _box_uv(me, uv_scale):
 
 
 def _smart_uv(obj):
+    """Smart UV Project on one object. The entry mode (Object or Edit) and the active object are restored whatever
+    happens, and the cleanup operator's result is checked (it raises only when nothing else is already failing)."""
     prev = bpy.context.view_layer.objects.active
+    entry_mode = obj.mode
     bpy.context.view_layer.objects.active = obj
-    with bpy.context.temp_override(active_object=obj, object=obj, selected_objects=[obj],
-                                   selected_editable_objects=[obj]):
-        bpy.ops.object.mode_set(mode="EDIT")
-        bpy.ops.mesh.select_all(action="SELECT")
-        bpy.ops.uv.smart_project(angle_limit=math.radians(66), island_margin=0.002)
-        bpy.ops.object.mode_set(mode="OBJECT")
-    bpy.context.view_layer.objects.active = prev
+    try:
+        with bpy.context.temp_override(active_object=obj, object=obj, selected_objects=[obj],
+                                       selected_editable_objects=[obj]):
+            for op, kw in ((bpy.ops.object.mode_set, {"mode": "EDIT"}), (bpy.ops.mesh.select_all, {"action": "SELECT"}),
+                           (bpy.ops.uv.smart_project, {"angle_limit": math.radians(66), "island_margin": 0.002})):
+                result = op(**kw)
+                if result != {"FINISHED"}:
+                    raise RuntimeError(f"{op.idname()} returned {set(result)}, not {{'FINISHED'}}: no UVs were made")
+    finally:
+        failing = sys.exc_info()[0] is not None
+        try:
+            with bpy.context.temp_override(active_object=obj, object=obj, selected_objects=[obj],
+                                           selected_editable_objects=[obj]):
+                if obj.mode != entry_mode:
+                    result = bpy.ops.object.mode_set(mode=entry_mode)
+                    if result != {"FINISHED"} and not failing:
+                        raise RuntimeError(f"object.mode_set({entry_mode}) returned {set(result)}: mode not restored")
+        finally:
+            bpy.context.view_layer.objects.active = prev  # restored even when the mode switch raised or was cancelled
+
+
+def _set_mode(obj, mode):
+    with bpy.context.temp_override(active_object=obj, object=obj, selected_objects=[obj], selected_editable_objects=[obj]):
+        result = bpy.ops.object.mode_set(mode=mode)
+    if result != {"FINISHED"}:
+        raise RuntimeError(f"object.mode_set({mode}) returned {set(result)} for {obj.name}")
 
 
 def main(objects=None, apply="scale", uv="box", uv_scale=1.0):
     if not objects:
         raise ValueError("objects (list of mesh object names) is required")
+    # every argument is checked before anything changes, so a bad call leaves the scene as it was
+    if apply not in ("scale", "rotation_scale", ""):
+        raise ValueError(f"apply must be 'scale', 'rotation_scale' or '', got {apply!r}")
+    if uv not in ("box", "smart", ""):
+        raise ValueError(f"uv must be 'box', 'smart' or '', got {uv!r}")
     uv_scale = float(uv_scale)
+    if not math.isfinite(uv_scale) or uv_scale <= 0:
+        raise ValueError(f"uv_scale must be a positive number of metres per UV unit, got {uv_scale!r}")
     report = {}
     for name in objects:
         obj = bpy.data.objects.get(name)
         if obj is None or obj.type != "MESH":
             report[name] = {"error": "not a mesh object"}
             continue
-        if obj.data.users > 1:
-            obj.data = obj.data.copy()
-        applied, skipped = _apply(obj, apply) if apply else (False, [])
-        r = {"applied": applied, "uv_added": None}
-        if skipped:
-            r["children_not_preserved"] = skipped
-        if uv and not obj.data.uv_layers:
-            _box_uv(obj.data, uv_scale) if uv == "box" else _smart_uv(obj)
-            r["uv_added"] = uv
-        r["scale"] = [round(s, 4) for s in obj.scale]
-        r["dimensions"] = [round(d, 4) for d in obj.dimensions]
-        r["uv_layers"] = [l.name for l in obj.data.uv_layers]
-        report[name] = r
+        # obj.data holds the pre-edit mesh while the object is in Edit Mode, and leaving Edit Mode later would write the
+        # stale copy over anything baked into it: flush to Object Mode first, put the entry mode back at the end
+        entry_mode = obj.mode
+        if entry_mode != "OBJECT":
+            _set_mode(obj, "OBJECT")
+        try:
+            if obj.data.users > 1:
+                obj.data = obj.data.copy()
+            applied, skipped = _apply(obj, apply) if apply else (False, [])
+            r = {"applied": applied, "uv_added": None}
+            if skipped:
+                r["children_not_preserved"] = skipped
+            if uv and not obj.data.uv_layers:
+                _box_uv(obj.data, uv_scale) if uv == "box" else _smart_uv(obj)
+                r["uv_added"] = uv
+            r["scale"] = [round(s, 4) for s in obj.scale]
+            r["dimensions"] = [round(d, 4) for d in obj.dimensions]
+            r["uv_layers"] = [l.name for l in obj.data.uv_layers]
+            report[name] = r
+        finally:
+            if obj.mode != entry_mode:
+                prev = bpy.context.view_layer.objects.active
+                try:
+                    _set_mode(obj, entry_mode)
+                finally:
+                    bpy.context.view_layer.objects.active = prev
     return {"objects": report}
 
 

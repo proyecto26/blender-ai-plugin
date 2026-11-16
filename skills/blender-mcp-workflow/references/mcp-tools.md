@@ -80,7 +80,9 @@ if col.name not in bpy.context.scene.collection.children:
 # Apply transforms on one object
 with bpy.context.temp_override(active_object=obj, object=obj,
                                selected_objects=[obj], selected_editable_objects=[obj]):
-    bpy.ops.object.transform_apply(location=False, rotation=True, scale=True)
+    result = bpy.ops.object.transform_apply(location=False, rotation=True, scale=True)
+if result != {"FINISHED"}:
+    raise RuntimeError(f"transform_apply returned {result}: transforms were not applied")
 ```
 
 ```python
@@ -90,6 +92,33 @@ bm = bmesh.new(); bm.from_mesh(obj.data)
 bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=0.0001)
 bm.to_mesh(obj.data); bm.free()
 ```
+
+## Operator Results and Enum Values
+
+Every `bpy.ops` call returns a set. `{'FINISHED'}` means it did its work. `{'CANCELLED'}` is not an exception: the call
+returns, nothing was done, and the next line runs as if it had. So check the result of each operator whose effect you
+rely on (mode switches, UV and bake operators, imports and exports), and stop when it is not `{'FINISHED'}`. Measured on
+5.3: `bpy.ops.mesh.bevel()` with nothing selected returns `{'CANCELLED'}` and raises nothing, while `bpy.ops.uv.smart_project()`
+on a mesh with no faces raises `RuntimeError` (its poll fails). Both must stop your code; only the second does so by itself:
+
+```python
+import bpy
+result = bpy.ops.mesh.select_all(action="SELECT")   # a set such as {'FINISHED'}, never a bool
+if result != {"FINISHED"}:
+    raise RuntimeError(f"mesh.select_all returned {result}: nothing was selected")
+```
+
+Enum values change between versions (`'FAST'` was a Boolean solver in 4.x and is rejected in 5.x). Read the valid
+identifiers from the property instead of writing them from memory:
+
+```python
+import bpy
+prop = bpy.types.BooleanModifier.bl_rna.properties["solver"]
+choices = [item.identifier for item in prop.enum_items]   # Blender 5.3: ['FLOAT', 'EXACT', 'MANIFOLD']
+```
+
+For an operator argument use `bpy.ops.<module>.<name>.get_rna_type().properties["<arg>"].enum_items`; for an instance,
+`obj.modifiers[0].bl_rna.properties["solver"].enum_items`.
 
 ## Error Recovery
 

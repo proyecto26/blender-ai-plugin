@@ -7,7 +7,8 @@ only), -rigid, -navmesh, -noimp. Reports which hints are present.
         "objects": ["SM_Crate_01", "SM_Crate_01-colonly"], "out_path": "/tmp/godot/crate.glb"}})["result"]
 
 ARGS:
-    objects   (list[str]|None) default: COL_Export contents, else selection
+    objects   (list[str]|None) default: COL_Export contents, else selection; a name not in the file raises
+              ValueError naming every missing object, before anything is exported
     out_path  (str, required) .glb (binary, recommended) or .gltf
     animation (bool) default False
 
@@ -105,7 +106,10 @@ def _restore_state(camera, active, mode):
 
 def main(out_path, objects=None, animation=False):
     if objects:
-        targets = [bpy.data.objects[n] for n in objects if n in bpy.data.objects]
+        missing = [n for n in objects if n not in bpy.data.objects]
+        if missing:  # fail before exporting: a silently dropped name would also escape the read-back check
+            raise ValueError(f"objects not found: {missing}")
+        targets = [bpy.data.objects[n] for n in objects]
     else:
         col = bpy.data.collections.get("COL_Export")
         targets = list(col.all_objects) if col else list(bpy.context.selected_objects)

@@ -104,6 +104,8 @@ result = runpy.run_path("<skill_dir>/scripts/export_unity.py", init_globals={"AR
 
 ARGS: `objects`, `out_path`, `animation`, `strict`
 
+A name in `objects` that is not in the file raises `ValueError` naming every missing object, before anything is exported.
+
 ## Reference Guide
 
 | Topic | Reference | Load When |

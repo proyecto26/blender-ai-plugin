@@ -152,14 +152,16 @@ path of this installed script and their ARGS. Don't inline or rewrite the script
 
 | Script | What it does |
 |--------|--------------|
-| `scripts/uv_unwrap_check.py` | Unwrap (optional) and measure UVs: texel density, UV-space usage and out-of-range loops, per object. Unwrapping runs Smart UV Project with an island margin sized for the target texture resolution. `lightmap: True` adds a non-overlapping `UVMap_Lightmap` second channel (Lightmap Pack) and keeps the first channel as the render UV. |
+| `scripts/uv_unwrap_check.py` | Measure UVs per object and give a PASS/WARN/FAIL verdict: islands, collapsed faces, overlap, coverage per UDIM tile, per-island texel density spread, stretch (p95), out-of-range loops. Measure only unless `unwrap: True` or `lightmap: True` (a mesh with no UV channel is an error and stays unchanged otherwise; `unwrap` creates `UVMap`, and `lightmap: True` creates the missing channels). `uv_layer` picks the channel (default: active render); the result names it. Overlap or a collapsed face FAILs a unique-bake or lightmap channel; `allow_overlap: True` declares a mirrored/stacked layout and skips the overlap rule. Unwrap `method`: `smart`, `seams`, `min_stretch`, with `margin_px` and `seams_from_angle`. `lightmap: True` adds a non-overlapping `UVMap_Lightmap` channel, measured under the lightmap rules: under result key `lightmap` when another channel is the one measured, and measured directly in the object entry when the lightmap channel is the one measured (`uv_layer` names it, or it is the only channel). `result_path` + `run_id` write the result to a file (`run_id` is also in the returned result). Unwrap or lightmap on a mesh shared with other objects is refused unless `make_single_user: True` (gives this object its own copy); `margin_px` is the real gap between islands. Edit Mode, component selection, selected objects and the active object are restored. |
 
 ```python
 import runpy
 result = runpy.run_path("<skill_dir>/scripts/uv_unwrap_check.py", init_globals={"ARGS": {...}})["result"]
 ```
 
-ARGS: `objects`, `unwrap`, `angle_deg`, `texture_px`, `target_px_per_m`, `lightmap`
+ARGS: `objects`, `unwrap`, `method`, `angle_deg`, `margin_px`, `seams_from_angle`, `texture_px`, `target_px_per_m`, `uv_layer`, `allow_overlap`, `lightmap`, `make_single_user`, `result_path`, `run_id`
+
+Thresholds: WARN when texel-density spread (max/min over islands) is above 1.3, union coverage is below 0.75, or stretch p95 is above 1.2. `uv_space_used` is now `uv_area_sum` (face areas added up, so stacked faces count twice); `uv_coverage` is the union.
 
 ## Reference Guide
 

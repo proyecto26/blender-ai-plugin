@@ -831,6 +831,16 @@
    "reason": "fragment: not a complete recipe (relies on names/context defined elsewhere, no script call)"
   },
   {
+   "file": "blender-mcp-workflow/references/mcp-tools.md",
+   "block": 4,
+   "reason": "snippet: operator FINISHED check; the rule is measured in tests/blender/test_iter15_qa.py (test_b2_rows)"
+  },
+  {
+   "file": "blender-mcp-workflow/references/mcp-tools.md",
+   "block": 5,
+   "reason": "snippet: enum discovery; executed by tests/blender/test_iter15_qa.py (test_b2_rows) against the real enum"
+  },
+  {
    "file": "camera-cinematography/SKILL.md",
    "block": 0,
    "reason": "template: ARGS is a {...} placeholder, not a runnable call"

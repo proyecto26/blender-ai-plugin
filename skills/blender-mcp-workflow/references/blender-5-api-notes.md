@@ -23,6 +23,14 @@ Verified live against **Blender 5.2.3 LTS** through the official MCP server. Whe
 | Curve to Mesh output `"Geometry"` | `GeometryNodeCurveToMesh` inputs `Curve`, `Profile Curve`, `Scale`, `Fill Caps`; output **`Mesh`**. Look up socket names with `[s.name for s in node.outputs if s.enabled]` instead of guessing |
 | Fluid flow `flow_behavior = "CONTINUOUS"` | `flow_behavior` is `INFLOW` (continuous emission), `OUTFLOW` or `GEOMETRY`; `flow_type` is `SMOKE`, `FIRE`, `BOTH`, `LIQUID` |
 | `Action.fcurves` | Layered actions: `action.layers[].strips[].channelbags[].fcurves` (or `anim_utils.action_get_channelbag_for_slot`) |
+| Boolean modifier `solver = "FAST"` | Rejected. The enum is `FLOAT`, `EXACT`, `MANIFOLD` (read it: `bpy.types.BooleanModifier.bl_rna.properties["solver"].enum_items`) |
+| `Bone.select`, `bone.select_head`, `bone.select_tail` | `Bone` has no `select`. Edit Mode: `EditBone.select`, `select_head`, `select_tail`. Pose Mode: `PoseBone.select`. Active bone: `armature.bones.active` |
+| Assigning `animation_data.action` animates the object | An action also needs a slot: `slot = action.slots.new("OBJECT", "Name")`, then `animation_data.action_slot = slot`. Assigning only the action leaves `action_slot` as `None`; `keyframe_insert` on an object with no slot creates one named `OB<object name>` |
+| UV selection state in Edit Mode | `scene.tool_settings.use_uv_select_sync` (UV selection follows the mesh selection) and `uv_select_mode` (`VERTEX`, `EDGE`, `FACE`). UV coordinates: `mesh.uv_layers[i].uv[loop].vector` |
+
+The last four rows were measured on Blender 5.3.0 by `tests/blender/test_iter15_qa.py` (`test_b2_rows`), not copied from
+the release notes. Every `bpy.ops` call returns a set: check `{'FINISHED'}` (see `mcp-tools.md`, "Operator Results and
+Enum Values").
 
 ## Principled BSDF Input Names
 
@@ -72,7 +80,9 @@ tree.links.new(glare.outputs["Image"], out.inputs[0])
 # Smooth by angle (replaces auto smooth) - operators need an object context
 with bpy.context.temp_override(object=obj, active_object=obj,
                                selected_objects=[obj], selected_editable_objects=[obj]):
-    bpy.ops.object.shade_auto_smooth(angle=math.radians(30))  # adds "Smooth by Angle" modifier
+    result = bpy.ops.object.shade_auto_smooth(angle=math.radians(30))  # adds "Smooth by Angle" modifier
+if result != {"FINISHED"}:
+    raise RuntimeError(f"shade_auto_smooth returned {result}: no modifier was added")
 ```
 
 ```python

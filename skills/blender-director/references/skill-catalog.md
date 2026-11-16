@@ -44,7 +44,7 @@ Stages: inspect, brief, model, look_dev, light_camera, animate, validate, export
 | `prop-artist` | model | Prop modeling: furniture, tools, bottles, household objects, kitbash parts. | - |
 | `rendering` | light_camera | Final render setup: Cycles/Eevee sampling, denoise, resolution, color management. | background_render.py, render_preset.py |
 | `retopology` | model | Retopology: clean quad-dominant, animation-ready topology from sculpts or messy meshes. | topology_report.py |
-| `rigging` | animate | Rigging: armatures, IK/FK, weight painting, facial rigs, drivers. | rig_check.py |
+| `rigging` | animate | Rigging: armatures, IK/FK, weight painting, facial rigs, drivers. | rig_check.py, stress_check.py |
 | `scene-assembly` | model | Scene assembly: collections, linking, library overrides, collection instances. | - |
 | `sculpting` | model | Sculpting: Dyntopo, multires, brushes, wrinkles and damage detail. | - |
 | `set-dressing` | model | Set dressing: prop placement and environmental storytelling. | scatter_props.py |
