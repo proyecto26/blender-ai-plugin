@@ -8,6 +8,31 @@ Format: [Semantic Versioning](https://semver.org/) — `Major.Minor.Patch`
 
 ## [Unreleased]
 
+Iteration 16: the medium-value items from the iteration 15 comparison. Each batch was reviewed by Seldon (Codex)
+until approved, every finding first reproduced by a failing test. Plan: `docs/plans/iteration-16-phase-2-medium.md`.
+
+- New `env_report.py` (read only): Blender version, render engines, enabled add-ons, Cycles devices and the valid
+  values of named enums; nothing in the file changes, including `is_dirty`.
+- `validate_asset.py`: FAIL on faces using an empty or out-of-range slot and on missing unpacked images (every UDIM
+  tile and every sampled frame of a sequence); WARN on sRGB data feeding data sockets, traced through Separate
+  Color/RGB/XYZ, Math, Map Range, Clamp and Invert, and on Non-Color images feeding Base Color. Budgets
+  `max_materials`, `max_texture_px` and `max_bones` per object.
+- `capture_views.py`: `isolate`, `wire` and `contact_sheet`, with every view setting restored, also on failure.
+- New `fbx_roundtrip.py`: exports to a new file, imports into a temporary scene and compares world dimensions
+  (0.1%), bone names and parents, and take names, matching objects by a temporary id rather than by name. It
+  measures the source the way the exporter does (rest pose, modifiers with shape keys when evaluated) and models
+  the exporter's take rules (NLA strip takes on every exported armature, all-actions takes, importer renames).
+- `bake_maps.py`: several high-poly sources, cage or extrusion, ray distance, UV layer, OpenGL or DirectX normals,
+  a metallic map (colour inputs converted as Blender does) and `orm=True`; nodes restored, also when a bake fails.
+- New `bake_check.py`: checks that the baked action alone reproduces the source motion, with constraints, drivers,
+  NLA and animated constraint keys muted while measuring; rotation, translation and per-axis scale per bone; a loop
+  seam check with `root_motion`.
+- New `garment_check.py` (poke-through over stress poses, with coverage) and `shape_key_audit.py` (empty, broken,
+  orphaned and asymmetric keys).
+- New `kit_check.py` (grid-aligned modular pieces), scatter limits `min_spacing_m`, `max_slope_deg` and
+  `height_range_m` in `scatter_props.py`, new `gn_diagnostics.py` and `sculpt_prep.py` (voxel remesh on a
+  duplicate, voxel size in world units, huge remeshes refused up front). Scene unit scale is honoured throughout.
+
 Iteration 15: checks that catch what users complain about in AI-made Blender work (scripts that fail when run, messy
 UVs, twisted rigs, fixing by hand), from a comparison with the blender-agent-skills pack. Ideas and thresholds only,
 no code was copied or run. Plan: `docs/plans/iteration-15-agent-skills-comparison.md`.

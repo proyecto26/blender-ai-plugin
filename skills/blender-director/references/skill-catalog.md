@@ -60,7 +60,7 @@ Stages: inspect, brief, model, look_dev, light_camera, animate, validate, export
 |---|---|---|---|
 | `asset-optimization` | validate | Cut an asset to budget, tested scripts: polycount, stray geometry, duplicate verts, extra materials. | optimize_mesh.py |
 | `collision-proxy` | validate | Game colliders, tested scripts: UCX/UHX convex hulls, boxes, capsules, engine naming. | make_collision.py |
-| `export-pipeline` | export | Engine-agnostic export, tested scripts: FBX, GLB, OBJ, USD scale, axis, pivot, batch. | export_asset.py |
+| `export-pipeline` | export | Engine-agnostic export, tested scripts: FBX, GLB, OBJ, USD scale, axis, pivot, batch. | export_asset.py, fbx_roundtrip.py |
 | `godot-export` | export | Godot 4 export, tested scripts: GLB scale, PBR, clips, -col collision. | export_godot.py |
 | `lod-pipeline` | validate | LOD chains, tested scripts: LOD1..N copies, naming, screen-size switch distances. | generate_lods.py |
 | `unity-export` | export | Unity export, tested scripts: FBX axis, scale, materials, humanoid rigs. | export_unity.py |
