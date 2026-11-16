@@ -79,7 +79,7 @@ path of this installed script and their ARGS. Don't inline or rewrite the script
 
 | Script | What it does |
 |--------|--------------|
-| `scripts/scatter_props.py` | Exact-count story clusters of boxes/barrels/pallets around a target: ground raycast, keep-out of the target bbox, no overlaps, shared meshes, `PROP_` names, one packed UV island per face (no overlap). A mesh the script made (it carries the script's tag) is rebuilt in place when its UV layout is out of date; any untagged `ME_Prop_<kind>` mesh, even one an older version made, is refused before anything is removed: rename it or delete it by hand (the script never deletes it). For many small instances on terrain use geometry-nodes `scatter_points.py`. |
+| `scripts/scatter_props.py` | Exact-count story clusters of boxes/barrels/pallets around a target: ground raycast, keep-out of the target bbox, no overlaps, shared meshes, `PROP_` names, one packed UV island per face (no overlap). A mesh the script made (it carries the script's tag) is rebuilt in place when its UV layout is out of date; any untagged `ME_Prop_<kind>` mesh, even one an older version made, is refused before anything is removed: rename it or delete it by hand (the script never deletes it). For many small instances on terrain use geometry-nodes `scatter_points.py`. Optional limits: `min_spacing_m` (least distance between props), `max_slope_deg` (steepest ground a prop may stand on) and `height_range_m` (`[low, high]` world Z); they are kept while placing and measured again on the placed props, and the result's `limits` and `verdict` say PASS or FAIL. |
 
 ```python
 import runpy
