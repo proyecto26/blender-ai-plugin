@@ -52,6 +52,9 @@ action's first key for all-actions takes, a strip's frame_start for NLA takes); 
 all actions the import created. With no takes the current frame is used. The user's frame is put back. If takes
 start at different frames no single frame matches all of them: the earliest is used, so an asset whose takes begin at
 different frames and move geometry differently there may not be comparable.
+The geometry is the exception: the exporter freezes the evaluated mesh at the user's frame, so the object-space
+vertices are taken there (animated modifiers such as an Array count included) and only the transform chain is read at
+the take start; the two are then combined.
 The active take must match too: each imported object is given the imported action of its source object's active
 action (cleared when the source has none); the imported scene is temporary, so nothing is restored there. Every piece
 of state that decides an evaluated transform at measurement time:
@@ -151,10 +154,11 @@ def _exporter_evaluates(obj):
     return any(m.type != "ARMATURE" and (m.show_render or m.show_viewport) for m in obj.modifiers)
 
 
-def _world_dims(obj, exporter_view):
-    """Axis-aligned world extent [x, y, z] of a mesh object, or None when it has no vertices. `exporter_view`: measure
-    what the exporter writes as base geometry: the evaluated mesh (current shape key values, modifiers applied, rigs
-    in rest pose) when the exporter evaluates, else the raw mesh data. The imported object is read raw (False)."""
+def _local_points(obj, exporter_view):
+    """Object-space vertex positions (n, 3) of a mesh object at the CURRENT frame, or None when it has no vertices.
+    `exporter_view`: what the exporter writes as base geometry: the evaluated mesh (current shape key values, modifiers
+    applied, rigs in rest pose) when the exporter evaluates, else the raw mesh data. The imported object is read raw
+    (False). The exporter freezes this geometry at the user's frame, so callers take it there."""
     backups, ev = [], None
     try:
         if exporter_view and _exporter_evaluates(obj):
@@ -182,9 +186,21 @@ def _world_dims(obj, exporter_view):
             arm.pose_position = mode
         if backups:
             bpy.context.view_layer.update()
+    return co
+
+
+def _dims_from(co, obj):
+    """World extent [x, y, z] of object-space points under the object's CURRENT world matrix, or None for no points."""
+    if co is None:
+        return None
     m = np.array([list(r) for r in obj.matrix_world], dtype=np.float64)
     w = co @ m[:3, :3].T + m[:3, 3]
     return [float(x) for x in (w.max(axis=0) - w.min(axis=0))]
+
+
+def _world_dims(obj, exporter_view):
+    """Geometry and transform at the current frame (see _local_points, _dims_from)."""
+    return _dims_from(_local_points(obj, exporter_view), obj)
 
 
 def _resolves(arm, fc):
@@ -345,8 +361,10 @@ def _set_imported_actions(originals, imported_by_id, new_actions, pre_names):
             continue
         full = f"{imp.name}|{orig.name}|{src.name}"
         hit = by_name.get(full)
-        if hit is None and full in pre_names:  # the importer renumbered it
-            hit = next((a for n, a in by_name.items() if SUFFIX_RE.sub("", n) == full), None)
+        if hit is None and full in pre_names:  # the importer renumbered it (`Walk.001` -> `Walk.002`, `Walk` -> `Walk.001`)
+            others = {f"{imp.name}|{orig.name}|{n}" for n, kind in _expected_takes(orig, []) if kind == "action"} - {full}
+            hit = next((a for n, a in by_name.items()
+                        if n not in others and SUFFIX_RE.sub("", n) == SUFFIX_RE.sub("", full)), None)
         if hit is None:
             return f"the active action {src.name} of {orig.name} has no imported take to evaluate"
         imp.animation_data.action = hit
@@ -356,13 +374,14 @@ def _set_imported_actions(originals, imported_by_id, new_actions, pre_names):
 
 
 def _measure_all(scene, frame, items):
-    """[(obj, exporter_view)] measured with `scene` at `frame` (None = leave it); the scene's frame is put back."""
+    """[(obj, local points)]: the world extent under each object's transform with `scene` at `frame` (None = leave it);
+    the scene's frame is put back. The geometry is NOT re-evaluated at `frame`: the exporter froze it earlier."""
     if frame is None:
-        return [_world_dims(o, view) for o, view in items]
+        return [_dims_from(co, o) for o, co in items]
     prev = scene.frame_current
     scene.frame_set(frame)
     try:
-        return [_world_dims(o, view) for o, view in items]
+        return [_dims_from(co, o) for o, co in items]
     finally:
         scene.frame_set(prev)
 
@@ -499,16 +518,20 @@ def main(out_path, objects=None, overwrite=False, tol=0.001, global_scale=1.0, r
         pairs = [(rid, o, i) for rid, o, i in pairs if o.type == "MESH" and i is not None and i.type == "MESH"]
         new_actions = [a for a in bpy.data.actions if a.session_uid not in before["actions"]]
         skip = _pose_state_mismatch(targets)
+        # Shape and transform are written at different times: the geometry is frozen at the user's frame (taken here,
+        # before any frame change), the transform chain is read at the take start below.
+        src_pts = [_local_points(o, True) for _, o, _ in pairs]
+        imp_pts = [_local_points(i, False) for _, _, i in pairs]
         window.scene = tmp_scene
         try:
             if skip is None:
                 skip = _set_imported_actions(originals, imported_by_id, new_actions, pre_action_names)
             if skip is None:
-                imp_dims = _measure_all(tmp_scene, _imported_start(new_actions), [(i, False) for _, _, i in pairs])
+                imp_dims = _measure_all(tmp_scene, _imported_start(new_actions), [(i, c) for (_, _, i), c in zip(pairs, imp_pts)])
         finally:
             window.scene = scene
         if skip is None:
-            src = _measure_all(scene, _source_start(targets, nla_takes), [(o, True) for _, o, _ in pairs])
+            src = _measure_all(scene, _source_start(targets, nla_takes), [(o, c) for (_, o, _), c in zip(pairs, src_pts)])
             dims = {rid: (a, b) for (rid, _, _), a, b in zip(pairs, src, imp_dims)}
         else:
             dims = {rid: {"skip": skip} for rid, _, _ in pairs}

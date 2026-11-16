@@ -1301,6 +1301,71 @@ def test_v2_nla_driven_mesh_dimensions_not_checked():
     return d
 
 
+# ------------------------------------------------------------------------- review round 12 (Seldon, batch V)
+
+def _array_prop():
+    """2-unit segment with an Array (relative offset X=1) whose count is keyed 1 at frame 1 and 3 at frame 10."""
+    reset()
+    o = box("SM_Fence", 2.0)
+    m = o.modifiers.new("Array", "ARRAY")
+    m.use_relative_offset = True
+    m.relative_offset_displace = (1.0, 0.0, 0.0)
+    o.animation_data_create()
+    o.animation_data.action = bpy.data.actions.new("Grow")
+    for frame, n in ((1, 1), (10, 3)):
+        m.count = n
+        o.keyframe_insert('modifiers["Array"].count', frame=frame)
+    select("SM_Fence")
+    return o
+
+
+def test_v2_animated_modifier_geometry_frozen_at_export_frame():
+    out = {}
+    for frame in (1, 5, 10):
+        o = _array_prop()
+        bpy.context.scene.frame_set(frame)
+        ev = o.evaluated_get(bpy.context.evaluated_depsgraph_get())
+        me = ev.to_mesh()
+        extent = max(v.co.x for v in me.vertices) - min(v.co.x for v in me.vertices)
+        ev.to_mesh_clear()
+        before = snap()
+        r = _rt(f"fence{frame}.fbx", ["SM_Fence"])
+        d = r["objects"]["SM_Fence"]["checks"]["dimensions"]
+        assert r["verdict"] == "PASS" and d["status"] == "PASS", (frame, d)
+        assert abs(d["exported"][0] - extent) < 1e-3, (frame, d, extent)
+        assert bpy.context.scene.frame_current == frame and snap() == before
+        out[f"frame_{frame}"] = d["exported"][0]
+    o = _array_prop()
+    bpy.context.scene.frame_set(10)
+    bad = fbx(objects=["SM_Fence"], global_scale=2.0, out_path=os.path.join(sub("fbx"), "fence_bad.fbx"))
+    assert bad["verdict"] == "FAIL" and bpy.context.scene.frame_current == 10
+    return out
+
+
+def test_v2_active_take_suffixed_name_collision_mesh():
+    """Round 12: an active action `Walk.001` whose imported take was renumbered to `Walk.002` is still found."""
+    reset()
+    door = box("SM_Door", 2.0)
+    door.scale = (1.0, 2.0, 1.0)
+    hinge = bpy.data.objects.new("Hinge", None)
+    bpy.context.scene.collection.objects.link(hinge)
+    hinge.animation_data_create()
+    hinge.animation_data.action = bpy.data.actions.new("Walk.001")
+    for frame, z in ((1, 0.0), (10, 1.5707963)):
+        hinge.rotation_euler = (0.0, 0.0, z)
+        hinge.keyframe_insert("rotation_euler", frame=frame)
+    door.parent = hinge
+    squat = bpy.data.actions.new("Hinge.001|Hinge|Walk.001")
+    squat.use_fake_user = True
+    bpy.context.scene.frame_set(1)
+    select("SM_Door", "Hinge")
+    r = _rt("walkcoll.fbx", ["SM_Door", "Hinge"])
+    d = r["objects"]["SM_Door"]["checks"]["dimensions"]
+    assert d["status"] == "PASS" and abs(d["exported"][1] - 4.0) < 1e-3, d
+    assert r["objects"]["Hinge"]["verdict"] in ("PASS", "WARN")
+    return d
+
+
 TESTS = (test_v1_isolate, test_v1_wire, test_v1_contact_sheet_size_and_tiles, test_v1_restores_state,
          test_v1_restores_state_on_failed_first_view, test_v1_restores_state_on_failed_wire_view,
          test_v1_restores_state_on_failed_sheet, test_v1_unknown_view_changes_nothing,
@@ -1323,7 +1388,9 @@ TESTS = (test_v1_isolate, test_v1_wire, test_v1_contact_sheet_size_and_tiles, te
          test_v2_strip_take_name_collision, test_v2_strip_take_collision_missing_take_fails,
          test_v2_animated_scale_measured_at_the_same_take_time, test_v2_parent_animated_prop_scene_wide_frame,
          test_v2_active_take_matches, test_v2_active_take_without_imported_counterpart_is_not_checked,
-         test_v2_nla_driven_mesh_dimensions_not_checked)
+         test_v2_nla_driven_mesh_dimensions_not_checked,
+         test_v2_animated_modifier_geometry_frozen_at_export_frame,
+         test_v2_active_take_suffixed_name_collision_mesh)
 
 
 def main():
