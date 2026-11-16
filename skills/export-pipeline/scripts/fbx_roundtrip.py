@@ -46,6 +46,10 @@ the file before the import. So `Walk.001` exported and `Walk.002` imported is a
 changed clip name and FAILs, as are missing, extra or swapped takes. Only take NAMES are compared, not their F-curves.
 Not modelled: takes of non-armature objects (not compared), strip influence/blend/solo (a take is written regardless),
 drivers, dupli-instanced objects. Armature dimensions are not compared (the importer rebuilds bone lengths).
+Time: an object whose action animates its transform is measured at the start of its first all-actions take on both
+sides: the source scene at the action's first key frame, the temporary scene at the imported action's first key frame
+(the user's frame is put back). Objects driven by NLA strips are measured at the current frame (not modelled).
+
 Dimensions: measured the way the exporter decides. If the mesh has a modifier other than Armature that is enabled
 for viewport or render, the exporter evaluates the mesh (current shape key values included) and writes that as the
 base geometry, so the source is evaluated the same way, after setting pose_position = 'REST' on every armature its
@@ -269,7 +273,34 @@ def _check(status, **info):
     return info
 
 
-def _compare(orig, imp, tol, expected_clips, imported_clips, imp_name, pre_names=frozenset()):
+def _take_start(obj, nla_takes):
+    """Frame at which the exporter's first all-actions take of this object starts (the action's first key; takes are
+    baked from there), or None when the object has no such take or NLA takes exist (their time base is the strip's)."""
+    if nla_takes:
+        return None
+    names = [n for n, kind in _expected_takes(obj, nla_takes) if kind == "action"]
+    return math.floor(bpy.data.actions[names[0]].frame_range[0]) if names else None
+
+
+def _imported_start(imp):
+    """First key frame of the action the importer assigned to the imported object, or None."""
+    ad = imp.animation_data
+    return math.floor(ad.action.frame_range[0]) if ad and ad.action else None
+
+
+def _dims_at(scene, frame, exporter_view, obj):
+    """_world_dims at `frame` of `scene` (None = leave the frame alone); the scene's frame is put back."""
+    if frame is None:
+        return _world_dims(obj, exporter_view)
+    prev = scene.frame_current
+    scene.frame_set(frame)
+    try:
+        return _world_dims(obj, exporter_view)
+    finally:
+        scene.frame_set(prev)
+
+
+def _compare(orig, imp, tol, expected_clips, imported_clips, imp_name, pre_names=frozenset(), dims=None):
     checks = {}
     if imp is None:
         return {"imported": _check("FAIL", reason=f"{orig.name} was exported but nothing with its id was imported")}
@@ -278,8 +309,7 @@ def _compare(orig, imp, tol, expected_clips, imported_clips, imp_name, pre_names
         checks["type"] = _check("FAIL", exported=orig.type, imported=imp.type)
         return checks
     if orig.type == "MESH":
-        a = _world_dims(orig, exporter_view=True)
-        b = _world_dims(imp, exporter_view=False)
+        a, b = dims if dims is not None else (_world_dims(orig, True), _world_dims(imp, False))
         if a is None or b is None:
             checks["dimensions"] = _check("NOT_CHECKED", reason="a mesh with no vertices has no extent")
         else:
@@ -392,11 +422,24 @@ def main(out_path, objects=None, overwrite=False, tol=0.001, global_scale=1.0, r
                 made = [a for a in bpy.data.actions
                         if a.session_uid not in before["actions"] and a.name.startswith(imp.name + "|")]
                 imported_clips[rid] = [a.name for a in sorted(made, key=lambda a: a.session_uid)]
+        # Animated transforms: measure both sides at the start of the take they share (the source at the action's first
+        # key, the temporary scene at the imported action's first key), not at whatever frame each scene sits on.
+        dims = {}
+        for rid, orig in originals.items():
+            imp = (imported_by_id.get(rid) or [None])[0]
+            if orig.type == "MESH" and imp is not None and imp.type == "MESH":
+                a = _dims_at(scene, _take_start(orig, nla_takes), True, orig)
+                window.scene = tmp_scene
+                try:
+                    b = _dims_at(tmp_scene, _imported_start(imp), False, imp)
+                finally:
+                    window.scene = scene
+                dims[rid] = (a, b)
         out = {}
         for rid, orig in originals.items():
             imps = imported_by_id.get(rid) or [None]
             checks = _compare(orig, imps[0], tol, expected.get(orig.name, []) if orig.type == "ARMATURE" else [],
-                              imported_clips.get(rid, []), imps[0].name if imps[0] else "", pre_action_names)
+                              imported_clips.get(rid, []), imps[0].name if imps[0] else "", pre_action_names, dims.get(rid))
             if len(imps) > 1:
                 checks["unique_match"] = _check("FAIL", reason=f"{len(imps)} imported objects carry id {rid}")
             out[orig.name] = {"id": rid, "type": orig.type, "checks": checks,
