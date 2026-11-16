@@ -41,7 +41,8 @@ Per armature the expected list is the scene's NLA takes followed by its own all-
 is compared with the i-th imported action of that armature (imported actions in creation order, `session_uid`, i.e.
 the file's take order) after dropping the two armature prefixes. `takes` in the result is the same comparison as a
 set over all armatures. The only name difference allowed is a `.NNN` the importer added or replaced because the full
-imported name already existed in the file before the import. So `Walk.001` exported and `Walk.002` imported is a
+imported name (`<rig>|<strip>` for NLA takes, `<rig>|<armature>|<action>` for all-actions takes) already existed in
+the file before the import. So `Walk.001` exported and `Walk.002` imported is a
 changed clip name and FAILs, as are missing, extra or swapped takes. Only take NAMES are compared, not their F-curves.
 Not modelled: takes of non-armature objects (not compared), strip influence/blend/solo (a take is written regardless),
 drivers, dupli-instanced objects. Armature dimensions are not compared (the importer rebuilds bone lengths).
@@ -212,17 +213,18 @@ def _expected_takes(arm, nla_takes):
       - all-actions pass, per object: nothing for an object without animation_data, nothing when its `action` is
         read-only (NLA tweak mode); otherwise one take per action in Blender's action order that is the assigned
         action (with a slot) or has a non-empty channelbag whose F-curve paths all resolve on the object.
+    Returns (name, kind) pairs, kind "nla" or "action" (the two import under different names).
     Not modelled: takes of non-armature objects (not compared), strip influence/blend/solo (a take is written
     regardless), drivers, dupli-instanced objects, and the F-curves inside a take (names only are compared)."""
-    takes = list(nla_takes)
+    takes = [(n, "nla") for n in nla_takes]
     ad = arm.animation_data
     if ad and not ad.is_property_readonly("action"):
         for act in bpy.data.actions:
             if act == ad.action:
                 if ad.action_slot:
-                    takes.append(act.name)
+                    takes.append((act.name, "action"))
             elif _action_valid_for(arm, act):
-                takes.append(act.name)
+                takes.append((act.name, "action"))
     return takes
 
 
@@ -235,19 +237,21 @@ def _strip_prefixes(name, prefixes):
 
 def _match_actions(expected, imported, imp_name, arm_name, pre_names):
     """Pair the i-th expected clip (export order) with the i-th imported clip (creation order, see main) and compare
-    names. Exact, except that the importer renames a take whose full name `<imported rig>|<rig>|<clip>` already
-    existed before the import: it then ends in its own `.NNN` (added, or replacing the clip's own number).
+    names. `expected` holds (name, kind) pairs: kind "nla" takes import as `<imported rig>|<strip>`, kind "action"
+    takes as `<imported rig>|<rig>|<action>`. Exact, except that the importer renames a take whose full name
+    already existed before the import: it then ends in its own `.NNN` (added, or replacing the clip's own number).
     Returns (imported labels, importer_renamed, ok)."""
     labels, renamed = [], []
     ok = len(expected) == len(imported)
     for i, name in enumerate(imported):
         got = _strip_prefixes(name, [imp_name, arm_name])
-        e = expected[i] if i < len(expected) else None
+        e, kind = expected[i] if i < len(expected) else (None, None)
         if e is None:
             labels.append(got)
         elif got == e:
             labels.append(e)
-        elif got != e and SUFFIX_RE.sub("", got) == SUFFIX_RE.sub("", e) and f"{imp_name}|{arm_name}|{e}" in pre_names:
+        elif got != e and SUFFIX_RE.sub("", got) == SUFFIX_RE.sub("", e) \
+                and (f"{imp_name}|{e}" if kind == "nla" else f"{imp_name}|{arm_name}|{e}") in pre_names:
             labels.append(e)
             renamed.append(name)
         else:
@@ -291,7 +295,7 @@ def _compare(orig, imp, tol, expected_clips, imported_clips, imp_name, pre_names
                                  missing=missing, extra=extra, parent_changes=parents)
         if expected_clips or imported_clips:
             got, renamed, ok = _match_actions(expected_clips, imported_clips, imp_name, orig.name, pre_names)
-            checks["actions"] = _check("PASS" if ok else "FAIL", exported=list(expected_clips), imported=got,
+            checks["actions"] = _check("PASS" if ok else "FAIL", exported=[n for n, _ in expected_clips], imported=got,
                                        importer_renamed=renamed)
     return checks
 

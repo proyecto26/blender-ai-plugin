@@ -1121,6 +1121,41 @@ def test_v2_nla_take_missing_on_static_rig_fails():
     return {"weapon": r["objects"]["WeaponRig"]["checks"]["actions"]}
 
 
+# ------------------------------------------------------------------------- review round 8 (Seldon, batch V)
+
+def _strip_collision_rig():
+    reset()
+    rig("Rig", ("Walk",))
+    bpy.data.objects["Rig"].animation_data.nla_tracks.new().strips.new("WalkStrip", 1, bpy.data.actions["Walk"])
+    squat = bpy.data.actions.new("Rig.001|WalkStrip")  # an empty user action already holding the strip take's name
+    squat.use_fake_user = True
+    select("Rig")
+
+
+def test_v2_strip_take_name_collision():
+    """Round 8: NLA takes import as `<rig>|<strip>`; a clash gets the importer's own .NNN."""
+    _strip_collision_rig()
+    r = _rt("scoll.fbx", ["Rig"])
+    c = r["objects"]["Rig"]["checks"]["actions"]
+    assert r["verdict"] == "PASS" and c["status"] == "PASS", c
+    assert c["imported"] == ["WalkStrip", "Walk"] and len(c["importer_renamed"]) == 1, c
+    assert "Rig.001|WalkStrip" in bpy.data.actions
+    return c
+
+
+def test_v2_strip_take_collision_missing_take_fails():
+    _strip_collision_rig()
+
+    def drop():
+        a = [a for a in bpy.data.actions if a.name == "Rig.001|WalkStrip.001"][0]
+        bpy.data.actions.remove(a)
+
+    with fake_import_then(drop):
+        r = _rt("scoll2.fbx", ["Rig"])
+    assert r["verdict"] == "FAIL" and r["objects"]["Rig"]["checks"]["actions"]["status"] == "FAIL"
+    return r["objects"]["Rig"]["checks"]["actions"]
+
+
 TESTS = (test_v1_isolate, test_v1_wire, test_v1_contact_sheet_size_and_tiles, test_v1_restores_state,
          test_v1_restores_state_on_failed_first_view, test_v1_restores_state_on_failed_wire_view,
          test_v1_restores_state_on_failed_sheet, test_v1_unknown_view_changes_nothing,
@@ -1139,7 +1174,8 @@ TESTS = (test_v1_isolate, test_v1_wire, test_v1_contact_sheet_size_and_tiles, te
          test_v2_muted_nla_strip_not_expected, test_v2_shape_key_with_modifier_evaluated,
          test_v2_measurement_failure_restores_toggles, test_v2_bone_parented_mirror_object,
          test_v2_measurement_failure_restores_pose_position, test_v2_rest_pose_armature_untouched,
-         test_v2_nla_take_written_for_every_exported_object, test_v2_nla_take_missing_on_static_rig_fails)
+         test_v2_nla_take_written_for_every_exported_object, test_v2_nla_take_missing_on_static_rig_fails,
+         test_v2_strip_take_name_collision, test_v2_strip_take_collision_missing_take_fails)
 
 
 def main():
